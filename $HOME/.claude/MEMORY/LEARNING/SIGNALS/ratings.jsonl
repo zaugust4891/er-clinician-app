@@ -1,0 +1,6 @@
+{"timestamp":"2026-02-20T22:16:52-05:00","rating":5,"session_id":"9c3a0079-f893-4ed6-a513-5e4c4b518d01","source":"implicit","sentiment_summary":"Simple task request, no emotional indicators","confidence":0.95}
+{"timestamp":"2026-02-20T22:21:27-05:00","rating":8,"session_id":"9c3a0079-f893-4ed6-a513-5e4c4b518d01","source":"implicit","sentiment_summary":"Strong approval for delivering exactly as requested","confidence":0.95}
+{"timestamp":"2026-02-20T22:22:25-05:00","rating":8,"session_id":"9c3a0079-f893-4ed6-a513-5e4c4b518d01","source":"implicit","sentiment_summary":"Strong satisfaction with comprehensive architecture document","confidence":0.95}
+{"timestamp":"2026-02-20T22:31:34-05:00","rating":5,"session_id":"9c3a0079-f893-4ed6-a513-5e4c4b518d01","source":"implicit","sentiment_summary":"Straightforward technical request","confidence":0.95}
+{"timestamp":"2026-02-20T22:42:27-05:00","rating":8,"session_id":"9c3a0079-f893-4ed6-a513-5e4c4b518d01","source":"implicit","sentiment_summary":"Very satisfied with code structure and validation work","confidence":0.9}
+{"timestamp":"2026-02-20T22:59:44-05:00","rating":5,"session_id":"9c3a0079-f893-4ed6-a513-5e4c4b518d01","source":"implicit","sentiment_summary":"Technical request for implementation steps, no sentiment","confidence":0.95}

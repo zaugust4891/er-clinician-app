@@ -1,0 +1,32 @@
+[package]
+name = "er-note-app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+reqwest = { version = "0.12", features = ["json"] }
+dashmap = "6"
+regex = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+# Platform-specific (added behind feature flags when needed)
+# cpal = "0.15"        # Audio capture (iOS support experimental)
+# whisper-rs = "0.12"  # On-device STT
+# uniffi = "0.28"      # Swift/Kotlin FFI bridge
+# aes-gcm = "0.10"     # Encryption at rest
+
+[lib]
+name = "er_note_app"
+path = "src/lib.rs"
+
+[[bin]]
+name = "er-note-app"
+path = "src/main.rs"
