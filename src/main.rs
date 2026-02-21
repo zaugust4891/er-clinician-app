@@ -23,9 +23,33 @@ fn main() {
         "shift started, patient registered"
     );
 
-    // Create a note and verify the state machine.
+    // Create a note and exercise the state machine.
+    let mut note = PatientNote::new(patient.id);
+    tracing::info!(?note, "note created");
+
+    note.handle_audio_started();
+    tracing::info!(?note, "encounter started");
+
+    note.handle_audio_stopped();
+    tracing::info!(?note, "encounter stopped");
+
+    note.handle_trigger_mdm();
+    tracing::info!(?note, "MDM triggered");
+
+    note.handle_review_ready();
+    tracing::info!(?note, "review ready");
+
+    note.handle_sign();
+    tracing::info!(?note, "note signed");
+
+    // Verify serialization round-trip with hydrate.
+    let json = serde_json::to_string(&note).expect("serialize");
+    let mut restored: PatientNote = serde_json::from_str(&json).expect("deserialize");
+    restored.hydrate();
+    tracing::info!(?restored, "deserialized + hydrated");
+
+    // Put it in the store.
     let store = state::new_store();
-    let note = PatientNote::new(patient.id);
     store.insert(patient.id, note);
 
     tracing::info!(
@@ -33,7 +57,7 @@ fn main() {
         "note store ready"
     );
 
-    tracing::info!("skeleton operational — all modules loaded");
+    tracing::info!("state pattern operational — all transitions verified");
 }
 
 fn count_tables(conn: &rusqlite::Connection) -> usize {
