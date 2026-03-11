@@ -1,7 +1,7 @@
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
-use crate::error::{AppError, Result};
+use crate::error::{AppError, AppResult};
 use crate::models::NoteSections;
 use crate::summarizer::Summarizer;
 
@@ -46,7 +46,7 @@ pub struct ClaudeSummarizer {
 }
 
 impl ClaudeSummarizer {
-    pub fn new() -> Result<Self> {
+    pub fn new() -> AppResult<Self> {
         let api_key = std::env::var("ANTHROPIC_API_KEY")
             .map_err(|_| AppError::Summarization(
                 "ANTHROPIC_API_KEY not set in env file.".into(),
@@ -61,7 +61,7 @@ impl ClaudeSummarizer {
 }
 
 impl ClaudeSummarizer {
-    async fn call_claude(&self, system: &str, user_message: &str) -> Result<String> {
+    async fn call_claude(&self, system: &str, user_message: &str) -> AppResult<String> {
         let request = MessagesRequest {
             model: self.model.clone(),
             max_tokens: 2048,
@@ -116,7 +116,7 @@ impl Summarizer for ClaudeSummarizer {
         transcript: &str,
         prior_sections: &NoteSections,
         encounter_number: u32,
-    ) -> Result<NoteSections> {
+    ) -> AppResult<NoteSections> {
         let system = r#"You are an emergency medicine documentation assistant.
 You extract structured clinical note sections from clinician-patient encounter transcripts.
 
@@ -165,7 +165,7 @@ Rules:
         sections: &NoteSections,
         results_summary: &str,
         disposition: &str,
-    ) -> Result<String> {
+    ) -> AppResult<String> {
         let system = r#"You are an emergency medicine documentation assistant.
         Generate the Medical Decision Making (MDM) section of an ED note.
 
