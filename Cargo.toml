@@ -13,6 +13,7 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 reqwest = { version = "0.12", features = ["json"] }
 dashmap = "6"
 regex = "1"
+dotenvy = "0.15"
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = "0.3"
@@ -30,3 +31,7 @@ path = "src/lib.rs"
 [[bin]]
 name = "er-note-app"
 path = "src/main.rs"
+
+[[bin]]
+name = "spike_summarizer"
+path = "src/bin/spike_summarizer.rs"

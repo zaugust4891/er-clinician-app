@@ -1,4 +1,5 @@
 pub mod audio;
+pub mod claude_summarizer;
 pub mod db;
 pub mod deidentify;
 pub mod error;
