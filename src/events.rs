@@ -1,8 +1,9 @@
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 use uuid::Uuid;
-
+use std::sync::Arc;
 use crate::models::{CaptureMode, ClinicalResult, PatientId};
+use crate::repository::Repository;
 
 /// Events that drive the note state machine and the processing pipeline.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,24 +64,27 @@ impl NoteEvent {
 }
 
 /// Broadcast event bus — multiple consumers, single producer per event.
+/// Persists first before broadcasting to in-memory subscribers - durable before ephemeral
 pub struct EventBus {
     sender: broadcast::Sender<NoteEvent>,
+    repository: Option<Arc<dyn Repository>>,
 }
 
 impl EventBus {
-    pub fn new(capacity: usize) -> Self {
+    pub fn new(capacity: usize, repository: Option<Arc<dyn Repository>>) -> Self {
         let (sender, _) = broadcast::channel(capacity);
-        Self { sender }
+        Self { sender, repository }
     }
 
-    /// Publish an event to all subscribers.
     pub fn publish(&self, event: NoteEvent) -> crate::error::AppResult<()> {
-        // Ignore send error (no receivers) — not a failure condition at startup.
+        if let Some(repo) = &self.repository {
+            repo.append_event(event.extract_patient_id(), event.clone())?;
+        }
+
         let _ = self.sender.send(event);
         Ok(())
     }
 
-    /// Subscribe to the event stream.
     pub fn subscribe(&self) -> broadcast::Receiver<NoteEvent> {
         self.sender.subscribe()
     }
@@ -88,7 +92,7 @@ impl EventBus {
 
 impl Default for EventBus {
     fn default() -> Self {
-        Self::new(256)
+        Self::new(256, None)
     }
 }
 

@@ -1,8 +1,9 @@
 use crate::models::{PatientId};
 use crate::events::{NoteEvent, EventBus};
+use crate::error::AppResult;
 
 pub trait Repository: Send + Sync {
-    fn append_event(&self, patient_id: PatientId, event: NoteEvent) {
+    fn append_event(&self, patient_id: PatientId, event: NoteEvent) -> AppResult<()> {
         todo!()
     }
 
@@ -14,11 +15,11 @@ pub trait Repository: Send + Sync {
         todo!()
     }
 
-    fn save_snapshot() {
+    fn save_snapshot(&self) {
         todo!()
     }
 
-    fn get_snapshot() {
+    fn get_snapshot(&self) {
         todo!()
     }
 
@@ -29,7 +30,7 @@ pub struct SqliteRepository {
 }
 
 impl Repository for SqliteRepository {
-    fn append_event(&self, patient_id: PatientId, event: NoteEvent) {
+    fn append_event(&self, patient_id: PatientId, event: NoteEvent) -> AppResult<()> {
         todo!()
     }
 
