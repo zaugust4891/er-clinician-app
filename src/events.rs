@@ -1,10 +1,11 @@
+use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
 use crate::models::{CaptureMode, ClinicalResult, PatientId};
 
 /// Events that drive the note state machine and the processing pipeline.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum NoteEvent {
     /// Clinician started recording for a patient.
     AudioStarted {
@@ -35,6 +36,31 @@ pub enum NoteEvent {
     Sign { patient_id: PatientId },
 }
 
+impl NoteEvent {
+    pub fn extract_patient_id(&self) -> PatientId {
+        match self {
+            NoteEvent::AudioStarted { patient_id, .. } => *patient_id,
+            NoteEvent::AudioStopped { patient_id, .. } => *patient_id,
+            NoteEvent::TranscriptReady { patient_id, .. } => *patient_id,
+            NoteEvent::ResultReceived { patient_id, .. } => *patient_id,
+            NoteEvent::TriggerMDM { patient_id } => *patient_id,
+            NoteEvent::ReviewReady { patient_id } => *patient_id,
+            NoteEvent::Sign { patient_id } => *patient_id,
+        }
+    }
+
+    pub fn event_type(&self) -> &'static str {
+        match self {
+            NoteEvent::AudioStarted { .. } => "AudioStarted",
+            NoteEvent::AudioStopped { .. } => "AudioStopped",
+            NoteEvent::TranscriptReady { .. } => "TranscriptReady",
+            NoteEvent::ResultReceived { .. } => "ResultReceived",
+            NoteEvent::TriggerMDM { .. } => "TriggerMDM",
+            NoteEvent::ReviewReady { .. } => "ReviewReady",
+            NoteEvent::Sign { .. } => "Sign",
+        }
+    }
+}
 /// Broadcast event bus — multiple consumers, single producer per event.
 pub struct EventBus {
     sender: broadcast::Sender<NoteEvent>,
