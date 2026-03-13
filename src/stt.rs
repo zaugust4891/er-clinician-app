@@ -1,4 +1,4 @@
-use crate::error::Result;
+use crate::error::AppResult;
 
 /// Speech-to-text transcription interface.
 ///
@@ -8,7 +8,7 @@ use crate::error::Result;
 pub trait Transcriber: Send + Sync {
     /// Transcribe raw PCM audio bytes to text.
     /// Audio is expected to be 16kHz mono PCM (i16 samples).
-    fn transcribe(&self, audio_pcm: &[u8]) -> Result<TranscriptResult>;
+    fn transcribe(&self, audio_pcm: &[u8]) -> AppResult<TranscriptResult>;
 }
 
 /// Result of a transcription operation.
@@ -27,7 +27,7 @@ pub struct TranscriptResult {
 pub struct MockTranscriber;
 
 impl Transcriber for MockTranscriber {
-    fn transcribe(&self, _audio_pcm: &[u8]) -> Result<TranscriptResult> {
+    fn transcribe(&self, _audio_pcm: &[u8]) -> AppResult<TranscriptResult> {
         Ok(TranscriptResult {
             text: "[mock transcript: 44 year old male presenting with chest pain]".into(),
             confidence: Some(0.95),

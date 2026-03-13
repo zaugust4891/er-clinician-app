@@ -1,4 +1,4 @@
-use crate::error::Result;
+use crate::error::AppResult;
 use crate::models::{CaptureMode, PatientId};
 
 /// Platform-agnostic audio capture interface.
@@ -8,10 +8,10 @@ use crate::models::{CaptureMode, PatientId};
 /// - Desktop (testing): File-based mock or system mic via cpal
 pub trait AudioCapture: Send + Sync {
     /// Start recording audio for a patient encounter.
-    fn start(&mut self, patient_id: PatientId, mode: CaptureMode) -> Result<()>;
+    fn start(&mut self, patient_id: PatientId, mode: CaptureMode) -> AppResult<()>;
 
     /// Stop recording and return the raw PCM audio bytes.
-    fn stop(&mut self) -> Result<Vec<u8>>;
+    fn stop(&mut self) -> AppResult<Vec<u8>>;
 
     /// Whether audio is currently being captured.
     fn is_recording(&self) -> bool;
@@ -21,7 +21,7 @@ pub trait AudioCapture: Send + Sync {
 
     /// Switch attribution to a different patient without stopping capture.
     /// Returns the audio chunk attributed to the previous patient.
-    fn switch_patient(&mut self, new_patient_id: PatientId) -> Result<Option<Vec<u8>>>;
+    fn switch_patient(&mut self, new_patient_id: PatientId) -> AppResult<Option<Vec<u8>>>;
 }
 
 /// Mock audio capture for desktop testing — reads from a file or generates silence.
@@ -46,13 +46,13 @@ impl Default for MockAudioCapture {
 }
 
 impl AudioCapture for MockAudioCapture {
-    fn start(&mut self, patient_id: PatientId, _mode: CaptureMode) -> Result<()> {
+    fn start(&mut self, patient_id: PatientId, _mode: CaptureMode) -> AppResult<()> {
         self.recording = true;
         self.active_patient = Some(patient_id);
         Ok(())
     }
 
-    fn stop(&mut self) -> Result<Vec<u8>> {
+    fn stop(&mut self) -> AppResult<Vec<u8>> {
         self.recording = false;
         self.active_patient = None;
         // Return empty audio for mock.
@@ -67,7 +67,7 @@ impl AudioCapture for MockAudioCapture {
         self.active_patient
     }
 
-    fn switch_patient(&mut self, new_patient_id: PatientId) -> Result<Option<Vec<u8>>> {
+    fn switch_patient(&mut self, new_patient_id: PatientId) -> AppResult<Option<Vec<u8>>> {
         let prev_audio = if self.recording {
             Some(Vec::new()) // Mock: empty chunk for previous patient
         } else {

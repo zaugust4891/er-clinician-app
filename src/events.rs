@@ -47,7 +47,7 @@ impl EventBus {
     }
 
     /// Publish an event to all subscribers.
-    pub fn publish(&self, event: NoteEvent) -> crate::error::Result<()> {
+    pub fn publish(&self, event: NoteEvent) -> crate::error::AppResult<()> {
         // Ignore send error (no receivers) — not a failure condition at startup.
         let _ = self.sender.send(event);
         Ok(())

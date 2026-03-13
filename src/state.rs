@@ -3,7 +3,8 @@ use std::sync::Arc;
 use chrono::Utc;
 use dashmap::DashMap;
 
-use crate::error::{AppError, Result};
+use crate::error::{AppError, AppResult};
+use crate::events::NoteEvent;
 use crate::models::audit::{AuditAction, AuditEntry};
 use crate::models::note::NotePhase;
 use crate::models::patient::PatientId;
@@ -194,6 +195,10 @@ pub fn state_from_phase(phase: &NotePhase) -> Box<dyn NoteState> {
     }
 }
 
+pub fn replay(events: &[NoteEvent]) -> PatientNote {
+    todo!()
+}
+
 // ---------------------------------------------------------------------------
 // Patient note store
 // ---------------------------------------------------------------------------
@@ -213,7 +218,7 @@ pub fn new_store() -> PatientNoteStore {
 
 /// Ingest a clinical result into a note.
 /// Delegates to the current state's `can_ingest_results()` method.
-pub fn ingest_result(note: &mut PatientNote, result: ClinicalResult) -> Result<()> {
+pub fn ingest_result(note: &mut PatientNote, result: ClinicalResult) -> AppResult<()> {
     let can_ingest = note
         .state
         .as_ref()

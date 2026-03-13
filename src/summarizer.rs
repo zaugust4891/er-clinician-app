@@ -1,4 +1,4 @@
-use crate::error::Result;
+use crate::error::AppResult;
 use crate::models::NoteSections;
 
 /// LLM-based note summarization interface.
@@ -14,7 +14,7 @@ pub trait Summarizer: Send + Sync {
         transcript: &str,
         prior_sections: &NoteSections,
         encounter_number: u32,
-    ) -> impl std::future::Future<Output = Result<NoteSections>> + Send;
+    ) -> impl std::future::Future<Output = AppResult<NoteSections>> + Send;
 
     /// Generate the MDM (Medical Decision Making) section from all accumulated data.
     /// Called explicitly by the clinician — never auto-triggered.
@@ -23,7 +23,7 @@ pub trait Summarizer: Send + Sync {
         sections: &NoteSections,
         results_summary: &str,
         disposition: &str,
-    ) -> impl std::future::Future<Output = Result<String>> + Send;
+    ) -> impl std::future::Future<Output = AppResult<String>> + Send;
 }
 
 /// Mock summarizer for testing — returns template text.
@@ -35,7 +35,7 @@ impl Summarizer for MockSummarizer {
         _transcript: &str,
         _prior_sections: &NoteSections,
         _encounter_number: u32,
-    ) -> Result<NoteSections> {
+    ) -> AppResult<NoteSections> {
         Ok(NoteSections {
             hpi: Some("[mock HPI from encounter transcript]".into()),
             ros: None,
@@ -50,7 +50,7 @@ impl Summarizer for MockSummarizer {
         _sections: &NoteSections,
         _results_summary: &str,
         _disposition: &str,
-    ) -> Result<String> {
+    ) -> AppResult<String> {
         Ok("[mock MDM: moderate complexity, 2 diagnoses considered]".into())
     }
 }
