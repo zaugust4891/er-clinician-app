@@ -61,6 +61,7 @@ impl NoteEvent {
         }
     }
 }
+
 /// Broadcast event bus — multiple consumers, single producer per event.
 pub struct EventBus {
     sender: broadcast::Sender<NoteEvent>,
@@ -89,4 +90,26 @@ impl Default for EventBus {
     fn default() -> Self {
         Self::new(256)
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{PatientId};
+    use crate::models::encounter::CaptureMode;
+
+
+    /// Unit test for extract_patient_id() method.
+    #[test]
+    fn extract_patient_id() {
+        let patient_id = PatientId::new_v4();
+        let event = NoteEvent::AudioStarted {
+            patient_id,
+            capture_mode: CaptureMode::Ambient,
+        };
+
+        println!("patient_id: {:?}", patient_id);
+        assert_eq!(event.extract_patient_id(), patient_id);
+    }
+
 }
