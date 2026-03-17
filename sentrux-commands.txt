@@ -1,0 +1,5 @@
+sentrux                    # open the GUI — live treemap of your project
+sentrux /path/to/project   # open GUI scanning a specific directory
+sentrux check .            # check rules (CI-friendly, exits 0 or 1)
+sentrux gate --save .      # save baseline before agent session
+sentrux gate .             # compare after — catches degradation

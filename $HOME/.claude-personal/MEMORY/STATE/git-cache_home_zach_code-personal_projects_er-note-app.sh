@@ -1,0 +1,10 @@
+branch='db-snapshot-mechanism'
+stash_count=0
+modified=3
+staged=00
+untracked=4
+total_changed=3
+ahead=0
+behind=0
+last_commit_epoch=1773373208
+is_git_repo=true
