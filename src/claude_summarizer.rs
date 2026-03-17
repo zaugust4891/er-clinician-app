@@ -55,7 +55,7 @@ impl ClaudeSummarizer {
         Ok(Self {
             client: Client::new(),
             api_key,
-            model: "claude-sonnet-4-20250514".into(),
+            model: "claude-sonnet-4-6".into(),
         })
     }
 }

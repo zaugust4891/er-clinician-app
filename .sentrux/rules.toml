@@ -1,0 +1,95 @@
+# Sentrux rules for ER Note App
+# Event-sourced clinical documentation system (Rust)
+
+[constraints]
+max_cycles = 0          # Zero dependency cycles — strict for medical software
+max_coupling = "A"      # Tight coupling budget; modules should stay decoupled
+max_cc = 15             # Conservative cyclomatic complexity for auditability
+no_god_files = true     # No oversized files
+
+# ──────────────────────────────────────────────
+# Architectural Layers (lower order = deeper)
+# ──────────────────────────────────────────────
+
+[[layers]]
+name = "models"
+paths = ["src/models/*"]
+order = 0
+
+[[layers]]
+name = "events"
+paths = ["src/events.rs"]
+order = 1
+
+[[layers]]
+name = "state"
+paths = ["src/state.rs"]
+order = 1
+
+[[layers]]
+name = "repository"
+paths = ["src/repository.rs", "src/db.rs"]
+order = 2
+
+[[layers]]
+name = "services"
+paths = ["src/summarizer.rs", "src/claude_summarizer.rs", "src/deidentify.rs", "src/export.rs"]
+order = 3
+
+[[layers]]
+name = "platform"
+paths = ["src/audio.rs", "src/stt.rs"]
+order = 3
+
+[[layers]]
+name = "app"
+paths = ["src/main.rs", "src/lib.rs", "src/bin/*"]
+order = 4
+
+# ──────────────────────────────────────────────
+# Boundary Rules
+# ──────────────────────────────────────────────
+
+# Models are the innermost layer — they must not depend on infrastructure
+[[boundaries]]
+from = "src/models/*"
+to = "src/db.rs"
+reason = "Domain models must not depend on database implementation"
+
+[[boundaries]]
+from = "src/models/*"
+to = "src/repository.rs"
+reason = "Domain models must not depend on repository infrastructure"
+
+[[boundaries]]
+from = "src/models/*"
+to = "src/claude_summarizer.rs"
+reason = "Domain models must not depend on external API clients"
+
+# Events should not depend on persistence or services
+[[boundaries]]
+from = "src/events.rs"
+to = "src/claude_summarizer.rs"
+reason = "Event definitions must not depend on summarizer implementation"
+
+[[boundaries]]
+from = "src/events.rs"
+to = "src/db.rs"
+reason = "Event definitions must not depend on database internals"
+
+# De-identification must stay independent — it's a security boundary
+[[boundaries]]
+from = "src/deidentify.rs"
+to = "src/db.rs"
+reason = "PHI stripping must not couple to storage layer"
+
+# Platform traits should not know about persistence
+[[boundaries]]
+from = "src/audio.rs"
+to = "src/repository.rs"
+reason = "Audio capture must not depend on repository"
+
+[[boundaries]]
+from = "src/stt.rs"
+to = "src/repository.rs"
+reason = "Speech-to-text must not depend on repository"
