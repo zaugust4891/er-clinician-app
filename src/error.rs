@@ -35,6 +35,13 @@ pub enum AppError {
 
     #[error("de-identification error: {0}")]
     Deidentify(String),
+
+   #[error("parse error in {context}: {source}")]
+    ParseError {
+        context: String,
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
 }
 
 pub type AppResult<T> = std::result::Result<T, AppError>;
