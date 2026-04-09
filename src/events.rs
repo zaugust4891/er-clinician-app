@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 use uuid::Uuid;
 use std::sync::Arc;
+use chrono::{DateTime, Utc};
 use crate::models::{CaptureMode, ClinicalResult, PatientId};
 use crate::repository::Repository;
 
@@ -12,29 +13,42 @@ pub enum NoteEvent {
     AudioStarted {
         patient_id: PatientId,
         capture_mode: CaptureMode,
+        clinical_occurred_at: DateTime<Utc>,
     },
     /// Clinician stopped recording.
     AudioStopped {
         patient_id: PatientId,
         encounter_id: Uuid,
+        clinical_occurred_at: DateTime<Utc>,
     },
     /// STT produced a transcript chunk.
     TranscriptReady {
         patient_id: PatientId,
         encounter_id: Uuid,
         text: String,
+        clinical_occurred_at: DateTime<Utc>,
     },
     /// A clinical result was ingested (manual or FHIR).
     ResultReceived {
         patient_id: PatientId,
         result: ClinicalResult,
+        clinical_occurred_at: DateTime<Utc>,
     },
     /// Clinician triggered MDM generation.
-    TriggerMDM { patient_id: PatientId },
+    TriggerMDM { 
+        patient_id: PatientId,
+        clinical_occurred_at: DateTime<Utc>,
+    },
     /// MDM draft is ready for review.
-    ReviewReady { patient_id: PatientId },
+    ReviewReady {
+        patient_id: PatientId,
+        clinical_occurred_at: DateTime<Utc>,
+    },
     /// Clinician signed the note.
-    Sign { patient_id: PatientId },
+    Sign {
+        patient_id: PatientId,
+        clinical_occurred_at: DateTime<Utc>,
+    },
 }
 
 impl NoteEvent {
@@ -44,9 +58,9 @@ impl NoteEvent {
             NoteEvent::AudioStopped { patient_id, .. } => *patient_id,
             NoteEvent::TranscriptReady { patient_id, .. } => *patient_id,
             NoteEvent::ResultReceived { patient_id, .. } => *patient_id,
-            NoteEvent::TriggerMDM { patient_id } => *patient_id,
-            NoteEvent::ReviewReady { patient_id } => *patient_id,
-            NoteEvent::Sign { patient_id } => *patient_id,
+            NoteEvent::TriggerMDM { patient_id, .. } => *patient_id,
+            NoteEvent::ReviewReady { patient_id, .. } => *patient_id,
+            NoteEvent::Sign { patient_id, .. } => *patient_id,
         }
     }
 
@@ -110,6 +124,7 @@ mod tests {
         let event = NoteEvent::AudioStarted {
             patient_id,
             capture_mode: CaptureMode::Ambient,
+            clinical_occurred_at: Utc::now(),
         };
 
         println!("patient_id: {:?}", patient_id);
