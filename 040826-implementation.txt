@@ -1,4 +1,36 @@
 ---
+  IMPLEMENTATION STATUS (as of 2026-04-08)
+
+  This walkthrough is the reference guide. Actual progress in src/repository.rs:
+
+    ✅ SqliteRepository::new()       — implemented (src/repository.rs:23-29)
+    ✅ append_event()                — implemented (src/repository.rs:32-43)
+    ✅ get_events()                  — implemented (src/repository.rs:45-75)
+    ⚠️  get_events_since()            — STUB with WRONG signature
+                                        currently: fn get_events_since(..) -> Vec<NoteEvent>
+                                        required:  fn get_events_since(..) -> AppResult<Vec<StoredEvent>>
+                                        (does not satisfy the trait)
+    ❌ save_snapshot()               — NOT YET ADDED to impl block
+    ❌ get_latest_snapshot()         — NOT YET ADDED to impl block
+
+  ⚠️  The crate does NOT currently compile. The impl Repository for SqliteRepository
+      block is missing save_snapshot and get_latest_snapshot, and get_events_since
+      has the old signature. cargo build will fail with:
+        - "method `get_events_since` has an incompatible type for trait"
+        - "not all trait items implemented, missing: `save_snapshot`, `get_latest_snapshot`"
+
+  Remaining work, in order:
+    1. Fix get_events_since (follow the `get_events_since` section below — it's
+       get_events with a WHERE clause addition)
+    2. Add sha2 = "0.10" to Cargo.toml (save_snapshot needs SHA-256 for checksum)
+    3. Implement save_snapshot (follow the save_snapshot section below)
+    4. Implement get_latest_snapshot (follow the get_latest_snapshot section below)
+    5. Verify the crate compiles (cargo check)
+    6. Then proceed to steps 5 and 6 from 031626-work.md §0:
+         - EventBus::publish() returns AppResult<u64>
+         - state.rs replay() / load_patient_note()
+
+---
   The Two Patterns Everything Is Built On
 
   Before the individual methods, understand two patterns that repeat across all of them:

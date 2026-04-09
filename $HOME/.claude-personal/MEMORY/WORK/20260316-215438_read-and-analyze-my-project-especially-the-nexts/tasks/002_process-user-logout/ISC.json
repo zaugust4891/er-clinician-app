@@ -1,0 +1,10 @@
+{
+  "taskId": "002_process-user-logout",
+  "status": "PENDING",
+  "effortLevel": "TRIVIAL",
+  "criteria": [],
+  "antiCriteria": [],
+  "satisfaction": null,
+  "createdAt": "2026-03-17T13:50:14-04:00",
+  "updatedAt": "2026-03-17T13:50:14-04:00"
+}

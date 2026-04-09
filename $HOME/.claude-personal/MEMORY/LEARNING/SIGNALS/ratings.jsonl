@@ -3,3 +3,6 @@
 {"timestamp":"2026-03-13T22:48:56-04:00","rating":5,"session_id":"9edfb82e-952b-4753-ad62-07426254cc7c","source":"implicit","sentiment_summary":"Neutral command to continue interrupted task","confidence":0.95}
 {"timestamp":"2026-03-16T22:36:34-04:00","rating":5,"session_id":"9ad55b69-94fe-471e-b52f-0e6013c0989e","source":"implicit","sentiment_summary":"Technical education request, no sentiment","confidence":0.95}
 {"timestamp":"2026-03-16T22:53:57-04:00","rating":4,"session_id":"9ad55b69-94fe-471e-b52f-0e6013c0989e","source":"implicit","sentiment_summary":"Mild frustration about error, seeks debugging help","confidence":0.65}
+{"timestamp":"2026-03-17T13:50:13-04:00","rating":5,"session_id":"9ad55b69-94fe-471e-b52f-0e6013c0989e","source":"implicit","sentiment_summary":"Simple command, no emotional content","confidence":0.95}
+{"timestamp":"2026-04-08T21:00:48-04:00","rating":5,"session_id":"938a2e3d-15b2-4b2d-8d5b-fa7675da34a8","source":"implicit","sentiment_summary":"Neutral technical request, no emotional indicators","confidence":0.95}
+{"timestamp":"2026-04-08T21:11:41-04:00","rating":5,"session_id":"938a2e3d-15b2-4b2d-8d5b-fa7675da34a8","source":"implicit","sentiment_summary":"Neutral technical request, no sentiment","confidence":0.95}
