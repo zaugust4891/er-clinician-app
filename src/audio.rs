@@ -1,5 +1,5 @@
 use crate::error::AppResult;
-use crate::models::{CaptureMode, PatientId};
+use crate::models::{CaptureMode, PatientId, EncounterId};
 
 /// Platform-agnostic audio capture interface.
 ///
@@ -8,7 +8,7 @@ use crate::models::{CaptureMode, PatientId};
 /// - Desktop (testing): File-based mock or system mic via cpal
 pub trait AudioCapture: Send + Sync {
     /// Start recording audio for a patient encounter.
-    fn start(&mut self, patient_id: PatientId, mode: CaptureMode) -> AppResult<()>;
+    fn start(&mut self, patient_id: PatientId, encounter_id: EncounterId, mode: CaptureMode,) -> AppResult<()>;
 
     /// Stop recording and return the raw PCM audio bytes.
     fn stop(&mut self) -> AppResult<Vec<u8>>;
@@ -28,6 +28,8 @@ pub trait AudioCapture: Send + Sync {
 pub struct MockAudioCapture {
     recording: bool,
     active_patient: Option<PatientId>,
+    encounter: Option<EncounterId>,
+    mode: CaptureMode,
 }
 
 impl MockAudioCapture {
@@ -35,6 +37,8 @@ impl MockAudioCapture {
         Self {
             recording: false,
             active_patient: None,
+            encounter: None,
+            mode: CaptureMode::Ambient,
         }
     }
 }
@@ -46,9 +50,11 @@ impl Default for MockAudioCapture {
 }
 
 impl AudioCapture for MockAudioCapture {
-    fn start(&mut self, patient_id: PatientId, _mode: CaptureMode) -> AppResult<()> {
+    fn start(&mut self, patient_id: PatientId, encounter_id: EncounterId, mode: CaptureMode) -> AppResult<()> {
         self.recording = true;
         self.active_patient = Some(patient_id);
+        self.encounter = Some(encounter_id);
+        self.mode = mode;
         Ok(())
     }
 

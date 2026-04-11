@@ -356,14 +356,5 @@
   feel like repetition, not new concepts.                                                                      
   - The query_row vs query_map distinction matters: query_row for 0-or-1 rows (snapshots), query_map for 0-to-N
    rows (events). Getting this wrong compiles fine but produces confusing runtime behavior.                    
-  - No sha2 crate in Cargo.toml yet — you'll need to add it when implementing save_snapshot.
-                                                                                                               
-  ---                                                                     
-  🗣️  PAI: Six methods, two patterns. The write path is: serialize with serde, INSERT with rusqlite params, get 
-  back the rowid. The read path is: SELECT, pull columns as strings, deserialize with serde, wrap in           
-  StoredEvent. get_events and get_events_since are the same method with slightly different WHERE clauses.
-  save_snapshot is just append_event's pattern but targeting the snapshots table with an upsert.               
-  get_latest_snapshot is the trickiest — it needs to handle no-row, checksum mismatch, and
-  deserialization+hydration, returning None gracefully for the first two so full replay kicks in as a fallback.
-   You'll need to add sha2 to Cargo.toml for the checksum.                
+            
                                                              

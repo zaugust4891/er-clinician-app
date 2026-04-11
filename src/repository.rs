@@ -1,4 +1,4 @@
-use chrono::{Date, DateTime, Utc};
+use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
 
 use crate::models::{PatientId, PatientNote};
