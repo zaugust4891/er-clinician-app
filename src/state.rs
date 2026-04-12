@@ -9,7 +9,7 @@ use crate::models::audit::{AuditAction, AuditEntry};
 use crate::models::note::NotePhase;
 use crate::models::patient::PatientId;
 use crate::models::result::ClinicalResult;
-use crate::models::PatientNote;
+use crate::models::{Encounter, PatientNote};
 
 // ---------------------------------------------------------------------------
 // NoteState trait — the core of the state pattern
@@ -239,23 +239,64 @@ pub fn ingest_result(note: &mut PatientNote, result: ClinicalResult) -> AppResul
 
 pub fn apply_event(note: &mut PatientNote, event: &NoteEvent) {
     match event {
-        NoteEvent::AudioStarted {
-            patient_id, 
+        NoteEvent::AudioStarted { 
             encounter_id,
             capture_mode,
             clinical_occurred_at,
+            ..
         } => {
             // Drive the state machine first so the encounter_count bumps
             // handle_audio_started calls self.apply_transition()
             // which takes the state out, appl
             note.handle_audio_started();
-            
-        
-        
-        
-        
+
+            note.encounters.push(Encounter {
+                id: *encounter_id,
+                patient_id: note.patient_id,
+                capture_mode: capture_mode.clone(),
+                started_at: *clinical_occurred_at,
+                ended_at: None,
+                transcript: None,
+                encounter_number: note.encounter_count,
+            });
+    
         }
-    }
+
+        NoteEvent::AudioStopped { 
+            encounter_id,
+            clinical_occurred_at,
+            .. 
+        } => {
+            note.handle_audio_stopped();
+            if let Some(enc) = note.encounters.iter_mut().find(|e| e.id == *encounter_id) {
+                    enc.ended_at = Some(*clinical_occurred_at);
+            }
+            // If no matching encounter: silently ignore. Replay tolerates
+            // events referencing missing encounters (should never happen
+            // in a healthy stream, but panicking on bad data is worse).
+        }
+
+        NoteEvent::TranscriptReady { 
+            encounter_id, 
+            text,
+            .. 
+        } => {
+            if let Some(enc) = note.encounters.iter_mut().find(|e| e.id == *encounter_id) {
+                enc.transcript = Some(text.clone());
+            }
+        }
+
+        NoteEvent::ResultReceived { 
+            result,
+            ..
+        } => {
+            let _ = ingest_result(note, result.clone());
+        }
+        
+        NoteEvent::TriggerMDM { .. } => note.handle_trigger_mdm(),
+        NoteEvent::ReviewReady { .. } => note.handle_review_ready(),
+        NoteEvent::Sign { .. } => note.handle_sign(),    
+     }
 }
 
 

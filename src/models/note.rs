@@ -199,9 +199,9 @@ impl PatientNote {
         transition: impl FnOnce(Box<dyn NoteState>, &mut PatientNote) -> Box<dyn NoteState>,
     ) {
         if let Some(current) = self.state.take() {
-            let old_phase = current.to_phase();
-            let new_state = transition(current, self);
-            let new_phase = new_state.to_phase();
+            let old_phase = current.to_phase(); 
+            let new_state = transition(current, self); 
+            let new_phase = new_state.to_phase(); 
 
             self.phase = new_phase.clone();
             self.state = Some(new_state);
