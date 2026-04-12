@@ -237,6 +237,31 @@ pub fn ingest_result(note: &mut PatientNote, result: ClinicalResult) -> AppResul
     Ok(())
 }
 
+pub fn apply_event(note: &mut PatientNote, event: &NoteEvent) {
+    match event {
+        NoteEvent::AudioStarted {
+            patient_id, 
+            encounter_id,
+            capture_mode,
+            clinical_occurred_at,
+        } => {
+            // Drive the state machine first so the encounter_count bumps
+            // handle_audio_started calls self.apply_transition()
+            // which takes the state out, appl
+            note.handle_audio_started();
+            
+        
+        
+        
+        
+        }
+    }
+}
+
+
+
+
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
