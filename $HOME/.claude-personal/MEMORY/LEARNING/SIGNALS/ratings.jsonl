@@ -6,3 +6,7 @@
 {"timestamp":"2026-03-17T13:50:13-04:00","rating":5,"session_id":"9ad55b69-94fe-471e-b52f-0e6013c0989e","source":"implicit","sentiment_summary":"Simple command, no emotional content","confidence":0.95}
 {"timestamp":"2026-04-08T21:00:48-04:00","rating":5,"session_id":"938a2e3d-15b2-4b2d-8d5b-fa7675da34a8","source":"implicit","sentiment_summary":"Neutral technical request, no emotional indicators","confidence":0.95}
 {"timestamp":"2026-04-08T21:11:41-04:00","rating":5,"session_id":"938a2e3d-15b2-4b2d-8d5b-fa7675da34a8","source":"implicit","sentiment_summary":"Neutral technical request, no sentiment","confidence":0.95}
+{"timestamp":"2026-04-12T22:23:57-04:00","rating":5,"session_id":"dd06c3c7-f356-4528-9567-e84ac2e9cedb","source":"implicit","sentiment_summary":"Simple command to proceed with implementation","confidence":0.95}
+{"timestamp":"2026-04-12T22:32:07-04:00","rating":5,"session_id":"dd06c3c7-f356-4528-9567-e84ac2e9cedb","source":"implicit","sentiment_summary":"Simple affirmation, no sentiment toward Silvio","confidence":0.95}
+{"timestamp":"2026-04-12T22:39:17-04:00","rating":7,"session_id":"dd06c3c7-f356-4528-9567-e84ac2e9cedb","source":"implicit","sentiment_summary":"Pleased with progress, confident in Silvio's planning ability","confidence":0.85}
+{"timestamp":"2026-04-12T23:03:06-04:00","rating":5,"session_id":"dd06c3c7-f356-4528-9567-e84ac2e9cedb","source":"implicit","sentiment_summary":"Technical question seeking architectural advice","confidence":0.95}

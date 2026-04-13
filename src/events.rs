@@ -4,6 +4,8 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use crate::models::{CaptureMode, ClinicalResult, EncounterId, PatientId};
 use crate::repository::Repository;
+use crate::error::AppResult;
+
 
 /// Events that drive the note state machine and the processing pipeline.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -76,6 +78,34 @@ impl NoteEvent {
         }
     }
 
+    pub fn audio_started(patient_id: PatientId, encounter_id: EncounterId, capture_mode: CaptureMode) -> Self {
+        NoteEvent::AudioStarted { patient_id, encounter_id, capture_mode, clinical_occurred_at: Utc::now() }
+    }
+
+    pub fn audio_stopped(patient_id: PatientId, encounter_id: EncounterId) -> Self {
+        NoteEvent::AudioStopped { patient_id, encounter_id, clinical_occurred_at: Utc::now() }
+    }
+
+    pub fn transcript_ready(patient_id: PatientId, encounter_id: EncounterId, text: String, clinical_occurred_at: DateTime<Utc>) -> Self {
+        NoteEvent::TranscriptReady { patient_id, encounter_id, text, clinical_occurred_at }
+    }
+
+    pub fn result_received(patient_id: PatientId, result: ClinicalResult, clinical_occurred_at: DateTime<Utc>) -> Self {
+        NoteEvent::ResultReceived { patient_id, result, clinical_occurred_at }
+    }
+
+    pub fn trigger_mdm(patient_id: PatientId) -> Self {
+        NoteEvent::TriggerMDM { patient_id, clinical_occurred_at: Utc::now() }
+    }
+
+    pub fn review_ready(patient_id: PatientId) -> Self {
+        NoteEvent::ReviewReady { patient_id, clinical_occurred_at: Utc::now() }
+    }
+
+    pub fn sign(patient_id: PatientId) -> Self {
+        NoteEvent::Sign { patient_id, clinical_occurred_at: Utc::now() }
+    }
+
     pub fn extract_encounter_id(&self) -> Option<EncounterId> {
         match self {
             NoteEvent::AudioStarted { encounter_id, ..} => Some(*encounter_id),
@@ -86,12 +116,18 @@ impl NoteEvent {
     }
 }
 
+use crate::state::{apply_event, PatientNoteStore};
+use crate::models::{NotePhase, PatientNote};
 /// Broadcast event bus — multiple consumers, single producer per event.
 /// Persists first before broadcasting to in-memory subscribers - durable before ephemeral
 pub struct EventBus {
     sender: broadcast::Sender<NoteEvent>,
     repository: Option<Arc<dyn Repository>>,
 }
+///
+/// EventBus::publish()` takes a `&PatientNoteStore` parameter and updates 
+/// the in-memory projection under the same control flow that persists the event. 
+/// Snapshots fire when the resulting phase is `Idle`, `Finalizing`, or `Signed`.
 
 impl EventBus {
     pub fn new(capacity: usize, repository: Option<Arc<dyn Repository>>) -> Self {
@@ -99,15 +135,65 @@ impl EventBus {
         Self { sender, repository }
     }
 
-    pub fn publish(&self, event: NoteEvent) -> crate::error::AppResult<()> {
-        if let Some(repo) = &self.repository {
-            repo.append_event(event.extract_patient_id(), event.clone())?;
+    pub fn publish(&self, event: NoteEvent, store: &PatientNoteStore) -> AppResult<u64> {
+        let patient_id = event.extract_patient_id();
+
+        // 1. Persist-first (durable before ephemeral).
+        let seq_id = if let Some(repo) = &self.repository {
+            repo.append_event(patient_id, event.clone())?
+        } else {
+            0
+        };
+
+        // 2. Synchronously project to the in-memory store.
+        // This is creative improvement #7 — the DashMap and SQLite stay consistent because 
+        // they are updated in the same code path. Broadcast subscribers never touch state.
+        
+        let phase_after = {
+            let mut entry = store.entry(patient_id).or_insert_with(|| {
+                PatientNote::new(patient_id)
+            });
+            apply_event(&mut *entry, &event);
+            entry.phase.clone()
+            // DashMap write lock on this shard is dropped - NotePhase escapes 
+
+        };
+
+        // 3. Trigger snapshot on significant phase transitions.
+        //    Only when we actually persisted (seq_id != 0) and a repo exists.
+        if seq_id != 0 {
+            if let Some(repo) = &self.repository {
+                if matches!(
+                    phase_after,
+                    NotePhase::Idle | NotePhase::Finalizing | NotePhase::Signed
+                ) {
+                    // Read the full note back from the store under a short-lived
+                    // borrow using store.get(&patient_id )for serialization. save_snapshot serializes
+                    // under its own lock, so we release the DashMap lock
+                    // first by cloning. Clones the PatientNote out of the ref immediately, 
+                    // which then drops the read lock before save_snapshot is called. 
+                    if let Some(snapshot) = store.get(&patient_id).map(|r| r.clone()) {
+                        // Best-effort — a snapshot failure should not kill the publish path. Log it and move on.
+                        if let Err(e) = repo.save_snapshot(patient_id, seq_id, &snapshot) {
+                            tracing::warn!( 
+                                patient_id = %patient_id,
+                                sequence_id = %seq_id,
+                                error = ?e,
+                                "snapshot save failed - continuing without"
+                            );
+                        }
+                    }
+                }
+            }
         }
 
+        // 4. Broadcast (notifications only).
         let _ = self.sender.send(event);
-        Ok(())
+        Ok(seq_id)
     }
-
+    // ***NOTE***
+    /// Subscribers get notified, but they're explicitly not responsible for state updates.
+    /// ***UI code*** reads from the DashMap, which is now guaranteed current.
     pub fn subscribe(&self) -> broadcast::Receiver<NoteEvent> {
         self.sender.subscribe()
     }

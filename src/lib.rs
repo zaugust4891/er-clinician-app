@@ -10,3 +10,6 @@ pub mod repository;
 pub mod state;
 pub mod stt;
 pub mod summarizer;
+
+#[cfg(test)]
+mod tests;

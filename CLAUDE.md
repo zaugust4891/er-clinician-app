@@ -6,7 +6,7 @@ Rust-based iOS ambient clinical documentation system for emergency departments. 
 
 Key differentiator: **multi-encounter merging** — captures every interaction across a patient's entire ED stay and stitches them into one coherent note. Abridge/DAX record a single conversation; this records the full visit.
 
-## Current Branch: `db-snapshot-mechanism`
+## Current Branch: `master`
 
 ## What's Working
 
@@ -15,19 +15,21 @@ Key differentiator: **multi-encounter merging** — captures every interaction a
 - De-identification (regex-based PHI stripping before API calls)
 - Plain text note export
 - Serialization round-trip (hydrate test passes)
-- SQLite schema with events table
+- SQLite schema with events + snapshots tables
+- `SqliteRepository` — full implementation of event append, query, snapshot save/load with SHA-256 checksum validation
+- `replay()` and `apply_event()` — reconstruct PatientNote from event stream
+- `load_patient_note()` — snapshot fast-path with delta replay, full replay fallback
+- `EventBus` — persist-first, then project to in-memory DashMap, then broadcast; snapshots on Idle/Finalizing/Signed transitions
+- NoteEvent convenience constructors (`audio_started`, `audio_stopped`, etc.)
 
 ## What's Stubbed
 
-- `Repository` trait methods are `todo!()`
-- `replay()` function in `state.rs` is `todo!()`
-- EventBus publishes and persists before broadcasting
 - No iOS platform layer (audio, FFI)
 - No EMR/FHIR integration
 
-## Next Implementation: EventBus Persistence Wiring + Snapshots
+## Completed: EventBus Persistence Wiring + Snapshots
 
-Strategy B from `repository-architecture.md`, steps 4 and 5. Plan is fully designed, ready to code.
+Strategy B from `repository-architecture.md`, steps 4 and 5. Fully implemented and tested.
 
 ### Design Decision: Persist-First, Then Broadcast
 
@@ -81,10 +83,11 @@ Product pitch document: `product-summary.md`
 
 | File | Purpose |
 |------|---------|
-| `src/state.rs` | State pattern, NoteState trait, replay (todo), PatientNoteStore |
+| `src/state.rs` | State pattern, NoteState trait, replay, apply_event, load_patient_note, PatientNoteStore |
 | `src/models/note.rs` | PatientNote aggregate, NotePhase enum, transition methods |
-| `src/events.rs` | NoteEvent enum, EventBus (broadcast channel) |
-| `src/repository.rs` | Repository trait (todo stubs) |
+| `src/events.rs` | NoteEvent enum + constructors, EventBus (persist-first broadcast) |
+| `src/repository.rs` | Repository trait, SqliteRepository (events + snapshots + checksum) |
+| `src/tests/persistence_integration.rs` | Integration tests: round-trip, snapshot, checksum, consistency |
 | `src/db.rs` | SQLite schema, open_db/open_memory_db |
 | `src/claude_summarizer.rs` | Real Claude API client for HPI/ROS/Exam/MDM |
 | `src/export.rs` | Plain text note formatting |

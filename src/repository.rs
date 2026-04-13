@@ -29,6 +29,14 @@ impl SqliteRepository {
     }
 }
 
+#[cfg(test)]
+impl SqliteRepository {
+    pub fn execute_raw(&self, sql: &str, params: &[&dyn rusqlite::types::ToSql]) {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(sql, params).unwrap();
+    }
+}
+
 impl Repository for SqliteRepository {
     fn append_event(&self, patient_id: PatientId, event: NoteEvent) -> AppResult<u64> {
         let conn = self.conn.lock().unwrap();
