@@ -10,7 +10,7 @@ use crate::models::note::NotePhase;
 use crate::models::patient::PatientId;
 use crate::models::result::ClinicalResult;
 use crate::models::{Encounter, PatientNote};
-
+use crate::repository::Repository;
 // ---------------------------------------------------------------------------
 // NoteState trait — the core of the state pattern
 // ---------------------------------------------------------------------------
@@ -195,8 +195,15 @@ pub fn state_from_phase(phase: &NotePhase) -> Box<dyn NoteState> {
     }
 }
 
-pub fn replay(events: &[NoteEvent]) -> PatientNote {
-    todo!()
+/// Reconstruct a PatientNote from a sequence of events, starting from
+/// a fresh Registered state. Events must be in order (caller guarantees
+/// this by querying with ORDER BY sequence_id ASC).
+pub fn replay(patient_id: PatientId, events: &[NoteEvent]) -> PatientNote {
+    let mut note = PatientNote::new(patient_id);
+    for event in events {
+        apply_event(&mut note, event);
+    }
+    note
 }
 
 // ---------------------------------------------------------------------------
@@ -299,8 +306,42 @@ pub fn apply_event(note: &mut PatientNote, event: &NoteEvent) {
      }
 }
 
+/// Load a PatientNote from the repository. Uses the snapshot fast-path
+/// when available, falls back to full event replay when not. Returns
+/// None if no events exist for this patient (fresh/unknown patient).
+pub fn load_patient_note(repo: &dyn Repository, patient_id: PatientId) -> AppResult<Option<PatientNote>> {
+    // Fast path: snapshot exists and checksum validates.
+    if let Some((sequence_id, mut note)) = repo.get_latest_snapshot(patient_id)? {
+        let delta = repo.get_events_since(patient_id, sequence_id)?;
+        for stored in &delta {
+            apply_event(&mut note, &stored.event);
+        }
+        return Ok(Some(note));
+    }
 
+    // Slow path: no snapshot (or checksum mismatch -> Ok(None) from repo).
+    // Fulle replay from the event stream.
+    let events = repo.get_events(patient_id)?;
+    if events.is_empty() {
+        return Ok(None);
+    }
 
+    let event_refs: Vec<&NoteEvent> = events.iter().map(|se| &se.event).collect();
+    // replay() takes a slice of NoteEvent, not &NoteEvent - collect into owned.
+    let owned: Vec<NoteEvent> = event_refs.into_iter().cloned().collect();
+    Ok(Some(replay(patient_id, &owned)))
+
+    /* NOTE:
+    The `clone` is a minor inefficiency. If it becomes a hot path (it shouldn't — this runs at cold start, not per-event),
+    switch `replay` to take `&[&NoteEvent]` or an iterator.
+
+    Dependency:vThis function must be importable without a circular dep. `state.rs` 
+    already depends on `events.rs` for `NoteEvent`
+    and will now additionally depend on `repository::{Repository, StoredEvent}`. 
+    That's fine — `repository.rs` depends on `state` (via `PatientNote`), 
+    but only for types, not for this function. The dependency graph stays acyclic.
+    */
+}
 
 
 // ---------------------------------------------------------------------------
