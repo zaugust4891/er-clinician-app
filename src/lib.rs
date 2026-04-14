@@ -2,6 +2,7 @@ pub mod audio;
 pub mod claude_summarizer;
 pub mod db;
 pub mod deidentify;
+pub mod encounter_driver;
 pub mod error;
 pub mod events;
 pub mod export;
