@@ -12,8 +12,8 @@ fn publish_persists_projects_snapshots_and_loads() {
     let store = crate::state::new_store();
     let bus = EventBus::new(32, Some(repo.clone()));
 
-    let patient_id = Uuid::new_v4();
-    let encounter_id = Uuid::new_v4();
+    let patient_id = Uuid::now_v7();
+    let encounter_id = Uuid::now_v7();
 
     bus.publish(NoteEvent::audio_started(patient_id, encounter_id, CaptureMode::Ambient), &store).unwrap();
     bus.publish(NoteEvent::transcript_ready(patient_id, encounter_id, "cp".into(), Utc::now()), &store).unwrap();
@@ -45,7 +45,7 @@ fn load_nonexistent_patient_returns_none() {
     let conn = crate::db::open_memory_db().unwrap();
     let repo = SqliteRepository::new(conn);
 
-    let loaded = crate::state::load_patient_note(&repo, Uuid::new_v4()).unwrap();
+    let loaded = crate::state::load_patient_note(&repo, Uuid::now_v7()).unwrap();
     assert!(loaded.is_none());
 }
 
@@ -58,8 +58,8 @@ fn load_uses_snapshot_delta_path() {
     let store = crate::state::new_store();
     let bus = EventBus::new(32, Some(repo.clone()));
 
-    let patient_id = Uuid::new_v4();
-    let encounter_id = Uuid::new_v4();
+    let patient_id = Uuid::now_v7();
+    let encounter_id = Uuid::now_v7();
 
     bus.publish(NoteEvent::audio_started(patient_id, encounter_id, CaptureMode::Ambient), &store).unwrap();
     bus.publish(NoteEvent::audio_stopped(patient_id, encounter_id), &store).unwrap();
@@ -82,8 +82,8 @@ fn corrupted_checksum_falls_back_to_full_replay() {
     let store = crate::state::new_store();
     let bus = EventBus::new(32, Some(repo.clone()));
 
-    let patient_id = Uuid::new_v4();
-    let encounter_id = Uuid::new_v4();
+    let patient_id = Uuid::now_v7();
+    let encounter_id = Uuid::now_v7();
 
     bus.publish(NoteEvent::audio_started(patient_id, encounter_id, CaptureMode::Ambient), &store).unwrap();
     bus.publish(NoteEvent::audio_stopped(patient_id, encounter_id), &store).unwrap();
@@ -114,8 +114,8 @@ fn store_and_sqlite_stay_consistent() {
     let store = crate::state::new_store();
     let bus = EventBus::new(32, Some(repo.clone()));
 
-    let patient_id = Uuid::new_v4();
-    let encounter_id = Uuid::new_v4();
+    let patient_id = Uuid::now_v7();
+    let encounter_id = Uuid::now_v7();
 
     bus.publish(NoteEvent::audio_started(patient_id, encounter_id, CaptureMode::Ambient), &store).unwrap();
     bus.publish(NoteEvent::transcript_ready(patient_id, encounter_id, "sob".into(), Utc::now()), &store).unwrap();

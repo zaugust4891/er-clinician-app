@@ -359,7 +359,7 @@ mod tests {
 
     fn build_test_lab_result(patient_id: PatientId) -> ClinicalResult {
         ClinicalResult {
-            id: Uuid::new_v4(),
+            id: Uuid::now_v7(),
             patient_id,
             source: ResultSource::Manual,
             timestamp: Utc::now(),
@@ -377,8 +377,8 @@ mod tests {
 
     #[test]
     fn apply_event_audio_started_creates_encounter() {
-        let mut note = PatientNote::new(Uuid::new_v4());
-        let encounter_id = Uuid::new_v4();
+        let mut note = PatientNote::new(Uuid::now_v7());
+        let encounter_id = Uuid::now_v7();
         let event = NoteEvent::audio_started(
             note.patient_id,
             encounter_id,
@@ -395,9 +395,9 @@ mod tests {
 
     #[test]
     fn apply_event_audio_stopped_closes_encounter() {
-        let mut note = PatientNote::new(Uuid::new_v4());
+        let mut note = PatientNote::new(Uuid::now_v7());
         let patient_id = note.patient_id;
-        let encounter_id = Uuid::new_v4();
+        let encounter_id = Uuid::now_v7();
         apply_event(&mut note, &NoteEvent::audio_started(patient_id, encounter_id, CaptureMode::Ambient));
         apply_event(&mut note, &NoteEvent::audio_stopped(patient_id, encounter_id));
 
@@ -407,9 +407,9 @@ mod tests {
 
     #[test]
     fn apply_event_transcript_attaches_to_encounter() {
-        let mut note = PatientNote::new(Uuid::new_v4());
+        let mut note = PatientNote::new(Uuid::now_v7());
         let patient_id = note.patient_id;
-        let encounter_id = Uuid::new_v4();
+        let encounter_id = Uuid::now_v7();
         apply_event(&mut note, &NoteEvent::audio_started(patient_id, encounter_id, CaptureMode::Ambient));
         apply_event(&mut note, &NoteEvent::transcript_ready(
             patient_id,
@@ -423,15 +423,15 @@ mod tests {
 
     #[test]
     fn replay_empty_events_returns_registered() {
-        let note = replay(Uuid::new_v4(), &[]);
+        let note = replay(Uuid::now_v7(), &[]);
         assert_eq!(note.phase, NotePhase::Registered);
         assert_eq!(note.encounter_count, 0);
     }
 
     #[test]
     fn replay_full_lifecycle_reaches_signed() {
-        let patient_id = Uuid::new_v4();
-        let encounter_id = Uuid::new_v4();
+        let patient_id = Uuid::now_v7();
+        let encounter_id = Uuid::now_v7();
         let events = vec![
             NoteEvent::audio_started(patient_id, encounter_id, CaptureMode::Ambient),
             NoteEvent::transcript_ready(patient_id, encounter_id, "chest pain".into(), Utc::now()),
@@ -451,9 +451,9 @@ mod tests {
 
     #[test]
     fn replay_multi_encounter_increments_count() {
-        let patient_id = Uuid::new_v4();
-        let e1 = Uuid::new_v4();
-        let e2 = Uuid::new_v4();
+        let patient_id = Uuid::now_v7();
+        let e1 = Uuid::now_v7();
+        let e2 = Uuid::now_v7();
         let events = vec![
             NoteEvent::audio_started(patient_id, e1, CaptureMode::Ambient),
             NoteEvent::audio_stopped(patient_id, e1),
@@ -471,8 +471,8 @@ mod tests {
 
     #[test]
     fn apply_event_result_received_after_sign_is_noop() {
-        let patient_id = Uuid::new_v4();
-        let encounter_id = Uuid::new_v4();
+        let patient_id = Uuid::now_v7();
+        let encounter_id = Uuid::now_v7();
         let events = vec![
             NoteEvent::audio_started(patient_id, encounter_id, CaptureMode::Ambient),
             NoteEvent::audio_stopped(patient_id, encounter_id),
@@ -496,7 +496,7 @@ mod tests {
     }
     #[test]
     fn registered_to_encountering_on_audio_start() {
-        let mut note = PatientNote::new(uuid::Uuid::new_v4());
+        let mut note = PatientNote::new(uuid::Uuid::now_v7());
         assert_eq!(note.phase, NotePhase::Registered);
         assert_eq!(note.encounter_count, 0);
 
@@ -508,7 +508,7 @@ mod tests {
 
     #[test]
     fn encountering_to_idle_on_audio_stop() {
-        let mut note = PatientNote::new(uuid::Uuid::new_v4());
+        let mut note = PatientNote::new(uuid::Uuid::now_v7());
         note.handle_audio_started();
         note.handle_audio_stopped();
 
@@ -517,7 +517,7 @@ mod tests {
 
     #[test]
     fn idle_encountering_cycle() {
-        let mut note = PatientNote::new(uuid::Uuid::new_v4());
+        let mut note = PatientNote::new(uuid::Uuid::now_v7());
 
         // First encounter
         note.handle_audio_started();
@@ -536,7 +536,7 @@ mod tests {
 
     #[test]
     fn idle_to_finalizing_to_signed() {
-        let mut note = PatientNote::new(uuid::Uuid::new_v4());
+        let mut note = PatientNote::new(uuid::Uuid::now_v7());
         note.handle_audio_started();
         note.handle_audio_stopped();
 
@@ -552,7 +552,7 @@ mod tests {
 
     #[test]
     fn finalizing_can_return_to_encountering() {
-        let mut note = PatientNote::new(uuid::Uuid::new_v4());
+        let mut note = PatientNote::new(uuid::Uuid::now_v7());
         note.handle_audio_started();
         note.handle_audio_stopped();
         note.handle_trigger_mdm();
@@ -565,7 +565,7 @@ mod tests {
 
     #[test]
     fn signed_rejects_results() {
-        let mut note = PatientNote::new(uuid::Uuid::new_v4());
+        let mut note = PatientNote::new(uuid::Uuid::now_v7());
         note.handle_audio_started();
         note.handle_audio_stopped();
         note.handle_trigger_mdm();
@@ -573,7 +573,7 @@ mod tests {
         note.handle_sign();
 
         let result = ClinicalResult {
-            id: uuid::Uuid::new_v4(),
+            id: uuid::Uuid::now_v7(),
             patient_id: note.patient_id,
             source: crate::models::ResultSource::Manual,
             timestamp: Utc::now(),
@@ -594,7 +594,7 @@ mod tests {
 
     #[test]
     fn invalid_transition_is_noop() {
-        let mut note = PatientNote::new(uuid::Uuid::new_v4());
+        let mut note = PatientNote::new(uuid::Uuid::now_v7());
         // Registered → TriggerMDM is invalid — should stay Registered
         note.handle_trigger_mdm();
         assert_eq!(note.phase, NotePhase::Registered);
@@ -602,7 +602,7 @@ mod tests {
 
     #[test]
     fn clone_preserves_state() {
-        let mut note = PatientNote::new(uuid::Uuid::new_v4());
+        let mut note = PatientNote::new(uuid::Uuid::now_v7());
         note.handle_audio_started();
         note.handle_audio_stopped();
         assert_eq!(note.phase, NotePhase::Idle);
@@ -615,14 +615,14 @@ mod tests {
 
     #[test]
     fn debug_output_includes_state() {
-        let note = PatientNote::new(uuid::Uuid::new_v4());
+        let note = PatientNote::new(uuid::Uuid::now_v7());
         let debug = format!("{:?}", note);
         assert!(debug.contains("Registered"));
     }
 
     #[test]
     fn hydrate_reconstructs_state() {
-        let mut note = PatientNote::new(uuid::Uuid::new_v4());
+        let mut note = PatientNote::new(uuid::Uuid::now_v7());
         note.handle_audio_started();
         note.handle_audio_stopped();
 

@@ -29,7 +29,7 @@ pub enum AuditAction {
 impl AuditEntry {
     pub fn new(action: AuditAction, details: impl Into<String>) -> Self {
         Self {
-            id: Uuid::new_v4(),
+            id: Uuid::now_v7(),
             timestamp: Utc::now(),
             action,
             details: details.into(),

@@ -1,4 +1,4 @@
-use crate::error::AppResult;
+use crate::error::{AppResult, AppError};
 use crate::models::{CaptureMode, PatientId, EncounterId};
 
 /// Platform-agnostic audio capture interface.
@@ -51,6 +51,13 @@ impl Default for MockAudioCapture {
 
 impl AudioCapture for MockAudioCapture {
     fn start(&mut self, patient_id: PatientId, encounter_id: EncounterId, mode: CaptureMode) -> AppResult<()> {
+        if self.recording {
+            return Err(AppError::Audio(
+                "audio capture is already recording.".to_string(), 
+            ));
+
+        }
+        
         self.recording = true;
         self.active_patient = Some(patient_id);
         self.encounter = Some(encounter_id);

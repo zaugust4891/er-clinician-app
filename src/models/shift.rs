@@ -19,7 +19,7 @@ pub struct Shift {
 impl Shift {
     pub fn new() -> Self {
         Self {
-            id: Uuid::new_v4(),
+            id: Uuid::now_v7(),
             started_at: Utc::now(),
             ended_at: None,
             patient_ids: Vec::new(),

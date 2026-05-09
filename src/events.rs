@@ -216,8 +216,8 @@ mod tests {
     /// Unit test for extract_patient_id() method.
     #[test]
     fn extract_patient_id() {
-        let patient_id = PatientId::new_v4();
-        let encounter_id = EncounterId::new_v4();
+        let patient_id = PatientId::now_v7();
+        let encounter_id = EncounterId::now_v7();
         let event = NoteEvent::AudioStarted {
             patient_id,
             capture_mode: CaptureMode::Ambient,
@@ -231,8 +231,8 @@ mod tests {
 
     #[test]
     fn event_type_returns_correct_string_for_each_variant() {
-        let patient_id = PatientId::new_v4();
-        let encounter_id = EncounterId::new_v4();
+        let patient_id = PatientId::now_v7();
+        let encounter_id = EncounterId::now_v7();
         let now = Utc::now();
 
         let cases: Vec<(NoteEvent, &'static str)> = vec![
@@ -242,7 +242,7 @@ mod tests {
             (NoteEvent::ResultReceived {
                 patient_id,
                 result: crate::models::ClinicalResult {
-                    id: uuid::Uuid::new_v4(),
+                    id: uuid::Uuid::now_v7(),
                     patient_id,
                     source: crate::models::ResultSource::Manual,
                     timestamp: now,
@@ -267,8 +267,8 @@ mod tests {
 
      #[test]
     fn extract_encounter_id() {
-        let patient_id = PatientId::new_v4();
-        let encounter_id = EncounterId::new_v4();
+        let patient_id = PatientId::now_v7();
+        let encounter_id = EncounterId::now_v7();
         let event = NoteEvent::AudioStarted {
             patient_id,
             capture_mode: CaptureMode::Ambient,

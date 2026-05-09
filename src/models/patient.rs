@@ -21,7 +21,7 @@ pub struct PatientRecord {
 impl PatientRecord {
     pub fn new(chief_complaint: impl Into<String>) -> Self {
         Self {
-            id: Uuid::new_v4(),
+            id: Uuid::now_v7(),
             first_name: None,
             last_name: None,
             age: None,

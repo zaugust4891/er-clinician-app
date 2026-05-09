@@ -32,7 +32,7 @@ pub struct Encounter {
 impl Encounter {
     pub fn new(patient_id: PatientId, capture_mode: CaptureMode, encounter_number: u32) -> Self {
         Self {
-            id: Uuid::new_v4(),
+            id: Uuid::now_v7(),
             patient_id,
             capture_mode,
             started_at: Utc::now(),
