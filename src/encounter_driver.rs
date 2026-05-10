@@ -8,6 +8,11 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use uuid::{Uuid};
 
+pub struct ActiveEncounter {
+    patient_id: PatientId,
+    encounter_id: EncounterId,
+    started_at: DateTime<Utc>,
+}
 pub struct EncounterDriver<A: AudioCapture, T: Transcriber> {
     audio: A,
     transcriber: T,
@@ -36,13 +41,39 @@ impl<A: AudioCapture, T: Transcriber>EncounterDriver<A, T> {
 
         Ok(encounter_id)
     }
+
+    ///TO DO: Implement stop_encounter()
+    /// Purpose: 
+    /// Stop recording, 
+    /// Run speech-to-text on the captured audio, 
+    /// Publish both 'AudioStopped' and TranscriptReady events
+    /// 
+    /// Note: 
+    /// AudioStopped should publish BEFORE transcription
+    /// Transcription takes time - Whisper will take seconds,
+    /// The state machine should transition to 'Idle' the moment the clinician stops talking, not after transcription finishes
+    /// (This is triggered on the UI by a 'stop-tap' or a 'direct switch', meaning a voice activated command switch or tapping a different patients button. 
+    ///   e.g, the doctor switches through  voice) 
+    pub fn stop_encounter(&mut self) -> AppResult<EncounterId> {
+        let active = self.active_encounter.take().unwrap();
+        let pcm_bytes = self.audio.stop()?;
+        
+        self.bus.publish(NoteEvent::audio_stopped(active.patient_id, active.encounter_id), &self.store)?;
+
+        let transcript_result = self.transcriber.transcribe(&pcm_bytes)?;
+
+        self.bus.publish(NoteEvent::transcript_ready(
+            active.patient_id,
+            active.encounter_id, 
+            transcript_result.text,
+            Utc::now(),
+        ), &self.store)?;
+
+        Ok(active.encounter_id)
+    }
 }
 
-pub struct ActiveEncounter {
-    patient_id: PatientId,
-    encounter_id: EncounterId,
-    started_at: DateTime<Utc>,
-}
+
 
 
 
