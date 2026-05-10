@@ -71,6 +71,32 @@ impl<A: AudioCapture, T: Transcriber>EncounterDriver<A, T> {
 
         Ok(active.encounter_id)
     }
+
+
+    /// This will be used for Active patient context + 'switch_patient`
+    /// When the clinician taps the Apple Watch/Iphone to switch patients
+    /// the system needs to:
+    /// - stop the current encounter, 
+    /// - flush its audio/transcript, and start a new encounter for the new patient
+    ///  -- all atomically from the clinician's perspective.
+    pub fn switch_patient(&mut self, new_patient_id: PatientId, mode: CaptureMode) -> AppResult<EncounterId> {
+        if self.active_encounter.is_some() {
+            self.stop_encounter()?;
+        }
+
+        let new_encounter_id = self.start_encounter(new_patient_id, mode);
+        new_encounter_id
+    }
+
+
+
+
+
+
+
+
+
+
 }
 
 
