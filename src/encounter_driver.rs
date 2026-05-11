@@ -88,7 +88,7 @@ impl<A: AudioCapture, T: Transcriber>EncounterDriver<A, T> {
         new_encounter_id
     }
 
-
+    
 
 
 

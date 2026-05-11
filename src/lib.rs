@@ -8,6 +8,7 @@ pub mod events;
 pub mod export;
 pub mod models;
 pub mod repository;
+pub mod shift_manager;
 pub mod state;
 pub mod stt;
 pub mod summarizer;
