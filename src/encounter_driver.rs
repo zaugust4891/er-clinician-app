@@ -55,7 +55,10 @@ impl<A: AudioCapture, T: Transcriber>EncounterDriver<A, T> {
     /// (This is triggered on the UI by a 'stop-tap' or a 'direct switch', meaning a voice activated command switch or tapping a different patients button. 
     ///   e.g, the doctor switches through  voice) 
     pub fn stop_encounter(&mut self) -> AppResult<EncounterId> {
-        let active = self.active_encounter.take().unwrap();
+        let active = self.active_encounter.take().ok_or_else(|| {
+            AppError::Audio("no encounter in progress".to_string())
+        })?;
+        
         let pcm_bytes = self.audio.stop()?;
         
         self.bus.publish(NoteEvent::audio_stopped(active.patient_id, active.encounter_id), &self.store)?;
@@ -87,6 +90,16 @@ impl<A: AudioCapture, T: Transcriber>EncounterDriver<A, T> {
         let new_encounter_id = self.start_encounter(new_patient_id, mode);
         new_encounter_id
     }
+
+    pub fn has_active_encounter(&self) -> bool {
+        self.active_encounter.is_some()
+    }
+
+    pub fn active_patient_id(&self) -> Option<PatientId> {
+        self.active_encounter.as_ref().map(|e| e.patient_id)
+    }
+
+
 
     
 

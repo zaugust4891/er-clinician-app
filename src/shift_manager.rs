@@ -36,4 +36,47 @@ impl<A: AudioCapture, T: Transcriber>ShiftManager<A, T> {
         patient_id
         
     }
+
+    
+
+    pub fn start_encounter(&mut self, mode: CaptureMode) -> AppResult<EncounterId> {
+
+        let patient_id = self.active_patient_id.ok_or_else(|| { AppError::Audio(
+                "No active patient. Please register and select one first."
+                    .to_string()
+            )
+        })?;
+
+        self.driver.start_encounter(patient_id, mode)
+        
+    }
+
+    pub fn stop_encounter(&mut self) -> AppResult<EncounterId> {
+        self.driver.stop_encounter()
+
+    }
+    
+    pub fn set_active_patient(&mut self, new_id: PatientId ) -> AppResult<()> {
+        // Validate the patient is actually registered in this shift
+        if !self.patients.contains_key(&new_id) {
+            return Err(AppError::PatientNotFound(new_id));
+        } 
+
+        // No-op - if it's already the active patient.
+        if self.active_patient_id == Some(new_id) {
+            return Ok(());
+        }
+
+        // If an encounter is in progress (for the OLD patient), close it cleanly.
+        if self.driver.has_active_encounter() {
+            self.driver.stop_encounter()?;
+        }
+
+        // Switch context. We do NOT auto-start a new encounter - that's a separate clinician action.
+        self.active_patient_id = Some(new_id);
+
+        Ok(())
+    }
+
+
 }
