@@ -12,6 +12,15 @@ pub enum AppError {
     #[error("patient not found: {0}")]
     PatientNotFound(uuid::Uuid),
 
+    #[error("patient id mismatch: {0}")]
+    PatientIdError(String),
+
+    #[error("no active patient: {0}")]
+    NoActivePatient(String),
+
+    #[error("lab error: {0}")]
+    LabResultError(String),
+    
     #[error("no active shift")]
     NoActiveShift,
 
