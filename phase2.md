@@ -423,6 +423,289 @@ Available commands:
 
 ---
 
+#### Step 6 — Detailed Implementation Logic
+
+The sections above describe *what* the CLI does. The sections below describe *how*, broken into the startup flow, the command loop, and each command handler. Pseudocode only; the actual Rust translation should be straightforward once the logic is settled.
+
+##### A. `main()` startup flow
+
+###### A1. Initialize tracing
+Set up `tracing_subscriber` with a default filter (probably `info` level). This gives you a single place to enable verbose event logging later by setting `RUST_LOG=debug`. Do this first so any setup errors are logged through the same channel.
+
+###### A2. Decide on the database path
+Per the plan: a file-based SQLite database, not in-memory. The plan suggests `./er_notes.db` or `./er_notes_<shift_id>.db`. For Phase 2, keep it simple — a fixed `./er_notes.db` in the current working directory. The shift-id-suffix variation matters only if you want multiple parallel shifts on the same machine; defer that until it actually causes a problem.
+
+###### A3. Open SQLite
+Call `db::open_db("./er_notes.db")` (the file-based equivalent of `open_memory_db`). This runs the schema migration if the file is new and validates the schema if it already exists. The function returns `AppResult<Connection>`; on failure, the error is already an `AppError` (typically `AppError::Db(rusqlite::Error)`). Handle it with an explicit match + `eprintln!` + `std::process::exit(1)` so the user gets a clean one-line message (`thiserror`'s `Display` impl) rather than a `Debug` dump. Use `eprintln!` to keep stdout clean for actual data output. Consider including a hint such as "check the current directory is writable."
+
+###### A4. Build the persistence + event stack
+In order:
+1. Wrap the connection in `SqliteRepository::new(connection)`.
+2. Box it in an `Arc<dyn Repository>`.
+3. Construct `EventBus::new(1024, Some(repo.clone()))` — the existing constructor at `src/events.rs:133`. The first arg is the broadcast channel capacity (any round number is fine — there are no subscribers in the CLI). The second arg is the optional repository; always `Some(...)` in the CLI since we always want persistence.
+4. Wrap the bus in `Arc<EventBus>`. Both `ShiftManager` and `EncounterDriver` hold `Arc<EventBus>`, so the bus must be shared.
+5. Create an empty `PatientNoteStore` via `state::new_store()`.
+
+Order matters because the bus needs the repo, and the store is a separate concern that lives alongside.
+
+###### A5. Build the mocks
+Instantiate `MockAudioCapture` and `MockTranscriber`. These have no configuration — just defaults. Pass them into a new `EncounterDriver::new(audio, transcriber, bus.clone(), store.clone())`.
+
+###### A6. Determine whether we're starting fresh or resuming
+Check if `./shift.json` exists:
+
+- **Exists:** read it, deserialize into a `Shift` and `Vec<PatientRecord>`. For each patient record, call `load_patient_note(repo, patient_id)` to reconstruct the note from SQLite and insert it back into the `PatientNoteStore`. The active patient context (`active_patient_id`) is intentionally NOT persisted — the clinician should re-select on resume, both for safety (confirms intent) and simplicity.
+- **Doesn't exist:** create a fresh `Shift::new()` and empty patient list.
+
+Build the `ShiftManager` from these pieces: `shift`, the rebuilt `patients` HashMap, `active_patient_id: None`, the driver, the bus, the store.
+
+###### A7. Print the welcome banner
+Show the version, the database path, the count of patients reloaded (if any), and the list of available commands. Make it obvious whether this is a fresh shift or a resumed one.
+
+###### A8. Enter the command loop
+Loop forever (until the user types `quit`):
+1. Print a prompt — something like `> ` or `[patient name]> ` if an active patient is set.
+2. Read one line from stdin using `std::io::stdin().read_line(...)`.
+3. If EOF (Ctrl-D), treat it like `quit`.
+4. Trim whitespace.
+5. If the line is empty, loop back.
+6. Parse the line into a `Command` enum (see section B).
+7. Dispatch to the appropriate handler.
+8. Print the handler's result — either a success message or the formatted error.
+
+###### A9. On quit
+Before exiting:
+1. If an encounter is in progress, call `manager.stop_encounter()` to flush audio and transcript cleanly. Ignore errors here but log them — we're shutting down.
+2. Serialize the current `Shift` and `Vec<PatientRecord>` to `./shift.json` so the next run can resume.
+3. Drop the manager (which drops the SQLite connection — WAL files get checkpointed).
+4. Exit with code 0.
+
+##### B. The `Command` enum and parsing
+
+Define a `Command` enum with one variant per supported command:
+
+```
+Command::New(chief_complaint: String)
+Command::List
+Command::Switch(index: usize)
+Command::Start(mode: CaptureMode)
+Command::Stop
+Command::Lab { name, value, unit }
+Command::Mdm
+Command::Review
+Command::Sign
+Command::Note
+Command::Export
+Command::Reload
+Command::Status
+Command::Quit
+Command::Unknown(line: String)  // for error messages
+```
+
+Parsing happens in one function — `parse_command(line: &str) -> Command`. The logic:
+
+1. Split the line by whitespace into a `Vec<&str>`.
+2. Match on the first token:
+   - `"new"` → `Command::New(rest_joined_by_space)`. Empty rest → return an error variant or a `Command::Unknown` with a helpful message.
+   - `"list"` → `Command::List`.
+   - `"switch"` → parse second token as `usize`. On failure, `Command::Unknown`.
+   - `"start"` → parse second token: `"ambient"` (default if missing) → `CaptureMode::Ambient`; `"dictation"` → `CaptureMode::Dictation`. Anything else → unknown.
+   - `"stop"` → `Command::Stop`.
+   - `"lab"` → expect 3 args (name, value, unit). Parse value as `f64`. Missing or unparseable → unknown.
+   - `"mdm"`, `"review"`, `"sign"`, `"note"`, `"export"`, `"reload"`, `"status"`, `"quit"` → their respective variants, no args.
+   - Anything else → `Command::Unknown`.
+
+Keep parsing dumb. It produces a `Command` or an error variant; the dispatcher decides what to do with it. No business logic in the parser.
+
+##### C. Per-command handler logic
+
+Each handler takes `&mut ShiftManager` and the command's payload. Each prints a one-line success message or a formatted error.
+
+###### `new <chief-complaint>`
+1. Call `manager.register_patient(chief_complaint)` — returns the new `PatientId`.
+2. Print: `"Registered patient <uuid> with chief complaint '<cc>'"`.
+3. Print: `"Tip: type 'switch <index>' or 'list' to see the patient index"`.
+
+Does NOT auto-set the patient as active. Forces an explicit `switch` step, which is consistent with the plan's "switching context and starting recording are separate actions" philosophy.
+
+###### `list`
+1. Call `manager.list_patients()` — returns the `Vec<(PatientId, String, NotePhase)>`.
+2. For each entry, print a numbered row: `"1. <chief complaint> [<phase>] (<short uuid>)"`.
+3. If the patient at that row is the active patient, prefix with `"*"` or append `"(active)"`.
+4. If the list is empty, print `"No patients registered. Use 'new <chief complaint>' to register one."`.
+
+The 1-based index is the index used by `switch`. Cache the index→patient_id mapping somewhere the CLI can reach for the next `switch` call — either by re-running `list_patients` inside `switch` and matching by position, or by storing the last shown index list in a small struct.
+
+###### `switch <index>`
+1. Call `manager.list_patients()` again to get the current order (or use the cached list from the last `list` call).
+2. Convert the 1-based index to 0-based. Bounds-check.
+3. Pull the `PatientId` from row `index - 1`.
+4. Call `manager.set_active_patient(patient_id)?`.
+5. Print: `"Active patient: <chief complaint> (<short uuid>)"`.
+
+Out-of-range index → print "No patient at index N. Use 'list' to see valid indices."
+
+###### `start [ambient|dictation]`
+1. Default mode to `CaptureMode::Ambient` if not provided.
+2. Call `manager.start_encounter(mode)?` — returns `EncounterId`.
+3. Print: `"Started <mode> encounter <short uuid>"`.
+
+Errors bubble up naturally — `NoActivePatient`, `encounter already in progress`, etc.
+
+###### `stop`
+1. Call `manager.stop_encounter()?` — returns the `EncounterId` that was just closed.
+2. Print: `"Stopped encounter <short uuid>. Transcript captured."`.
+
+The mock transcriber returns instantly, so the publish chain (AudioStopped → TranscriptReady) is fast. In Phase 3 this print will arrive after a multi-second pause; that's fine.
+
+###### `lab <name> <value> <unit>`
+This is the most parsing-heavy command. The handler:
+1. Assemble a `ClinicalResult` with `source: ResultSource::Manual`, `id: Uuid::now_v7()`, `patient_id: <active id from manager>`, `timestamp: Utc::now()`, and `result_type: ResultType::Lab(LabResult { display_name: name, value, unit, ... })` with sensible defaults for the optional fields (`fhir_id: None`, `loinc_code: None`, `reference_range: None`, `is_abnormal: false`).
+2. Call `manager.add_lab(result, Utc::now())?`.
+3. Print: `"Added lab: <name> = <value> <unit>"`.
+
+Getting the active patient id for step 1 is slightly awkward because the manager doesn't currently expose it. Two options:
+- Add a `manager.active_patient_id() -> Option<PatientId>` accessor.
+- Have the CLI pass a dummy id and let the manager replace it (worse — couples the manager's internals to the CLI's assumptions).
+
+The accessor is cleaner. Add it.
+
+###### `mdm`
+1. Call `manager.trigger_mdm()?`.
+2. Print: `"MDM triggered. Note phase: Finalizing."`.
+
+###### `review`
+1. Call `manager.review_ready()?`.
+2. Print: `"Note marked ready for review. Phase: PendingSignOff."`.
+
+###### `sign`
+1. Call `manager.sign()?`.
+2. Print: `"Note signed. Phase: Signed (immutable)."`.
+
+###### `note`
+1. Get the active patient id (or print "No active patient" and return).
+2. Call `manager.get_note(patient_id)?` — returns `Option<PatientNote>`.
+3. If `None`, print "No note found." (shouldn't happen for a registered patient, but defensive).
+4. If `Some(note)`, print a formatted multi-line summary: phase, encounter count, transcript snippets, current HPI/Exam/MDM sections, lab results, audit log size.
+
+For Phase 2 you can keep formatting minimal — `Debug` output or a hand-rolled formatter. The `export` command is where pretty formatting actually lives.
+
+###### `export`
+1. Get active patient id.
+2. Call `manager.get_note(patient_id)?`.
+3. Pass the note to the existing `export::format_note()` function (or whatever the function is called in `src/export.rs`).
+4. Print the formatted text. Optionally also copy it to the clipboard via a library like `arboard`, but the plan defers that — print to stdout is fine for Phase 2.
+
+This is the Epic-paste workflow: clinician runs `export`, selects the text, pastes it into Epic.
+
+###### `reload`
+This is the crash-simulation feature. Logic:
+1. Get active patient id (or print "No active patient" and return).
+2. Remove the patient's note from the store: `manager.store.remove(&patient_id)`. This drops the in-memory copy without touching SQLite. The DashMap is now missing that entry.
+3. Call `load_patient_note(repo, patient_id)` to reconstruct from SQLite (snapshot fast-path + delta replay, or full replay if no snapshot).
+4. Insert the reconstructed note back into the store.
+5. Print: `"Reloaded patient <short uuid> from SQLite. <N> events replayed."`.
+
+This requires the manager to expose either the store and repo references or a method that does the reload internally. The cleaner option: add `manager.reload_active_patient() -> AppResult<()>` that does steps 2-4 internally. The CLI just calls it.
+
+The whole point is the reloaded note should be byte-identical to the one we just dropped. If the export looks the same after `reload`, persistence is working. If not, you've found a bug.
+
+###### `status`
+1. Print summary stats:
+   - Current shift id.
+   - Number of patients registered.
+   - Active patient (if any) and their phase.
+   - Number of events in the SQLite events table (run a `SELECT COUNT(*)`).
+   - Number of snapshots written.
+   - Whether an encounter is currently in progress (`manager.driver.has_active_encounter()`).
+
+Most of these need accessors on the manager. Don't reach into private fields from `main.rs`. Add `manager.shift_id()`, `manager.event_count()`, `manager.snapshot_count()` as needed.
+
+###### `quit`
+Logic was already covered in section A9. From the dispatcher's perspective, return a sentinel that breaks the command loop.
+
+###### `Command::Unknown(line)`
+Print: `"Unknown command: '<line>'. Type 'help' to see commands."` Don't crash — the CLI is for experimentation and typos are inevitable.
+
+(Consider adding a `help` command that re-prints the welcome banner's command list.)
+
+##### D. Error handling style
+
+Each handler returns `AppResult<()>`. The dispatcher does the printing:
+
+- `Ok(())` → handlers already printed their success message inside. The dispatcher prints nothing.
+- `Err(e)` → print `"Error: {e}"` and continue the loop.
+
+The errors from `AppError` already have `Display` implementations via `thiserror` (`#[derive(Debug, thiserror::Error)]` in `src/error.rs`), so the `{e}` formatter gives you human-readable messages like `"patient not found: <uuid>"` or `"no active patient: ..."`.
+
+Never panic in a handler. Never `.unwrap()` on user input. The CLI should be a robust REPL.
+
+Startup failures (sections A3–A6) are different: those exit the process with `std::process::exit(1)` because there's no usable state to fall back to. Only command-loop failures keep looping.
+
+##### E. What state lives where
+
+This is the part that often trips people up when writing the CLI, so worth being explicit:
+
+| Lives in | What |
+|----------|------|
+| `ShiftManager` (in-memory) | `Shift`, `HashMap<PatientId, PatientRecord>`, `active_patient_id`, `EncounterDriver`, references to `EventBus` and `PatientNoteStore` |
+| `EncounterDriver` (in-memory, owned by manager) | `audio`, `transcriber`, `active_encounter` (the in-flight recording state) |
+| `PatientNoteStore` (DashMap) | All `PatientNote` aggregates, keyed by `PatientId`. Rebuilt from SQLite on startup. |
+| SQLite `events` table | Every event ever published. The source of truth. |
+| SQLite `snapshots` table | Latest snapshot per patient (Idle / Finalizing / Signed transitions only). |
+| `shift.json` on disk | `Shift` + `Vec<PatientRecord>`. The non-event-sourced metadata. |
+| Lost on quit | `active_patient_id`, `active_encounter` (the driver's current recording). |
+
+The CLI's job is to wire user input into the manager's methods and let the manager handle all the persistence machinery. Resist the temptation to bypass the manager for "convenience" — every command should go through the official API. That's what makes the integration test in Step 7 trustworthy.
+
+##### F. What this is NOT doing
+
+To stay within Phase 2's scope:
+
+- No interactive line editing (no rustyline). `std::io::stdin().read_line` is enough.
+- No multi-line input. Each command fits on one line.
+- No background tasks. Everything is synchronous on the main thread.
+- No clipboard integration. `export` prints to stdout.
+- No tab completion, no history, no Ctrl-C handling beyond the default (SIGINT kills the process).
+- No JSON output mode, no machine-readable status. This is for the developer to manually exercise the pipeline.
+
+These all become relevant in Phase 4 when SwiftUI replaces the CLI. The CLI is a developer tool, not a product.
+
+##### G. Suggested order to implement
+
+The CLI is straightforward but has many moving parts. Build incrementally:
+
+1. Startup + welcome banner + command loop with only `quit` working.
+2. Add `new` and `list` — these are pure manager calls, no audio.
+3. Add `switch` — exercises the manager's active-patient logic.
+4. Add `start` and `stop` — first audio-pipeline integration. Verify the event log grows in SQLite.
+5. Add `note` — prints the current state, useful for debugging the rest.
+6. Add `mdm`, `review`, `sign` — verify state machine transitions.
+7. Add `lab` — verify non-audio events.
+8. Add `export` — wires in the existing formatter.
+9. Add `reload` — the persistence test. This is the milestone command.
+10. Add `status` — observability polish.
+11. Add `shift.json` save/load on quit/startup — cross-session persistence.
+
+Each step ends with a manual verification: type a few commands, see the right output, peek at the SQLite database with `sqlite3 er_notes.db "SELECT * FROM events;"` to confirm events are landing.
+
+##### H. Accessor methods to add to `ShiftManager`
+
+The CLI logic above assumes a handful of read-only accessors on `ShiftManager` that don't exist yet. Add them as you implement the commands that need them:
+
+| Accessor | Used by | Returns |
+|----------|---------|---------|
+| `active_patient_id()` | `lab`, `note`, `export`, `reload` | `Option<PatientId>` |
+| `shift_id()` | `status` | `Uuid` (or whatever `Shift::id` is) |
+| `event_count()` | `status` | `usize` — runs `SELECT COUNT(*) FROM events` |
+| `snapshot_count()` | `status` | `usize` — runs `SELECT COUNT(*) FROM snapshots` |
+| `has_active_encounter()` | `status` | `bool` — delegates to `driver.has_active_encounter()` |
+| `reload_active_patient()` | `reload` | `AppResult<usize>` — returns event count replayed |
+
+All take `&self` (not `&mut self`) — they're pure reads. Keep them simple; no business logic.
+
+---
+
 ### Step 7: Crash-recovery integration test
 
 **Purpose:** Prove that the entire pipeline — EncounterDriver → EventBus → SQLite → load_patient_note — survives a simulated crash. This is the most important test in Phase 2 because it validates the event-sourcing guarantee: if it was published, it can be reconstructed.

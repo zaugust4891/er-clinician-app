@@ -1,6 +1,24 @@
 use er_note_app::db;
+use er_note_app::error::{AppError, AppResult};
+use er_note_app::events::EventBus;
 use er_note_app::models::{PatientNote, PatientRecord, Shift};
-use er_note_app::state;
+use er_note_app::repository::{Repository, SqliteRepository};
+use er_note_app::state::{self, PatientNoteStore};
+use std::path::PathBuf;
+use std::{env, path};
+use std::sync::Arc;
+
+// Helper with context to handle Ok or error for steps that return AppResult 
+fn bail<T>(context: &str, r: AppResult<T>) -> T {
+    match r {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("{context}: {e}");
+            std::process::exit(1);
+        }
+    }
+}
+
 
 fn main() {
     tracing_subscriber::fmt::init();
@@ -8,56 +26,72 @@ fn main() {
     tracing::info!("ED Note App starting");
 
     // Initialize in-memory database for demo.
-    let conn = db::open_memory_db().expect("failed to init database");
+    let sql_lite_db_path = "./er_notes.db";
+    let conn = bail("Failed to open database", db::open_db(sql_lite_db_path));
     tracing::info!("database initialized ({} tables)", count_tables(&conn));
 
-    // Create a shift and a patient.
-    let mut shift = Shift::new();
-    let patient = PatientRecord::new("chest pain");
-    shift.add_patient(patient.id);
+    let sql_lite_repo: Arc<dyn Repository> = Arc::new(SqliteRepository::new(conn));
 
-    tracing::info!(
-        shift_id = %shift.id,
-        patient_id = %patient.id,
-        cc = %patient.chief_complaint,
-        "shift started, patient registered"
-    );
+    let event_bus = Arc::new(EventBus::new(1024, Some(sql_lite_repo.clone())));
+    let store: PatientNoteStore = state::new_store();
+    
+    let args: Vec<String> = env::args().collect();
 
-    // Create a note and exercise the state machine.
-    let mut note = PatientNote::new(patient.id);
-    tracing::info!(?note, "note created");
+    // Following code is from phase 1 - original state machine testing 
+    //
+    // // Create a shift and a patient.
+    // let mut shift = Shift::new();
+    // let patient = PatientRecord::new("chest pain");
+    // shift.add_patient(patient.id);
 
-    note.handle_audio_started();
-    tracing::info!(?note, "encounter started");
+    // tracing::info!(
+    //     shift_id = %shift.id,
+    //     patient_id = %patient.id,
+    //     cc = %patient.chief_complaint,
+    //     "shift started, patient registered"
+    // );
 
-    note.handle_audio_stopped();
-    tracing::info!(?note, "encounter stopped");
+    // // Create a note and exercise the state machine.
+    // let mut note = PatientNote::new(patient.id);
+    // tracing::info!(?note, "note created");
 
-    note.handle_trigger_mdm();
-    tracing::info!(?note, "MDM triggered");
+    // note.handle_audio_started();
+    // tracing::info!(?note, "encounter started");
 
-    note.handle_review_ready();
-    tracing::info!(?note, "review ready");
+    // note.handle_audio_stopped();
+    // tracing::info!(?note, "encounter stopped");
 
-    note.handle_sign();
-    tracing::info!(?note, "note signed");
+    // note.handle_trigger_mdm();
+    // tracing::info!(?note, "MDM triggered");
 
-    // Verify serialization round-trip with hydrate.
-    let json = serde_json::to_string(&note).expect("serialize");
-    let mut restored: PatientNote = serde_json::from_str(&json).expect("deserialize");
-    restored.hydrate();
-    tracing::info!(?restored, "deserialized + hydrated");
+    // note.handle_review_ready();
+    // tracing::info!(?note, "review ready");
 
-    // Put it in the store.
-    let store = state::new_store();
-    store.insert(patient.id, note);
+    // note.handle_sign();
+    // tracing::info!(?note, "note signed");
 
-    tracing::info!(
-        patient_count = store.len(),
-        "note store ready"
-    );
+    // // Verify serialization round-trip with hydrate.
+    // let json = serde_json::to_string(&note).expect("serialize");
+    // let mut restored: PatientNote = serde_json::from_str(&json).expect("deserialize");
+    // restored.hydrate();
+    // tracing::info!(?restored, "deserialized + hydrated");
 
-    tracing::info!("state pattern operational — all transitions verified");
+    // // Put it in the store.
+    // let store = state::new_store();
+    // store.insert(patient.id, note);
+
+    // tracing::info!(
+    //     patient_count = store.len(),
+    //     "note store ready"
+    // );
+
+    // tracing::info!("state pattern operational — all transitions verified");
+
+   
+
+
+
+
 }
 
 fn count_tables(conn: &rusqlite::Connection) -> usize {
