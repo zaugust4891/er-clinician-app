@@ -22,6 +22,16 @@ pub struct EncounterDriver<A: AudioCapture, T: Transcriber> {
 }
 
 impl<A: AudioCapture, T: Transcriber>EncounterDriver<A, T> {
+
+    pub fn new(audio: A, transcriber: T, bus: Arc<EventBus>, store: PatientNoteStore) -> Self {
+        Self {
+            audio,
+            transcriber,
+            bus,
+            store,
+            active_encounter: None,
+        }
+    }
     /// this method's purpose is to begin recording audio for a patient and publish the 'AudioStarted' event
     /// into the event-sourced pipeline.
     /// This will eventually be called by ShiftManager::set_active_patient() 

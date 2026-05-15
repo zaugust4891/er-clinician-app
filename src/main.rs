@@ -1,9 +1,12 @@
+use er_note_app::audio::MockAudioCapture;
 use er_note_app::db;
+use er_note_app::encounter_driver::EncounterDriver;
 use er_note_app::error::{AppError, AppResult};
 use er_note_app::events::EventBus;
 use er_note_app::models::{PatientNote, PatientRecord, Shift};
 use er_note_app::repository::{Repository, SqliteRepository};
 use er_note_app::state::{self, PatientNoteStore};
+use er_note_app::stt::MockTranscriber;
 use std::path::PathBuf;
 use std::{env, path};
 use std::sync::Arc;
@@ -35,6 +38,10 @@ fn main() {
     let event_bus = Arc::new(EventBus::new(1024, Some(sql_lite_repo.clone())));
     let store: PatientNoteStore = state::new_store();
     
+    let audio = MockAudioCapture::new();
+    let transcriber = MockTranscriber;
+
+    let encounter_driver = EncounterDriver::new(audio, transcriber, event_bus.clone(), store.clone());
     let args: Vec<String> = env::args().collect();
 
     // Following code is from phase 1 - original state machine testing 
