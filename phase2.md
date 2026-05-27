@@ -452,7 +452,8 @@ Order matters because the bus needs the repo, and the store is a separate concer
 Instantiate `MockAudioCapture` and `MockTranscriber`. These have no configuration — just defaults. Pass them into a new `EncounterDriver::new(audio, transcriber, bus.clone(), store.clone())`.
 
 ###### A6. Determine whether we're starting fresh or resuming
-Check if `./shift.json` exists:
+Check if `./shift.json` exists: 
+  - Using std::path
 
 - **Exists:** read it, deserialize into a `Shift` and `Vec<PatientRecord>`. For each patient record, call `load_patient_note(repo, patient_id)` to reconstruct the note from SQLite and insert it back into the `PatientNoteStore`. The active patient context (`active_patient_id`) is intentionally NOT persisted — the clinician should re-select on resume, both for safety (confirms intent) and simplicity.
 - **Doesn't exist:** create a fresh `Shift::new()` and empty patient list.

@@ -8,6 +8,7 @@ pub mod error;
 pub mod events;
 pub mod export;
 pub mod models;
+pub mod persistence;
 pub mod repository;
 pub mod shift_manager;
 pub mod state;

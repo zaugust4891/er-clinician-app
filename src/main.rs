@@ -3,13 +3,19 @@ use er_note_app::db;
 use er_note_app::encounter_driver::EncounterDriver;
 use er_note_app::error::{AppError, AppResult};
 use er_note_app::events::EventBus;
-use er_note_app::models::{PatientNote, PatientRecord, Shift};
+use er_note_app::models::{PatientId, PatientNote, PatientRecord, Shift};
 use er_note_app::repository::{Repository, SqliteRepository};
-use er_note_app::state::{self, PatientNoteStore};
+use er_note_app::state::{self, PatientNoteStore, load_patient_note};
 use er_note_app::stt::MockTranscriber;
-use std::path::PathBuf;
-use std::{env, path};
+use er_note_app::persistence::ShiftSnapshot;
+use std::fs::File;
+use std::io::{self, BufReader};
+use std::env;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use serde_json::{Deserializer, Serializer};
+use serde::de::DeserializeOwned;
+use std::collections::HashMap;
 
 // Helper with context to handle Ok or error for steps that return AppResult 
 fn bail<T>(context: &str, r: AppResult<T>) -> T {
@@ -20,6 +26,13 @@ fn bail<T>(context: &str, r: AppResult<T>) -> T {
             std::process::exit(1);
         }
     }
+}
+
+fn deserialize_shift_json_file<P: AsRef<Path>, S: DeserializeOwned>(path: P) -> AppResult<S> {
+    let file = File::open(path)?;
+    let rdr = BufReader::new(file);
+    let value = serde_json::from_reader(rdr)?;
+    Ok(value)
 }
 
 
@@ -43,6 +56,41 @@ fn main() {
 
     let encounter_driver = EncounterDriver::new(audio, transcriber, event_bus.clone(), store.clone());
     let args: Vec<String> = env::args().collect();
+
+    let snapshot: ShiftSnapshot = match deserialize_shift_json_file("./shift.json") {
+        Ok(s) => s,
+        Err(AppError::Io(e)) if e.kind() == io::ErrorKind::NotFound => {
+            tracing::info!("no prior shift, starting fresh");
+            ShiftSnapshot { shift: Shift::new(), patients: Vec::new() }
+        }
+        Err(e) => bail("loading shift.json", Err(e)),
+    };
+    let ShiftSnapshot { shift, patients } = snapshot;
+    let patients: HashMap<PatientId, PatientRecord> = patients.into_iter().map(|p| (p.id, p)).collect();
+
+    for (id, _) in &patients {
+        match load_patient_note(&*sql_lite_repo, *id) {
+            Ok(Some(note)) => { 
+                store.insert(*id, note);
+            }
+            Ok(None) => tracing::warn!(patient_id = %id, "in shift.json but no events in DB."),
+            Err(e) => bail("loading patient note", Err(e)),
+        }
+    }
+
+/* 
+- **Exists:** 
+    read it, deserialize into a `Shift` and `Vec<PatientRecord>`. 
+    For each patient record, call `load_patient_note(repo, patient_id)` 
+    to reconstruct the note from SQLite and insert it back into the `PatientNoteStore`. 
+    The active patient context (`active_patient_id`) is intentionally NOT persisted —   
+    the clinician should re-select on resume, both for safety (confirms intent) and simplicity.
+- **Doesn't exist:** 
+    create a fresh `Shift::new()` and empty patient list.
+
+
+-Build the `ShiftManager` from these pieces: `shift`, the rebuilt `patients` HashMap, `active_patient_id: None`, the driver, the bus, the store.
+*/
 
     // Following code is from phase 1 - original state machine testing 
     //

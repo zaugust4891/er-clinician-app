@@ -20,7 +20,13 @@ pub enum AppError {
 
     #[error("lab error: {0}")]
     LabResultError(String),
+
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
     
+    #[error("deserialization error: {0}")]
+    DeserializeError(String),
+
     #[error("no active shift")]
     NoActiveShift,
 
