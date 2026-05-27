@@ -21,7 +21,23 @@ pub struct ShiftManager<A: AudioCapture, T: Transcriber> {
 }
 
 impl<A: AudioCapture, T: Transcriber>ShiftManager<A, T> {
-
+     pub fn new(
+        shift: Shift,
+        patients: HashMap<PatientId, PatientRecord>,
+        driver: EncounterDriver<A, T>,
+        bus: Arc<EventBus>,
+        store: PatientNoteStore,
+    ) -> Self {
+        Self {
+            shift,
+            patients,
+            active_patient_id: None,
+            driver,
+            bus,
+            store,
+        }
+    }
+    
     pub fn register_patient(&mut self, chief_complaint: &str) -> PatientId {
         // create PatientRecord
         let patient_record = PatientRecord::new(chief_complaint);

@@ -3,8 +3,9 @@ use er_note_app::db;
 use er_note_app::encounter_driver::EncounterDriver;
 use er_note_app::error::{AppError, AppResult};
 use er_note_app::events::EventBus;
-use er_note_app::models::{PatientId, PatientNote, PatientRecord, Shift};
+use er_note_app::models::{PatientId, PatientNote, PatientRecord, Shift, encounter};
 use er_note_app::repository::{Repository, SqliteRepository};
+use er_note_app::shift_manager::ShiftManager;
 use er_note_app::state::{self, PatientNoteStore, load_patient_note};
 use er_note_app::stt::MockTranscriber;
 use er_note_app::persistence::ShiftSnapshot;
@@ -78,19 +79,15 @@ fn main() {
         }
     }
 
-/* 
-- **Exists:** 
-    read it, deserialize into a `Shift` and `Vec<PatientRecord>`. 
-    For each patient record, call `load_patient_note(repo, patient_id)` 
-    to reconstruct the note from SQLite and insert it back into the `PatientNoteStore`. 
-    The active patient context (`active_patient_id`) is intentionally NOT persisted —   
-    the clinician should re-select on resume, both for safety (confirms intent) and simplicity.
-- **Doesn't exist:** 
-    create a fresh `Shift::new()` and empty patient list.
+    let manager = ShiftManager::new(
+        shift,
+        patients,
+        encounter_driver,
+        event_bus.clone(),
+        store.clone(),
+    );
 
 
--Build the `ShiftManager` from these pieces: `shift`, the rebuilt `patients` HashMap, `active_patient_id: None`, the driver, the bus, the store.
-*/
 
     // Following code is from phase 1 - original state machine testing 
     //
