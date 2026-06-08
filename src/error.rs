@@ -9,6 +9,9 @@ pub enum AppError {
     #[error("note is signed and immutable")]
     NoteImmutable,
 
+    #[error("Invalid argument: {0}")]
+    CliError(String),
+
     #[error("patient not found: {0}")]
     PatientNotFound(uuid::Uuid),
 
@@ -51,12 +54,17 @@ pub enum AppError {
     #[error("de-identification error: {0}")]
     Deidentify(String),
 
-   #[error("parse error in {context}: {source}")]
+    #[error("parse error in {context}: {source}")]
     ParseError {
         context: String,
         #[source]
         source: Box<dyn std::error::Error + Send + Sync>,
     },
+
+    #[error("other error: {0}")]
+    OtherError(String),
+
+
 }
 
 pub type AppResult<T> = std::result::Result<T, AppError>;

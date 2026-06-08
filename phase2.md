@@ -647,7 +647,7 @@ Startup failures (sections A3–A6) are different: those exit the process with `
 
 This is the part that often trips people up when writing the CLI, so worth being explicit:
 
-| Lives in | What |
+| Lives in | What | 
 |----------|------|
 | `ShiftManager` (in-memory) | `Shift`, `HashMap<PatientId, PatientRecord>`, `active_patient_id`, `EncounterDriver`, references to `EventBus` and `PatientNoteStore` |
 | `EncounterDriver` (in-memory, owned by manager) | `audio`, `transcriber`, `active_encounter` (the in-flight recording state) |
