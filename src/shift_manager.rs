@@ -1,8 +1,11 @@
 use crate::error::{AppError, AppResult};
 use crate::{audio::AudioCapture, stt::Transcriber,};
 use crate::events::{EventBus, NoteEvent};
-use crate::models::{CaptureMode, EncounterId, PatientNote, PatientId, PatientRecord, ClinicalResult, NotePhase, Shift};
+use crate::models::{CaptureMode, EncounterId, PatientNote, PatientId, PatientRecord, ClinicalResult, NotePhase, Shift, ShiftId};
+use crate::persistence::ShiftSnapshot;
+use crate::repository::Repository;
 use crate::state::PatientNoteStore;
+use crate::state::{apply_event, replay};
 use crate::encounter_driver::EncounterDriver;
 
 
@@ -18,6 +21,7 @@ pub struct ShiftManager<A: AudioCapture, T: Transcriber> {
     driver: EncounterDriver<A, T>,
     bus: Arc<EventBus>,
     store: PatientNoteStore,
+    repo: Arc<dyn Repository>,
 }
 
 impl<A: AudioCapture, T: Transcriber>ShiftManager<A, T> {
@@ -27,6 +31,7 @@ impl<A: AudioCapture, T: Transcriber>ShiftManager<A, T> {
         driver: EncounterDriver<A, T>,
         bus: Arc<EventBus>,
         store: PatientNoteStore,
+        repo: Arc<dyn Repository>,
     ) -> Self {
         Self {
             shift,
@@ -35,6 +40,7 @@ impl<A: AudioCapture, T: Transcriber>ShiftManager<A, T> {
             driver,
             bus,
             store,
+            repo,
         }
     }
     
@@ -67,6 +73,14 @@ impl<A: AudioCapture, T: Transcriber>ShiftManager<A, T> {
     pub fn stop_encounter(&mut self) -> AppResult<EncounterId> {
         self.driver.stop_encounter()
 
+    }
+
+    pub fn stop_active_encounter_for_shutdown(&mut self) -> AppResult<Option<EncounterId>> {
+        if self.driver.has_active_encounter() {
+            self.driver.stop_encounter().map(Some)
+        } else {
+            Ok(None)
+        }
     }
 
     pub fn set_active_patient(&mut self, new_id: PatientId ) -> AppResult<()> {
@@ -151,6 +165,59 @@ impl<A: AudioCapture, T: Transcriber>ShiftManager<A, T> {
                 (*id, record.chief_complaint.clone(), phase)
             })
             .collect()
+    }
+
+    pub fn active_patient_id(&self) -> Option<PatientId> {
+        self.active_patient_id
+    }
+
+    pub fn shift_id(&self) -> ShiftId {
+        self.shift.id
+    }
+
+    pub fn event_count(&self) -> AppResult<usize> {
+        self.repo.event_count()
+    }
+
+    pub fn snapshot_count(&self) -> AppResult<usize> {
+        self.repo.snapshot_count()
+    }
+
+    pub fn has_active_encounter(&self) -> bool {
+        self.driver.has_active_encounter()
+    }
+
+    pub fn reload_active_patient(&mut self) -> AppResult<usize> {
+        let patient_id = self.check_active_patient_id()?;
+
+        let (note, replayed_count) = if let Some((sequence_id, mut note)) =
+            self.repo.get_latest_snapshot(patient_id)?
+        {
+            let delta = self.repo.get_events_since(patient_id, sequence_id)?;
+            for stored in &delta {
+                apply_event(&mut note, &stored.event);
+            }
+            (note, delta.len())
+        } else {
+            let events = self.repo.get_events(patient_id)?;
+            if events.is_empty() {
+                (PatientNote::new(patient_id), 0)
+            } else {
+                let owned_events: Vec<NoteEvent> =
+                    events.iter().map(|stored| stored.event.clone()).collect();
+                (replay(patient_id, &owned_events), events.len())
+            }
+        };
+
+        self.store.insert(patient_id, note);
+        Ok(replayed_count)
+    }
+
+    pub fn snapshot(&self) -> ShiftSnapshot {
+        ShiftSnapshot {
+            shift: self.shift.clone(),
+            patients: self.patients.values().cloned().collect(),
+        }
     }
 
     pub fn end_shift(&mut self) -> AppResult<()> {

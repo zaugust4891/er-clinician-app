@@ -15,6 +15,10 @@ pub trait Repository: Send + Sync {
     fn save_snapshot(&self, patient_id: PatientId, sequence_id: u64, snapshot: &PatientNote) -> AppResult<()>;
 
     fn get_latest_snapshot(&self, patient_id: PatientId) -> AppResult<Option<(u64, PatientNote)>>;
+
+    fn event_count(&self) -> AppResult<usize>;
+
+    fn snapshot_count(&self) -> AppResult<usize>;
 }
 
 pub struct SqliteRepository {
@@ -217,6 +221,22 @@ impl Repository for SqliteRepository {
         note.hydrate();
 
         Ok(Some((seq_id as u64, note)))
+    }
+
+    fn event_count(&self) -> AppResult<usize> {
+        let conn = self.conn.lock().unwrap();
+        let count = conn.query_row("SELECT COUNT(*) FROM events", [], |row| {
+            row.get::<_, usize>(0)
+        })?;
+        Ok(count)
+    }
+
+    fn snapshot_count(&self) -> AppResult<usize> {
+        let conn = self.conn.lock().unwrap();
+        let count = conn.query_row("SELECT COUNT(*) FROM snapshots", [], |row| {
+            row.get::<_, usize>(0)
+        })?;
+        Ok(count)
     }
 
 }

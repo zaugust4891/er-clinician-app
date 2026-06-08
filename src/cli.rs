@@ -1,5 +1,11 @@
+use std::io::Write;
+
+use crate::audio::AudioCapture;
 use crate::models::CaptureMode;
 use crate::error::{AppResult, AppError};
+use crate::shift_manager::ShiftManager;
+use crate::stt::Transcriber;
+
 pub enum Command {
     New { chief_complaint: String },        // register a new patient on the shift
     List,                                    // list patients on the shift
@@ -14,6 +20,7 @@ pub enum Command {
     Export,
     Reload,                                  // rehydrate from repository
     Status,
+    Help,
     Quit,
     Unknown(String),                         // raw line for error reporting
 }
@@ -92,6 +99,7 @@ impl Commands {
             "export" => Command::Export,
             "reload" => Command::Reload,
             "status" => Command::Status,
+            "help" => Command::Help,
             "quit" | "exit" => Command::Quit,
 
             _ => Command::Unknown(args.join(" ")),
@@ -101,4 +109,191 @@ impl Commands {
         Ok(Commands { commands: query })
 
     }
+
+    pub fn print_prompt() {
+        print!("> ");
+        std::io::stdout().flush().unwrap();
+    }
+
+    pub fn print_help() {
+        println!("Available commands:");
+        println!("  new <chief complaint>");
+        println!("  list");
+        println!("  switch <index>");
+        println!("  start <ambient|dictation>");
+        println!("  stop");
+        println!("  lab <name> <value> <unit>");
+        println!("  mdm");
+        println!("  review");
+        println!("  sign");
+        println!("  note");
+        println!("  export");
+        println!("  reload");
+        println!("  status");
+        println!("  help");
+        println!("  quit");
+    }
+}
+
+pub fn handle_command<A, T>(
+    manager: &mut ShiftManager<A, T>,
+    command_wrapper: Commands,
+) -> AppResult<bool>
+where
+    A: AudioCapture,
+    T: Transcriber,
+{
+    match command_wrapper.commands {
+        Command::New { chief_complaint } => {
+            let patient_id = manager.register_patient(&chief_complaint);
+            println!(
+                "Registered patient {} with chief complaint '{}'",
+                patient_id,
+                chief_complaint
+            );
+            println!("Tip: type 'list' to see patient indices, then 'switch <index>'.");
+            Ok(true)
+        }
+
+        Command::List => {
+            let patients = manager.list_patients();
+
+            if patients.is_empty() {
+                println!("No patients registered. Use 'new <chief complaint>' to register one.");
+                return Ok(true);
+            }
+
+            for (index, (patient_id, chief_complaint, phase)) in patients.iter().enumerate() {
+                println!(
+                    "{}. {} [{:?}] ({})",
+                    index + 1,
+                    chief_complaint,
+                    phase,
+                    short_id(*patient_id)
+                );
+            }
+
+            Ok(true)
+        }
+
+        Command::Switch { index } => {
+            if index == 0 {
+                return Err(AppError::CliError(
+                    "Use a 1-based patient index from the list command.".to_string(),
+                ));
+            }
+
+            let patients = manager.list_patients();
+            let Some((patient_id, chief_complaint, _phase)) = patients.get(index - 1) else {
+                return Err(AppError::CliError(format!(
+                    "No patient at index {index}. Use 'list' to see valid indices."
+                )));
+            };
+
+            manager.set_active_patient(*patient_id)?;
+            println!(
+                "Active patient: {} ({})",
+                chief_complaint,
+                short_id(*patient_id)
+            );
+
+            Ok(true)
+        }
+
+        Command::Start { mode } => {
+            let mode_label = format!("{:?}", mode);
+            let encounter_id = manager.start_encounter(mode)?;
+            println!(
+                "Started {} encounter {}.",
+                mode_label,
+                short_id(encounter_id)
+            );
+            Ok(true)
+        }
+
+        Command::Stop => {
+            let encounter_id = manager.stop_encounter()?;
+            println!(
+                "Stopped encounter {}. Transcript captured.",
+                short_id(encounter_id)
+            );
+            Ok(true)
+        }
+
+        Command::Lab { .. } => Err(AppError::CliError(
+            "The lab command needs an active patient id accessor before it can be handled."
+                .to_string(),
+        )),
+
+        Command::Mdm => {
+            manager.trigger_mdm()?;
+            println!("MDM triggered.");
+            Ok(true)
+        }
+
+        Command::Review => {
+            manager.review_ready()?;
+            println!("Note marked ready for review.");
+            Ok(true)
+        }
+
+        Command::Sign => {
+            manager.sign()?;
+            println!("Note signed.");
+            Ok(true)
+        }
+
+        Command::Note => Err(AppError::CliError(
+            "The note command needs an active patient id accessor before it can be handled."
+                .to_string(),
+        )),
+
+        Command::Export => Err(AppError::CliError(
+            "The export command needs active patient and patient record access before it can be handled."
+                .to_string(),
+        )),
+
+        Command::Reload => {
+            let replayed_count = manager.reload_active_patient()?;
+            println!("Reloaded active patient from SQLite. Replayed {replayed_count} events.");
+            Ok(true)
+        }
+
+        Command::Status => {
+            let patient_count = manager.list_patients().len();
+            let active_patient = manager
+                .active_patient_id()
+                .map(|id| short_id(id))
+                .unwrap_or_else(|| "none".to_string());
+            let event_count = manager.event_count()?;
+            let snapshot_count = manager.snapshot_count()?;
+
+            println!("Shift ID: {}", manager.shift_id());
+            println!("Patients registered: {patient_count}");
+            println!("Active patient: {active_patient}");
+            println!("Active encounter: {}", manager.has_active_encounter());
+            println!("Events stored: {event_count}");
+            println!("Snapshots stored: {snapshot_count}");
+            Ok(true)
+        }
+
+        Command::Help => {
+            Commands::print_help();
+            Ok(true)
+        }
+
+        Command::Quit => {
+            println!("Goodbye.");
+            Ok(false)
+        }
+
+        Command::Unknown(line) => Err(AppError::CliError(format!(
+            "Unknown command: '{}'. Type 'help' to see commands.",
+            line
+        ))),
+    }
+}
+
+fn short_id(id: uuid::Uuid) -> String {
+    id.to_string().chars().take(8).collect()
 }

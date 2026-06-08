@@ -474,6 +474,268 @@ Loop forever (until the user types `quit`):
 7. Dispatch to the appropriate handler.
 8. Print the handler's result — either a success message or the formatted error.
 
+###### A8. Enter the command loop
+# A few Rust-specific things to watch for:
+
+1. You need to import Write if you flush stdout.
+
+   use std::io::Write;
+
+2. read_line appends into the String.
+
+   Since you create a fresh String inside each loop iteration, this is fine.
+
+3. input.trim() returns &str.
+
+   If you need owned Strings for Commands::new, convert split pieces with:
+       .map(|s| s.to_string())
+
+4. manager methods usually require &mut self.
+
+   So your manager variable must be declared mutable:
+       let mut manager = ShiftManager::new(...);
+
+5. Matching a Command may move values.
+
+   That is fine if you own the command.
+
+6. For errors, do not crash the whole app during command handling.
+
+   In the loop, prefer:
+       match manager.start_encounter(mode) {
+           Ok(id) => println!(...),
+           Err(e) => println!("Error: {e}"),
+       }
+
+   That way one bad command does not exit the app.
+
+
+
+###### Detailed logic:
+
+Start an infinite loop.
+
+loop:
+    Print a prompt.
+
+    For now, the prompt can simply be:
+        > 
+
+    Later, once active patient display exists, it could become:
+        [room 12 chest pain]> 
+
+    Flush stdout so the prompt appears before waiting for input.
+
+    Create an empty String called input.
+
+    Read one line from stdin into input.
+
+    If read_line returns an error:
+        Print the error.
+        Continue the loop.
+
+    If read_line returns 0 bytes:
+        This means EOF, usually Ctrl-D.
+        Treat this like quit.
+        Break out of the loop.
+
+    Trim the input:
+        let input = input.trim();
+
+    If input is empty:
+        Continue the loop.
+
+    Split input into words:
+        "new chest pain" becomes ["new", "chest", "pain"]
+        "list" becomes ["list"]
+
+    Convert those pieces into Vec<String>, because your Commands::new currently expects:
+        &[String]
+
+    Call:
+        Commands::new(&args)
+
+    If parsing fails:
+        Print the CLI error.
+        Continue the loop.
+
+    If parsing succeeds:
+        Get the Command value out of Commands.
+
+    Match on the command.
+
+    For each command:
+        Call the appropriate ShiftManager method or print current state.
+
+    After handling the command:
+        Print either a success message or an error message.
+
+    If the command is Quit:
+        Print goodbye message.
+        Break out of the loop.
+
+
+
+        Command::New { chief_complaint }:
+    Call manager.register_patient(&chief_complaint).
+    It returns a PatientId.
+    Print:
+        Registered patient <id>
+
+Command::List:
+    Call manager.list_patients().
+    If the list is empty:
+        Print:
+            No patients on this shift.
+    Otherwise:
+        Loop over the patients with an index:
+            0. <patient_id> | <chief_complaint> | <phase>
+            1. <patient_id> | <chief_complaint> | <phase>
+
+Command::Switch { index }:
+    Call manager.list_patients().
+    Use the index to find the patient at that position.
+    If no patient exists at that index:
+        Print:
+            No patient at index <index>
+    Otherwise:
+        Get that patient's PatientId.
+        Call manager.set_active_patient(patient_id).
+        If Ok:
+            Print:
+                Active patient set to <id>
+        If Err:
+            Print the error.
+
+Command::Start { mode }:
+    Call manager.start_encounter(mode).
+    If Ok(encounter_id):
+        Print:
+            Started encounter <encounter_id>
+    If Err:
+        Print the error.
+
+Command::Stop:
+    Call manager.stop_encounter().
+    If Ok(encounter_id):
+        Print:
+            Stopped encounter <encounter_id>
+    If Err:
+        Print the error.
+
+Command::Lab { name, value, unit }:
+    This one is tricky with your current code.
+    ShiftManager::add_lab currently expects a ClinicalResult and a DateTime<Utc>.
+    Your CLI only has name, value, and unit.
+    So to fully implement this, you would need to construct a ClinicalResult.
+    But ClinicalResult probably needs a patient_id too.
+    Since your CLI does not yet expose active_patient_id, this may not be ready yet.
+
+    For now, you can either:
+        Print "lab command not implemented yet"
+    Or:
+        Add helper methods later when you are ready.
+
+Command::Mdm:
+    Call manager.trigger_mdm().
+    If Ok:
+        Print:
+            MDM triggered.
+    If Err:
+        Print the error.
+
+Command::Review:
+    Call manager.review_ready().
+    If Ok:
+        Print:
+            Note marked ready for review.
+    If Err:
+        Print the error.
+
+Command::Sign:
+    Call manager.sign().
+    If Ok:
+        Print:
+            Note signed.
+    If Err:
+        Print the error.
+
+Command::Note:
+    This needs a patient id.
+    Your current manager has get_note(patient_id), but it does not expose active_patient_id.
+    So this command is not fully ready unless you:
+        - ask for a patient index/id, or
+        - add a manager method to get the active patient note.
+
+    For now:
+        Print "note command not implemented yet"
+
+Command::Export:
+    Same idea.
+    Export likely needs a note or patient id.
+    If your export workflow is not wired yet:
+        Print "export command not implemented yet"
+
+Command::Reload:
+    Rehydrating from repository is not currently exposed on ShiftManager.
+    For now:
+        Print "reload command not implemented yet"
+
+Command::Status:
+    Print current shift/app status.
+
+    You already know:
+        shift_was_resumed
+        sql_lite_db_path
+        shift file path
+        patient count from manager.list_patients().len()
+
+    Print:
+        Status: Fresh shift / Resumed shift
+        Database: ./er_notes.db
+        Shift file: ./shift.json
+        Patients: <count>
+
+Command::Quit:
+    Print:
+        Goodbye.
+    Break the loop.
+
+Command::Unknown(raw):
+    Print:
+        Unknown command: <raw>
+
+
+The important Rust structure is: 
+
+
+loop {
+    print prompt
+    flush stdout
+
+    let mut input = String::new();
+
+    match stdin.read_line(&mut input) {
+        Ok(0) => break,
+        Ok(_) => continue processing,
+        Err(e) => print error and continue,
+    }
+
+    trim input
+
+    if input is empty:
+        continue
+
+    parse command
+
+    match command {
+        Command::New { ... } => ...
+        Command::List => ...
+        ...
+        Command::Quit => break
+    }
+}
+
 ###### A9. On quit
 Before exiting:
 1. If an encounter is in progress, call `manager.stop_encounter()` to flush audio and transcript cleanly. Ignore errors here but log them — we're shutting down.
@@ -762,6 +1024,532 @@ Verify:
 ```
 
 This validates the atomicity of the switch operation: both patients' events are fully persisted even though the switch happened mid-stream.
+
+---
+
+#### Step 7 — Detailed manual implementation and testing walkthrough
+
+This step is about proving the event-sourcing promise in the most realistic Phase 2 way: drive the app through the same public orchestration layer the CLI uses, throw away the in-memory state, then rebuild from SQLite.
+
+The goal is not just "a test passes." The goal is to understand exactly which layer is responsible for each part of the recovery path:
+
+```
+EncounterDriver
+  -> EventBus::publish
+  -> SqliteRepository::append_event / save_snapshot
+  -> dropped DashMap store
+  -> load_patient_note(repo, patient_id)
+  -> reconstructed PatientNote
+```
+
+##### 7.1. Start from a clean baseline
+
+Manual actions:
+
+1. Run the full test suite before adding the new test.
+
+   ```bash
+   cargo test
+   ```
+
+2. Confirm the existing tests pass before changing anything.
+
+   Expected result:
+
+   ```text
+   test result: ok
+   ```
+
+3. If this fails, stop and fix the existing failure first. Step 7 depends on the Phase 1 persistence tests already being trustworthy.
+
+Why this matters:
+
+- If a new crash-recovery test fails after this point, you know the regression is probably in the new test setup or the Phase 2 wiring, not in pre-existing persistence behavior.
+
+##### 7.2. Create the crash-recovery test module
+
+Manual actions:
+
+1. Create a new file:
+
+   ```text
+   src/tests/crash_recovery.rs
+   ```
+
+2. Register it in:
+
+   ```text
+   src/tests/mod.rs
+   ```
+
+   Add:
+
+   ```rust
+   mod crash_recovery;
+   ```
+
+3. Add a temporary smoke test to `crash_recovery.rs`:
+
+   ```rust
+   #[test]
+   fn crash_recovery_test_module_is_registered() {
+       assert!(true);
+   }
+   ```
+
+4. Run only that test:
+
+   ```bash
+   cargo test crash_recovery_test_module_is_registered
+   ```
+
+Expected result:
+
+```text
+test crash_recovery::crash_recovery_test_module_is_registered ... ok
+```
+
+Why this matters:
+
+- This catches file/module wiring mistakes before you write the real test.
+- If Rust cannot see the test module, the real implementation work will be confusing because your test will never run.
+
+##### 7.3. Write the shared test setup
+
+Inside `crash_recovery.rs`, build the same stack that `main.rs` builds, but with an in-memory database:
+
+```
+open_memory_db()
+  -> SqliteRepository
+  -> Arc<dyn Repository>
+  -> EventBus
+  -> PatientNoteStore
+  -> MockAudioCapture
+  -> MockTranscriber
+  -> EncounterDriver
+```
+
+Manual actions:
+
+1. Import the types you need from the crate:
+
+   ```text
+   MockAudioCapture
+   MockTranscriber
+   EncounterDriver
+   EventBus
+   CaptureMode
+   NoteEvent
+   NotePhase
+   Repository
+   SqliteRepository
+   state::new_store
+   state::load_patient_note
+   ```
+
+2. Use `crate::db::open_memory_db()` instead of `db::open_db("./er_notes.db")`.
+
+3. Wrap the repository in `Arc<dyn Repository>` so the same repo can be shared by the event bus and later by `load_patient_note`.
+
+4. Wrap the event bus in `Arc<EventBus>` because `EncounterDriver::new(...)` expects shared ownership.
+
+5. Create one test patient ID with `Uuid::now_v7()`.
+
+6. Run:
+
+   ```bash
+   cargo test crash_recovery -- --nocapture
+   ```
+
+Expected result:
+
+- At this stage, the test may not assert much yet.
+- The important thing is that the setup compiles.
+
+Why this matters:
+
+- Step 7 is an integration test, so most mistakes are construction mistakes: wrong ownership, wrong `Arc`, wrong trait object type, or forgetting that the driver owns a clone of the store.
+
+##### 7.4. Drive the first encounter
+
+Manual actions:
+
+1. In the test, call:
+
+   ```text
+   driver.start_encounter(patient_id, CaptureMode::Ambient)
+   driver.stop_encounter()
+   ```
+
+2. After `stop_encounter()`, inspect the in-memory store.
+
+3. Assert:
+
+   ```text
+   note.phase == Idle
+   note.encounter_count == 1
+   note.encounters.len() == 1
+   note.encounters[0].capture_mode == Ambient
+   note.encounters[0].ended_at.is_some()
+   note.encounters[0].transcript.is_some()
+   ```
+
+4. Run:
+
+   ```bash
+   cargo test full_lifecycle_survives_simulated_crash -- --nocapture
+   ```
+
+Expected result:
+
+- The test should pass before you add crash simulation.
+
+Why this matters:
+
+- This proves `EncounterDriver` can publish the basic event sequence:
+
+  ```text
+  AudioStarted -> AudioStopped -> TranscriptReady
+  ```
+
+- If this part fails, the problem is not crash recovery yet. It is start/stop orchestration.
+
+##### 7.5. Drive the second encounter
+
+Manual actions:
+
+1. In the same test, call:
+
+   ```text
+   driver.start_encounter(patient_id, CaptureMode::Dictation)
+   driver.stop_encounter()
+   ```
+
+2. Inspect the store again.
+
+3. Assert:
+
+   ```text
+   note.phase == Idle
+   note.encounter_count == 2
+   note.encounters.len() == 2
+   note.encounters[0].capture_mode == Ambient
+   note.encounters[1].capture_mode == Dictation
+   both encounters have ended_at
+   both encounters have transcript
+   ```
+
+4. Run:
+
+   ```bash
+   cargo test full_lifecycle_survives_simulated_crash -- --nocapture
+   ```
+
+Expected result:
+
+- The in-memory note should now show two complete encounters.
+
+Why this matters:
+
+- A single encounter proves the simplest path.
+- Two encounters prove replay can rebuild repeated lifecycle transitions:
+
+  ```text
+  Registered -> Encountering -> Idle -> Encountering -> Idle
+  ```
+
+##### 7.6. Publish final note workflow events
+
+Manual actions:
+
+1. Publish these events through the same `EventBus` used by the driver:
+
+   ```text
+   NoteEvent::trigger_mdm(patient_id)
+   NoteEvent::review_ready(patient_id)
+   ```
+
+2. Do not call `PatientNote` methods directly. The whole point is to test the event bus and repository path.
+
+3. Inspect the store.
+
+4. Assert:
+
+   ```text
+   note.phase == PendingSignOff
+   note.encounter_count == 2
+   ```
+
+5. Run:
+
+   ```bash
+   cargo test full_lifecycle_survives_simulated_crash -- --nocapture
+   ```
+
+Expected result:
+
+- The in-memory note should be `PendingSignOff`.
+
+Why this matters:
+
+- This proves crash recovery works for more than audio events.
+- It also exercises snapshot-triggering phases such as `Finalizing`.
+
+##### 7.7. Simulate the crash correctly
+
+Manual actions:
+
+1. Before dropping anything, optionally clone the current note from the store into an `expected` variable.
+
+2. Drop the driver.
+
+3. Drop the store.
+
+4. Do not reuse the old store after this point.
+
+5. Keep the repository alive.
+
+Important detail:
+
+- Dropping only the local `store` variable is not enough if `EncounterDriver` still exists, because the driver also owns a clone of the same `Arc<DashMap<...>>`.
+- To simulate a real process crash, the in-memory projection must be gone. That means anything holding the store must be dropped too.
+
+Manual checklist:
+
+```text
+driver dropped? yes
+old store dropped? yes
+repo still available? yes
+```
+
+Why this matters:
+
+- If you accidentally keep the old store alive, your test can pass without actually proving SQLite recovery.
+
+##### 7.8. Reload from SQLite
+
+Manual actions:
+
+1. Call:
+
+   ```text
+   load_patient_note(repo.as_ref(), patient_id)
+   ```
+
+2. Unwrap the `AppResult`.
+
+3. Expect `Some(PatientNote)`, not `None`.
+
+4. Assert:
+
+   ```text
+   loaded.phase == PendingSignOff
+   loaded.encounter_count == 2
+   loaded.encounters.len() == 2
+   loaded.encounters[0].capture_mode == Ambient
+   loaded.encounters[1].capture_mode == Dictation
+   loaded.encounters[0].transcript.is_some()
+   loaded.encounters[1].transcript.is_some()
+   loaded.encounters[0].ended_at.is_some()
+   loaded.encounters[1].ended_at.is_some()
+   ```
+
+5. If you cloned an `expected` note before the simulated crash, compare stable fields:
+
+   ```text
+   phase
+   encounter_count
+   encounters.len()
+   results.len()
+   version
+   ```
+
+Expected result:
+
+- The reloaded note should match the important fields from the pre-crash note.
+
+Why this matters:
+
+- This is the core Step 7 proof: the note can be reconstructed from persisted events/snapshots after the in-memory read model is gone.
+
+##### 7.9. Add the switch-patient crash test
+
+Create a second test:
+
+```text
+switch_patient_mid_encounter_persists_both
+```
+
+Manual actions:
+
+1. Build the same setup as the first test.
+
+2. Create two patient IDs:
+
+   ```text
+   patient_a
+   patient_b
+   ```
+
+3. Start patient A:
+
+   ```text
+   driver.start_encounter(patient_a, CaptureMode::Ambient)
+   ```
+
+4. Switch to patient B:
+
+   ```text
+   driver.switch_patient(patient_b, CaptureMode::Ambient)
+   ```
+
+5. Stop patient B:
+
+   ```text
+   driver.stop_encounter()
+   ```
+
+6. Assert the in-memory store contains both patients before crash:
+
+   ```text
+   patient A: phase == Idle, encounter_count == 1, transcript exists
+   patient B: phase == Idle, encounter_count == 1, transcript exists
+   ```
+
+7. Drop the driver and store.
+
+8. Reload both patients from SQLite:
+
+   ```text
+   load_patient_note(repo.as_ref(), patient_a)
+   load_patient_note(repo.as_ref(), patient_b)
+   ```
+
+9. Assert both reloaded notes still have:
+
+   ```text
+   phase == Idle
+   encounter_count == 1
+   encounters.len() == 1
+   transcript.is_some()
+   ended_at.is_some()
+   ```
+
+10. Run:
+
+    ```bash
+    cargo test switch_patient_mid_encounter_persists_both -- --nocapture
+    ```
+
+Expected result:
+
+- Both patients reload successfully.
+
+Why this matters:
+
+- This proves a mid-stream patient switch does not lose either patient's events.
+- It verifies this sequence:
+
+  ```text
+  A AudioStarted
+  A AudioStopped
+  A TranscriptReady
+  B AudioStarted
+  B AudioStopped
+  B TranscriptReady
+  ```
+
+##### 7.10. Run the complete Step 7 verification
+
+Manual actions:
+
+1. Run only the crash recovery tests:
+
+   ```bash
+   cargo test crash_recovery -- --nocapture
+   ```
+
+2. Run all tests:
+
+   ```bash
+   cargo test
+   ```
+
+3. Run the CLI manually as a sanity check:
+
+   ```bash
+   cargo run --bin er-note-app
+   ```
+
+4. Type these commands by hand:
+
+   ```text
+   status
+   new chest pain
+   list
+   switch 1
+   start ambient
+   stop
+   start dictation
+   stop
+   mdm
+   review
+   status
+   reload
+   status
+   quit
+   ```
+
+5. Start the CLI again:
+
+   ```bash
+   cargo run --bin er-note-app
+   ```
+
+6. Confirm the banner says:
+
+   ```text
+   Status: Resumed shift
+   Patients reloaded: 1
+   ```
+
+7. Type:
+
+   ```text
+   list
+   status
+   quit
+   ```
+
+Expected result:
+
+- The crash-recovery tests pass.
+- The full test suite passes.
+- The CLI can quit, write `shift.json`, restart, and resume the patient registry.
+- `reload` reconstructs the active patient note from SQLite without crashing.
+
+Manual cleanup note:
+
+- The CLI sanity check uses real local files:
+
+  ```text
+  ./er_notes.db
+  ./shift.json
+  ```
+
+- If you want the next CLI run to behave like a fresh shift, move those files aside or delete them intentionally. Do not confuse this with the integration tests: the Step 7 automated tests should use in-memory SQLite and should not depend on these files.
+
+##### 7.11. Common failure modes and what they mean
+
+| Symptom | Likely cause | What to check |
+|---------|--------------|---------------|
+| `loaded` is `None` | No events were persisted | Make sure `EventBus::new(..., Some(repo.clone()))` is used |
+| Reloaded note has no transcript | `TranscriptReady` was not published or replayed | Check `stop_encounter()` publishes transcript after audio stop |
+| Test passes without dropping store | The test did not simulate a crash | Drop both `driver` and `store` before loading |
+| `encounter_count` is wrong | Event ordering or replay transition issue | Check event sequence and `apply_event(AudioStarted)` |
+| Switch test loses patient A | `switch_patient` did not stop A before starting B | Check `EncounterDriver::switch_patient` implementation |
+| Snapshot count is zero | No snapshot-triggering phase was reached | Make sure `AudioStopped`, `TriggerMDM`, or `ReviewReady/Sign` path ran |
+| CLI resumes patient but warns "no events in DB" | `shift.json` has a patient with no persisted events | Registering a patient alone writes `shift.json` on quit but does not publish events until recording starts |
 
 ---
 

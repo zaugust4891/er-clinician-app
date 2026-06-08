@@ -1,0 +1,21 @@
+{
+  "shift": {
+    "id": "019ea96a-a44e-7790-ad11-e2e89418c7b2",
+    "started_at": "2026-06-08T22:46:38.926915503Z",
+    "ended_at": null,
+    "patient_ids": [
+      "019ea96a-a44f-7c81-b054-1494ff8085d1"
+    ]
+  },
+  "patients": [
+    {
+      "id": "019ea96a-a44f-7c81-b054-1494ff8085d1",
+      "first_name": null,
+      "last_name": null,
+      "age": null,
+      "chief_complaint": "chest pain",
+      "room": null,
+      "created_at": "2026-06-08T22:46:38.927009441Z"
+    }
+  ]
+}
