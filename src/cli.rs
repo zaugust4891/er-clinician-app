@@ -5,6 +5,7 @@ use crate::models::CaptureMode;
 use crate::error::{AppResult, AppError};
 use crate::shift_manager::ShiftManager;
 use crate::stt::Transcriber;
+use crate::summarizer::Summarizer;
 
 pub enum Command {
     New { chief_complaint: String },        // register a new patient on the shift
@@ -135,13 +136,14 @@ impl Commands {
     }
 }
 
-pub fn handle_command<A, T>(
-    manager: &mut ShiftManager<A, T>,
+pub fn handle_command<A, T, S>(
+    manager: &mut ShiftManager<A, T, S>,
     command_wrapper: Commands,
 ) -> AppResult<bool>
 where
     A: AudioCapture,
     T: Transcriber,
+    S: Summarizer,
 {
     match command_wrapper.commands {
         Command::New { chief_complaint } => {

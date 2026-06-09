@@ -1,3 +1,4 @@
+use crate::claude_summarizer::ClaudeSummarizer;
 use crate::error::AppResult;
 use crate::models::NoteSections;
 
@@ -26,8 +27,40 @@ pub trait Summarizer: Send + Sync {
     ) -> impl std::future::Future<Output = AppResult<String>> + Send;
 }
 
-/// Mock summarizer for testing — returns template text.
+pub enum AppSummarizer {
+    Claude(ClaudeSummarizer),
+    Mock(MockSummarizer),
+}
+
+impl Summarizer for AppSummarizer {
+    async fn summarize_encounter(&self, t: &str, p: &NoteSections, n: u32) -> AppResult<NoteSections> {
+        match self {
+            AppSummarizer::Claude(c) => c.summarize_encounter(t, p, n).await,
+            AppSummarizer::Mock(m) => m.summarize_encounter(t, p, n).await,
+        }
+    }
+
+    async fn generate_mdm(&self, s: &NoteSections, r: &str, d: &str) -> AppResult<String> {
+        match self {
+            AppSummarizer::Claude(c) => c.generate_mdm(s, r, d).await,
+            AppSummarizer::Mock(m) => m.generate_mdm(s, r, d).await,
+        }
+    }
+}
+
 pub struct MockSummarizer;
+
+impl MockSummarizer {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for MockSummarizer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl Summarizer for MockSummarizer {
     async fn summarize_encounter(

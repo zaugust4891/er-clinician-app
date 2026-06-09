@@ -47,9 +47,9 @@ pub struct ClaudeSummarizer {
 
 impl ClaudeSummarizer {
     pub fn new() -> AppResult<Self> {
-        let api_key = std::env::var("ANTHROPIC_API_KEY")
+        let api_key = std::env::var("ANTHROPIC_KEY")
             .map_err(|_| AppError::Summarization(
-                "ANTHROPIC_API_KEY not set in env file.".into(),
+                "ANTHROPIC_KEY not set in env file.".into(),
             ))?;
     
         Ok(Self {

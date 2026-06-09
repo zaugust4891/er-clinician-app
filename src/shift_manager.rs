@@ -9,13 +9,21 @@ use crate::repository::Repository;
 use crate::state::PatientNoteStore;
 use crate::state::{apply_event, replay};
 use crate::encounter_driver::EncounterDriver;
+use crate::summarizer::Summarizer;
+use crate::deidentify::Deidentifier;
 
+use tokio::runtime::Runtime;
 use std::sync::Arc;
 use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 
 
-pub struct ShiftManager<A: AudioCapture, T: Transcriber> {
+pub struct ShiftManager<A, T, S> 
+where
+    A: AudioCapture,
+    T: Transcriber,
+    S: Summarizer,
+{
     shift: Shift,
     patients: HashMap<PatientId, PatientRecord>,
     active_patient_id: Option<PatientId>,
@@ -23,9 +31,17 @@ pub struct ShiftManager<A: AudioCapture, T: Transcriber> {
     bus: Arc<EventBus>,
     store: PatientNoteStore,
     repo: Arc<dyn Repository>,
+    summarizer: S,
+    runtime: Arc<Runtime>,
+    deidentifier: Deidentifier,
 }
 
-impl<A: AudioCapture, T: Transcriber>ShiftManager<A, T> {
+impl<A, T, S>ShiftManager<A, T, S> 
+where
+    A: AudioCapture,
+    T: Transcriber,
+    S: Summarizer,
+{
      pub fn new(
         shift: Shift,
         patients: HashMap<PatientId, PatientRecord>,
@@ -33,6 +49,8 @@ impl<A: AudioCapture, T: Transcriber>ShiftManager<A, T> {
         bus: Arc<EventBus>,
         store: PatientNoteStore,
         repo: Arc<dyn Repository>,
+        summarizer: S,
+        runtime: Arc<Runtime>,
     ) -> Self {
         Self {
             shift,
@@ -42,6 +60,9 @@ impl<A: AudioCapture, T: Transcriber>ShiftManager<A, T> {
             bus,
             store,
             repo,
+            summarizer,
+            runtime,
+            deidentifier: Deidentifier::new(),
         }
     }
     
@@ -341,4 +362,61 @@ fn results_text(note: &PatientNote) -> Option<String> {
             .collect::<Vec<_>>()
             .join("\n"),
     )
+}
+
+/// Phase 3 Step 0a test
+/// The test should construct a ShiftManager with MockSummarizer,
+/// use its runtime to block_on a summarize_encounter call, 
+/// and assert the mock HPI comes back. 
+#[cfg(test)]
+
+mod tests {
+    use super::*;
+    
+    #[test]
+    fn construct_shift_manager_with_mock_summarizer() {
+        let conn = crate::db::open_memory_db().unwrap();
+        let sql_lite_repo: Arc<dyn Repository> = Arc::new(crate::repository::SqliteRepository::new(conn));
+        let event_bus = Arc::new(EventBus::new(1024, Some(sql_lite_repo.clone())));
+
+        let store: crate::state::PatientNoteStore = crate::state::new_store();
+        let audio = crate::audio::MockAudioCapture::new();
+        let transcriber = crate::stt::MockTranscriber;
+
+        let encounter_driver = crate::encounter_driver::EncounterDriver::new(audio, transcriber, event_bus.clone(), store.clone());
+        let summarizer = crate::summarizer::MockSummarizer::new();
+        let rt = Arc::new(tokio::runtime::Runtime::new().unwrap());
+        let patients: HashMap<PatientId, PatientRecord> = HashMap::new();
+        let shift = Shift::new();
+        let shift_manager = ShiftManager::new(
+            shift,
+            patients,
+            encounter_driver,
+            event_bus.clone(),
+            store.clone(),
+            sql_lite_repo.clone(),
+            summarizer,
+            rt.clone(),
+        );
+
+        let result = shift_manager.runtime.block_on(
+            shift_manager.summarizer.summarize_encounter(
+                "test transcript",
+                &NoteSections::default(), 
+                1
+            )
+        );
+
+        let sections = result.unwrap();
+        assert_eq!(
+            sections.hpi.as_deref(),
+            Some("[mock HPI from encounter transcript]")
+        );
+        assert_eq!(
+            sections.exam.as_deref(),
+            Some("[mock exam findings]")
+        );
+
+    }
+
 }

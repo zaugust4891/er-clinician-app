@@ -9,7 +9,7 @@ async fn main() {
     tracing_subscriber::fmt::init();
 
     let summarizer = ClaudeSummarizer::new().expect(
-        "ANTHROPIC_API_KEY not found — add it to .env or export it in your shell"
+        "ANTHROPIC_KEY not found — add it to .env or export it in your shell"
     );
     
     // --- Transcript 1: Classic chest pain ---

@@ -1,4 +1,5 @@
 use er_note_app::audio::MockAudioCapture;
+use er_note_app::claude_summarizer::ClaudeSummarizer;
 use er_note_app::cli::{Commands, handle_command};
 use er_note_app::db;
 use er_note_app::encounter_driver::EncounterDriver;
@@ -10,6 +11,9 @@ use er_note_app::shift_manager::ShiftManager;
 use er_note_app::state::{self, PatientNoteStore, load_patient_note};
 use er_note_app::stt::MockTranscriber;
 use er_note_app::persistence::ShiftSnapshot;
+use dotenvy::dotenv;
+use er_note_app::summarizer::{AppSummarizer, MockSummarizer};
+use std::env;
 use std::fs::File;
 use std::io::{self, BufReader};
 use std::path::Path;
@@ -17,6 +21,7 @@ use std::sync::Arc;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::collections::HashMap;
+
 
 
 // Helper with context to handle Ok or error for steps that return AppResult 
@@ -54,6 +59,15 @@ fn main() -> AppResult<()> {
     tracing_subscriber::fmt::init();
 
     tracing::info!("ED Note App starting");
+    
+    dotenv().ok();
+    let threaded_rt = Arc::new(tokio::runtime::Runtime::new()?);
+    
+    let summarizer = if env::var("ANTHROPIC_KEY").is_ok() {
+        AppSummarizer::Claude(bail("Failed to create ClaudeSummarizer", ClaudeSummarizer::new()))
+    } else {
+        AppSummarizer::Mock(MockSummarizer::new())
+    };
 
     // Initialize in-memory database for demo.
     let sql_lite_db_path = "./er_notes.db";
@@ -106,6 +120,8 @@ fn main() -> AppResult<()> {
         event_bus.clone(),
         store.clone(),
         sql_lite_repo.clone(),
+        summarizer,
+        threaded_rt.clone(),
     );
     let patient_record_count = manager.list_patients().len();
 
