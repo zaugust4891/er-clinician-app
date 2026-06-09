@@ -21,11 +21,59 @@ Key differentiator: **multi-encounter merging** — captures every interaction a
 - `load_patient_note()` — snapshot fast-path with delta replay, full replay fallback
 - `EventBus` — persist-first, then project to in-memory DashMap, then broadcast; snapshots on Idle/Finalizing/Signed transitions
 - NoteEvent convenience constructors (`audio_started`, `audio_stopped`, etc.)
+- `EncounterDriver` — mock audio/STT orchestration that publishes AudioStarted, AudioStopped, and TranscriptReady through EventBus
+- `ShiftManager` — multi-patient shift orchestration, active-patient switching, guarded MDM/review/sign/reload operations, stable patient listing
+- Interactive developer CLI in `src/main.rs` with shift resume via `shift.json` and SQLite-backed note reload
+- Crash-recovery integration tests for full lifecycle reload and mid-encounter patient switching
 
 ## What's Stubbed
 
 - No iOS platform layer (audio, FFI)
 - No EMR/FHIR integration
+- Real speech-to-text is not wired into the pipeline yet; Phase 2 uses `MockTranscriber`
+- Real microphone capture is not wired into the pipeline yet; Phase 2 uses `MockAudioCapture`
+- CLI `lab` and `note` handlers are still placeholders even though lower-level result/note pieces exist
+- Summarization is not triggered by the encounter pipeline yet; Claude summarization exists as a separate component/spike
+
+## Completed: Phase 2 Audio Pipeline Wiring
+
+Phase 2 connects the mock audio/STT layers to the event-sourced core:
+
+```
+MockAudioCapture -> MockTranscriber -> EncounterDriver -> EventBus -> SQLite + DashMap -> load_patient_note
+```
+
+### Working CLI Flow
+
+The developer CLI starts with:
+
+```bash
+cargo run --bin er-note-app
+```
+
+Supported working commands include:
+
+- `new <chief complaint>`
+- `list`
+- `switch <index>`
+- `start <ambient|dictation>`
+- `stop`
+- `mdm`
+- `review`
+- `sign`
+- `reload`
+- `status`
+- `help`
+- `quit`
+
+The CLI persists event data to `./er_notes.db` and stores non-event-sourced shift metadata in `./shift.json`.
+
+### Crash Recovery Coverage
+
+`src/tests/crash_recovery.rs` verifies:
+
+- multi-encounter lifecycle survives dropping the in-memory DashMap and reloading from SQLite
+- `switch_patient` closes the old patient's encounter, starts the new patient's encounter, and both patients reload correctly after simulated crash
 
 ## Completed: EventBus Persistence Wiring + Snapshots
 
@@ -88,6 +136,11 @@ Product pitch document: `product-summary.md`
 | `src/events.rs` | NoteEvent enum + constructors, EventBus (persist-first broadcast) |
 | `src/repository.rs` | Repository trait, SqliteRepository (events + snapshots + checksum) |
 | `src/tests/persistence_integration.rs` | Integration tests: round-trip, snapshot, checksum, consistency |
+| `src/tests/crash_recovery.rs` | Phase 2 crash-recovery integration tests |
+| `src/encounter_driver.rs` | Mock audio/STT encounter orchestration |
+| `src/shift_manager.rs` | Multi-patient shift orchestration and CLI-facing manager API |
+| `src/cli.rs` | CLI command parsing and dispatch |
+| `src/main.rs` | Interactive developer CLI startup, command loop, shift save/resume |
 | `src/db.rs` | SQLite schema, open_db/open_memory_db |
 | `src/claude_summarizer.rs` | Real Claude API client for HPI/ROS/Exam/MDM |
 | `src/export.rs` | Plain text note formatting |

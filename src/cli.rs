@@ -248,10 +248,11 @@ where
                 .to_string(),
         )),
 
-        Command::Export => Err(AppError::CliError(
-            "The export command needs active patient and patient record access before it can be handled."
-                .to_string(),
-        )),
+        Command::Export => {
+            let exported = manager.export_active_note()?;
+            println!("{exported}");
+            Ok(true)
+        }
 
         Command::Reload => {
             let replayed_count = manager.reload_active_patient()?;
@@ -295,5 +296,6 @@ where
 }
 
 fn short_id(id: uuid::Uuid) -> String {
-    id.to_string().chars().take(8).collect()
+    let id = id.to_string();
+    id[id.len() - 8..].to_string()
 }

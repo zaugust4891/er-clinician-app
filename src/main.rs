@@ -4,7 +4,7 @@ use er_note_app::db;
 use er_note_app::encounter_driver::EncounterDriver;
 use er_note_app::error::{AppError, AppResult};
 use er_note_app::events::EventBus;
-use er_note_app::models::{PatientId, PatientRecord, Shift};
+use er_note_app::models::{PatientId, PatientNote, PatientRecord, Shift};
 use er_note_app::repository::{Repository, SqliteRepository};
 use er_note_app::shift_manager::ShiftManager;
 use er_note_app::state::{self, PatientNoteStore, load_patient_note};
@@ -81,12 +81,20 @@ fn main() -> AppResult<()> {
     let ShiftSnapshot { shift, patients } = snapshot;
     let patients: HashMap<PatientId, PatientRecord> = patients.into_iter().map(|p| (p.id, p)).collect();
 
+    let mut notes_reloaded_count = 0;
     for (id, _) in &patients {
         match load_patient_note(&*sql_lite_repo, *id) {
             Ok(Some(note)) => { 
                 store.insert(*id, note);
+                notes_reloaded_count += 1;
             }
-            Ok(None) => tracing::warn!(patient_id = %id, "in shift.json but no events in DB."),
+            Ok(None) => {
+                tracing::info!(
+                    patient_id = %id,
+                    "patient record has no persisted events yet; restoring as registered"
+                );
+                store.insert(*id, PatientNote::new(*id));
+            }
             Err(e) => bail("loading patient note", Err(e)),
         }
     }
@@ -99,7 +107,7 @@ fn main() -> AppResult<()> {
         store.clone(),
         sql_lite_repo.clone(),
     );
-    let reloaded_patient_count = manager.list_patients().len();
+    let patient_record_count = manager.list_patients().len();
 
 // Welcome banner 
     println!("======== WELCOME to Gegonos CLI ========");
@@ -111,7 +119,8 @@ fn main() -> AppResult<()> {
     println!("Database: {}", sql_lite_db_path);
     println!("Shift file: ./shift.json");
     println!("Status: {}", if shift_was_resumed { "Resumed shift" } else { "Fresh shift" });
-    println!("Patients reloaded: {}", reloaded_patient_count);
+    println!("Patient records loaded: {}", patient_record_count);
+    println!("Notes reloaded from DB: {}", notes_reloaded_count);
     println!();
     Commands::print_help();
     println!();

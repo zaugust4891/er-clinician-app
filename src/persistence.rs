@@ -1,4 +1,3 @@
-use serde::{Serialize, Deserialize};
 use crate::models::{PatientRecord, Shift};
 
 #[derive(serde::Serialize, serde::Deserialize)]

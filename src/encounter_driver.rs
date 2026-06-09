@@ -5,13 +5,12 @@ use crate::models::{PatientId, EncounterId, CaptureMode};
 use crate::state::PatientNoteStore;
 
 use std::sync::Arc;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use uuid::{Uuid};
 
 pub struct ActiveEncounter {
     patient_id: PatientId,
     encounter_id: EncounterId,
-    started_at: DateTime<Utc>,
 }
 pub struct EncounterDriver<A: AudioCapture, T: Transcriber> {
     audio: A,
@@ -47,7 +46,7 @@ impl<A: AudioCapture, T: Transcriber>EncounterDriver<A, T> {
 
         self.bus.publish(NoteEvent::audio_started(patient_id, encounter_id, mode), &self.store)?;
 
-        self.active_encounter = Some(ActiveEncounter { patient_id, encounter_id, started_at: Utc::now() });
+        self.active_encounter = Some(ActiveEncounter { patient_id, encounter_id });
 
         Ok(encounter_id)
     }
@@ -105,7 +104,7 @@ impl<A: AudioCapture, T: Transcriber>EncounterDriver<A, T> {
         self.active_encounter.is_some()
     }
 
-    pub fn active_patient_id(&self) -> Option<PatientId> {
+pub fn active_patient_id(&self) -> Option<PatientId> {
         self.active_encounter.as_ref().map(|e| e.patient_id)
     }
 
@@ -122,6 +121,191 @@ impl<A: AudioCapture, T: Transcriber>EncounterDriver<A, T> {
 
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audio::MockAudioCapture;
+    use crate::events::NoteEvent;
+    use crate::models::NotePhase;
+    use crate::state;
+    use crate::stt::MockTranscriber;
+
+    fn test_driver() -> (
+        EncounterDriver<MockAudioCapture, MockTranscriber>,
+        tokio::sync::broadcast::Receiver<NoteEvent>,
+        PatientNoteStore,
+    ) {
+        let bus = Arc::new(EventBus::new(16, None));
+        let receiver = bus.subscribe();
+        let store = state::new_store();
+        let driver = EncounterDriver::new(
+            MockAudioCapture::new(),
+            MockTranscriber,
+            bus,
+            store.clone(),
+        );
+
+        (driver, receiver, store)
+    }
+
+    #[test]
+    fn start_encounter_publishes_audio_started() {
+        let (mut driver, mut receiver, store) = test_driver();
+        let patient_id = Uuid::now_v7();
+
+        let encounter_id = driver
+            .start_encounter(patient_id, CaptureMode::Ambient)
+            .unwrap();
+
+        let event = receiver.try_recv().unwrap();
+        match event {
+            NoteEvent::AudioStarted {
+                patient_id: event_patient_id,
+                encounter_id: event_encounter_id,
+                capture_mode,
+                ..
+            } => {
+                assert_eq!(event_patient_id, patient_id);
+                assert_eq!(event_encounter_id, encounter_id);
+                assert_eq!(capture_mode, CaptureMode::Ambient);
+            }
+            other => panic!("expected AudioStarted, got {other:?}"),
+        }
+
+        let note = store.get(&patient_id).unwrap();
+        assert_eq!(note.phase, NotePhase::Encountering);
+        assert_eq!(note.encounter_count, 1);
+    }
+
+    #[test]
+    fn stop_encounter_publishes_audio_stopped_then_transcript_ready() {
+        let (mut driver, mut receiver, store) = test_driver();
+        let patient_id = Uuid::now_v7();
+
+        let encounter_id = driver
+            .start_encounter(patient_id, CaptureMode::Dictation)
+            .unwrap();
+        let _started = receiver.try_recv().unwrap();
+
+        let stopped_id = driver.stop_encounter().unwrap();
+        assert_eq!(stopped_id, encounter_id);
+
+        let first = receiver.try_recv().unwrap();
+        let second = receiver.try_recv().unwrap();
+
+        match first {
+            NoteEvent::AudioStopped {
+                patient_id: event_patient_id,
+                encounter_id: event_encounter_id,
+                ..
+            } => {
+                assert_eq!(event_patient_id, patient_id);
+                assert_eq!(event_encounter_id, encounter_id);
+            }
+            other => panic!("expected AudioStopped first, got {other:?}"),
+        }
+
+        match second {
+            NoteEvent::TranscriptReady {
+                patient_id: event_patient_id,
+                encounter_id: event_encounter_id,
+                text,
+                ..
+            } => {
+                assert_eq!(event_patient_id, patient_id);
+                assert_eq!(event_encounter_id, encounter_id);
+                assert!(text.contains("mock transcript"));
+            }
+            other => panic!("expected TranscriptReady second, got {other:?}"),
+        }
+
+        let note = store.get(&patient_id).unwrap();
+        assert_eq!(note.phase, NotePhase::Idle);
+        assert_eq!(note.encounters.len(), 1);
+        assert!(note.encounters[0].ended_at.is_some());
+        assert!(note.encounters[0].transcript.is_some());
+    }
+
+    #[test]
+    fn double_start_returns_error() {
+        let (mut driver, _receiver, _store) = test_driver();
+        let patient_id = Uuid::now_v7();
+
+        driver
+            .start_encounter(patient_id, CaptureMode::Ambient)
+            .unwrap();
+
+        let err = driver
+            .start_encounter(patient_id, CaptureMode::Dictation)
+            .unwrap_err();
+
+        assert!(err.to_string().contains("encounter already in progress"));
+    }
+
+    #[test]
+    fn stop_without_start_returns_error() {
+        let (mut driver, _receiver, _store) = test_driver();
+
+        let err = driver.stop_encounter().unwrap_err();
+
+        assert!(err.to_string().contains("no encounter in progress"));
+    }
+
+    #[test]
+    fn switch_patient_stops_old_and_starts_new() {
+        let (mut driver, mut receiver, store) = test_driver();
+        let patient_a = Uuid::now_v7();
+        let patient_b = Uuid::now_v7();
+
+        let encounter_a = driver
+            .start_encounter(patient_a, CaptureMode::Ambient)
+            .unwrap();
+        let _started_a = receiver.try_recv().unwrap();
+
+        let encounter_b = driver
+            .switch_patient(patient_b, CaptureMode::Dictation)
+            .unwrap();
+
+        let stopped_a = receiver.try_recv().unwrap();
+        let transcript_a = receiver.try_recv().unwrap();
+        let started_b = receiver.try_recv().unwrap();
+
+        assert!(matches!(
+            stopped_a,
+            NoteEvent::AudioStopped {
+                patient_id,
+                encounter_id,
+                ..
+            } if patient_id == patient_a && encounter_id == encounter_a
+        ));
+        assert!(matches!(
+            transcript_a,
+            NoteEvent::TranscriptReady {
+                patient_id,
+                encounter_id,
+                ..
+            } if patient_id == patient_a && encounter_id == encounter_a
+        ));
+        assert!(matches!(
+            started_b,
+            NoteEvent::AudioStarted {
+                patient_id,
+                encounter_id,
+                capture_mode: CaptureMode::Dictation,
+                ..
+            } if patient_id == patient_b && encounter_id == encounter_b
+        ));
+
+        let note_a = store.get(&patient_a).unwrap();
+        assert_eq!(note_a.phase, NotePhase::Idle);
+        assert!(note_a.encounters[0].transcript.is_some());
+        drop(note_a);
+
+        let note_b = store.get(&patient_b).unwrap();
+        assert_eq!(note_b.phase, NotePhase::Encountering);
+        assert_eq!(note_b.encounter_count, 1);
+    }
+}
 
 
 

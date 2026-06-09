@@ -1,13 +1,14 @@
 use crate::error::{AppError, AppResult};
 use crate::{audio::AudioCapture, stt::Transcriber,};
 use crate::events::{EventBus, NoteEvent};
+use crate::export::format_note;
 use crate::models::{CaptureMode, EncounterId, PatientNote, PatientId, PatientRecord, ClinicalResult, NotePhase, Shift, ShiftId};
+use crate::models::NoteSections;
 use crate::persistence::ShiftSnapshot;
 use crate::repository::Repository;
 use crate::state::PatientNoteStore;
 use crate::state::{apply_event, replay};
 use crate::encounter_driver::EncounterDriver;
-
 
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -123,6 +124,8 @@ impl<A: AudioCapture, T: Transcriber>ShiftManager<A, T> {
     }
 
     pub fn trigger_mdm(&mut self) -> AppResult<()> {
+        self.ensure_no_active_encounter("trigger MDM")?;
+        self.ensure_active_phase(NotePhase::Idle, "TriggerMDM")?;
         let patient_id = self.check_active_patient_id()?;
 
         let trigger_mdm_event = NoteEvent::trigger_mdm(patient_id);
@@ -133,6 +136,8 @@ impl<A: AudioCapture, T: Transcriber>ShiftManager<A, T> {
     }
 
     pub fn review_ready(&mut self) -> AppResult<()> {
+        self.ensure_no_active_encounter("mark review ready")?;
+        self.ensure_active_phase(NotePhase::Finalizing, "ReviewReady")?;
         let patient_id = self.check_active_patient_id()?;
         let review_ready = NoteEvent::review_ready(patient_id);
 
@@ -142,6 +147,8 @@ impl<A: AudioCapture, T: Transcriber>ShiftManager<A, T> {
     }
 
     pub fn sign(&mut self) -> AppResult<()> {
+        self.ensure_no_active_encounter("sign note")?;
+        self.ensure_active_phase(NotePhase::PendingSignOff, "Sign")?;
         let patient_id = self.check_active_patient_id()?;
         let signed_note = NoteEvent::sign(patient_id);
 
@@ -154,15 +161,44 @@ impl<A: AudioCapture, T: Transcriber>ShiftManager<A, T> {
         self.store.get(&patient_id).map(|r| r.clone())
     }
 
+    pub fn export_active_note(&self) -> AppResult<String> {
+        let patient_id = self.check_active_patient_id()?;
+        let patient = self
+            .patients
+            .get(&patient_id)
+            .ok_or(AppError::PatientNotFound(patient_id))?;
+        let note = self
+            .get_note(patient_id)
+            .ok_or_else(|| AppError::NoActivePatient("No note found for active patient.".to_string()))?;
+
+        let mut sections = note.note_sections.clone();
+        if sections_are_empty(&sections) {
+            let transcript_text = transcripts_text(&note);
+            if !transcript_text.is_empty() {
+                sections.hpi = Some(transcript_text);
+            }
+        }
+
+        let results_text = results_text(&note);
+        Ok(format_note(
+            patient,
+            &sections,
+            note.disposition.as_ref(),
+            results_text.as_deref(),
+        ))
+    }
+
     pub fn list_patients(&self) -> Vec<(PatientId, String, NotePhase)> {
-        self.patients
+        self.shift
+            .patient_ids
             .iter()
-            .map(|(id, record)| {
+            .filter_map(|id| {
+                let record = self.patients.get(id)?;
                 let phase = self.store
                     .get(id)
                     .map(|n| n.phase.clone())
                     .unwrap_or(NotePhase::Registered);
-                (*id, record.chief_complaint.clone(), phase)
+                Some((*id, record.chief_complaint.clone(), phase))
             })
             .collect()
     }
@@ -188,6 +224,7 @@ impl<A: AudioCapture, T: Transcriber>ShiftManager<A, T> {
     }
 
     pub fn reload_active_patient(&mut self) -> AppResult<usize> {
+        self.ensure_no_active_encounter("reload active patient")?;
         let patient_id = self.check_active_patient_id()?;
 
         let (note, replayed_count) = if let Some((sequence_id, mut note)) =
@@ -236,7 +273,72 @@ impl<A: AudioCapture, T: Transcriber>ShiftManager<A, T> {
 
     } 
 
+    fn active_note_phase(&self) -> AppResult<NotePhase> {
+        let patient_id = self.check_active_patient_id()?;
+        Ok(self.store
+            .get(&patient_id)
+            .map(|n| n.phase.clone())
+            .unwrap_or(NotePhase::Registered))
+    }
+
+    fn ensure_active_phase(&self, expected: NotePhase, event: &str) -> AppResult<()> {
+        let phase = self.active_note_phase()?;
+        if phase != expected {
+            return Err(AppError::InvalidTransition {
+                from: phase,
+                event: event.to_string(),
+            });
+        }
+
+        Ok(())
+    }
+
+    fn ensure_no_active_encounter(&self, action: &str) -> AppResult<()> {
+        if self.driver.has_active_encounter() {
+            return Err(AppError::Audio(format!(
+                "cannot {action} while an encounter is in progress; stop the encounter first"
+            )));
+        }
+
+        Ok(())
+    }
 
 
 
+
+}
+
+fn sections_are_empty(sections: &NoteSections) -> bool {
+    sections.hpi.is_none()
+        && sections.ros.is_none()
+        && sections.exam.is_none()
+        && sections.mdm.is_none()
+        && sections.disposition_text.is_none()
+}
+
+fn transcripts_text(note: &PatientNote) -> String {
+    note.encounters
+        .iter()
+        .filter_map(|encounter| {
+            encounter
+                .transcript
+                .as_ref()
+                .map(|text| format!("Encounter {}: {}", encounter.encounter_number, text))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn results_text(note: &PatientNote) -> Option<String> {
+    if note.results.is_empty() {
+        return None;
+    }
+
+    Some(
+        note.results
+            .iter()
+            .map(|result| format!("{:?}", result.result_type))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
 }

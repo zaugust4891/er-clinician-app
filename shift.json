@@ -4,10 +4,23 @@
     "started_at": "2026-06-08T22:46:38.926915503Z",
     "ended_at": null,
     "patient_ids": [
-      "019ea96a-a44f-7c81-b054-1494ff8085d1"
+      "019ea96a-a44f-7c81-b054-1494ff8085d1",
+      "019ea9a8-f3e2-7ba3-860b-67b63cfea4aa",
+      "019ea9ab-2007-7462-a01a-b875a849aee0",
+      "019ea9ab-bdbd-7ab0-a111-5a7b96cee2ad",
+      "019ea9b6-7136-7c91-92eb-00bd6b033a75"
     ]
   },
   "patients": [
+    {
+      "id": "019ea9ab-bdbd-7ab0-a111-5a7b96cee2ad",
+      "first_name": null,
+      "last_name": null,
+      "age": null,
+      "chief_complaint": "abdomen pain",
+      "room": null,
+      "created_at": "2026-06-08T23:57:45.277077646Z"
+    },
     {
       "id": "019ea96a-a44f-7c81-b054-1494ff8085d1",
       "first_name": null,
@@ -16,6 +29,33 @@
       "chief_complaint": "chest pain",
       "room": null,
       "created_at": "2026-06-08T22:46:38.927009441Z"
+    },
+    {
+      "id": "019ea9b6-7136-7c91-92eb-00bd6b033a75",
+      "first_name": null,
+      "last_name": null,
+      "age": null,
+      "chief_complaint": "chest pain",
+      "room": null,
+      "created_at": "2026-06-09T00:09:26.582066906Z"
+    },
+    {
+      "id": "019ea9ab-2007-7462-a01a-b875a849aee0",
+      "first_name": null,
+      "last_name": null,
+      "age": null,
+      "chief_complaint": "shoulder pain",
+      "room": null,
+      "created_at": "2026-06-08T23:57:04.903372286Z"
+    },
+    {
+      "id": "019ea9a8-f3e2-7ba3-860b-67b63cfea4aa",
+      "first_name": null,
+      "last_name": null,
+      "age": null,
+      "chief_complaint": "chest pain",
+      "room": null,
+      "created_at": "2026-06-08T23:54:42.530442496Z"
     }
   ]
 }
