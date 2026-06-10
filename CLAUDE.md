@@ -121,11 +121,11 @@ rusqlite::Connection is !Sync. Use `std::sync::Mutex<Connection>` because SQLite
 
 ## Doctor Feedback (2026-03-12)
 
-ED physician validated the concept. Two key questions answered in `doctor-feedback-responses.md`:
+ED physician validated the concept. Two key questions answered in `docs/product/doctor-feedback-responses.md`:
 1. **Listening model**: Recommended patient-anchored quick switch (continuous shift recording, one-tap Apple Watch switch)
 2. **EMR integration**: Clipboard MVP, FHIR V2, deep Epic V3
 
-Product pitch document: `product-summary.md`
+Product pitch document: `docs/product/product-summary.md`
 
 ## Key Files
 
@@ -146,6 +146,5 @@ Product pitch document: `product-summary.md`
 | `src/export.rs` | Plain text note formatting |
 | `src/deidentify.rs` | PHI stripping before API calls |
 | `src/bin/spike_summarizer.rs` | End-to-end Claude test (chest pain case) |
-| `repository-architecture.md` | Persistence strategy analysis (Strategy B = event-sourced) |
-| `doctor-feedback-responses.md` | Responses to ED doctor's questions |
-| `product-summary.md` | Product pitch document |
+| `docs/product/doctor-feedback-responses.md` | Responses to ED doctor's questions |
+| `docs/product/product-summary.md` | Product pitch document |
