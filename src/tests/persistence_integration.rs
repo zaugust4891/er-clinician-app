@@ -1,7 +1,8 @@
 use chrono::Utc;
 use uuid::Uuid;
 
-use crate::events::{EventBus, NoteEvent};
+use crate::application::EventBus;
+use crate::domain::NoteEvent;
 use crate::domain::{CaptureMode, Disposition, NotePhase};
 use crate::repository::{Repository, SqliteRepository};
 

@@ -1,6 +1,7 @@
 use crate::error::{AppError, AppResult};
 use crate::{audio::AudioCapture, stt::Transcriber,};
-use crate::events::{EventBus, NoteEvent};
+use crate::application::EventBus;
+use crate::domain::NoteEvent;
 use crate::export::format_note;
 use crate::domain::{CaptureMode, EncounterId, PatientNote, PatientId, PatientRecord, ClinicalResult, Disposition, NotePhase, Shift, ShiftId};
 use crate::domain::NoteSections;

@@ -369,7 +369,7 @@ mod tests {
 
     use crate::audio::MockAudioCapture;
     use crate::encounter_driver::EncounterDriver;
-    use crate::events::EventBus;
+    use crate::application::EventBus;
     use crate::domain::{PatientId, PatientRecord, Shift};
     use crate::repository::{Repository, SqliteRepository};
     use crate::state;

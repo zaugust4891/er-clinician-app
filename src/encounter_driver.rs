@@ -1,6 +1,7 @@
 use crate::error::{AppError, AppResult};
 use crate::{audio::AudioCapture, stt::Transcriber,};
-use crate::events::{EventBus, NoteEvent};
+use crate::application::EventBus;
+use crate::domain::NoteEvent;
 use crate::domain::{PatientId, EncounterId, CaptureMode};
 use crate::state::PatientNoteStore;
 
@@ -125,7 +126,7 @@ pub fn active_patient_id(&self) -> Option<PatientId> {
 mod tests {
     use super::*;
     use crate::audio::MockAudioCapture;
-    use crate::events::NoteEvent;
+    use crate::domain::NoteEvent;
     use crate::domain::NotePhase;
     use crate::state;
     use crate::stt::MockTranscriber;

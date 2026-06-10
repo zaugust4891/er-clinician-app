@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
 
 use crate::domain::{PatientId, PatientNote};
-use crate::events::{NoteEvent};
+use crate::domain::NoteEvent;
 use crate::error::{AppError, AppResult};
 
 pub trait Repository: Send + Sync {

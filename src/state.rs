@@ -4,7 +4,7 @@ use chrono::Utc;
 use dashmap::DashMap;
 
 use crate::error::{AppError, AppResult};
-use crate::events::NoteEvent;
+use crate::domain::NoteEvent;
 use crate::domain::audit::{AuditAction, AuditEntry};
 use crate::domain::note::{NotePhase, NoteSectionVersion};
 use crate::domain::patient::PatientId;

@@ -4,7 +4,7 @@ use er_note_app::cli::{Commands, handle_command};
 use er_note_app::db;
 use er_note_app::encounter_driver::EncounterDriver;
 use er_note_app::error::{AppError, AppResult};
-use er_note_app::events::EventBus;
+use er_note_app::application::EventBus;
 use er_note_app::domain::{PatientId, PatientNote, PatientRecord, Shift};
 use er_note_app::repository::{Repository, SqliteRepository};
 use er_note_app::shift_manager::ShiftManager;
