@@ -4,14 +4,14 @@ use std::io::Write;
 use uuid::Uuid;
 
 use crate::infrastructure::audio::AudioCapture;
-use crate::conversions::disposition::{format_disposition_for_cli, parse_disposition};
+use crate::application::conversions::disposition::{format_disposition_for_cli, parse_disposition};
 use crate::error::AppError::NoActivePatient;
 use crate::domain::{CaptureMode, ClinicalResult, Disposition, LabResult};
 use crate::error::{AppResult, AppError};
-use crate::shift_manager::ShiftManager;
+use crate::application::shift_manager::ShiftManager;
 use crate::infrastructure::stt::Transcriber;
 use crate::infrastructure::ai::summarizer::Summarizer;
-use crate::conversions::labs::{parse_string_to_f64};
+use crate::application::conversions::labs::{parse_string_to_f64};
 
 use chrono::Utc;
 pub enum Command {
@@ -368,7 +368,7 @@ mod tests {
     use std::sync::Arc;
 
     use crate::infrastructure::audio::MockAudioCapture;
-    use crate::encounter_driver::EncounterDriver;
+    use crate::application::encounter_driver::EncounterDriver;
     use crate::application::EventBus;
     use crate::domain::{PatientId, PatientRecord, Shift};
     use crate::infrastructure::persistence::repository::{Repository, SqliteRepository};

@@ -6,11 +6,11 @@ use crate::domain::NoteEvent;
 use crate::export::format_note;
 use crate::domain::{CaptureMode, EncounterId, PatientNote, PatientId, PatientRecord, ClinicalResult, Disposition, NotePhase, Shift, ShiftId};
 use crate::domain::NoteSections;
-use crate::persistence::ShiftSnapshot;
+use crate::application::shift_snapshot::ShiftSnapshot;
 use crate::infrastructure::persistence::repository::Repository;
 use crate::application::load::PatientNoteStore;
 use crate::domain::replay::{apply_event, replay};
-use crate::encounter_driver::EncounterDriver;
+use crate::application::encounter_driver::EncounterDriver;
 use crate::infrastructure::ai::summarizer::Summarizer;
 use crate::infrastructure::ai::deidentify::Deidentifier;
 
@@ -391,7 +391,7 @@ mod tests {
         let audio = crate::infrastructure::audio::MockAudioCapture::new();
         let transcriber = crate::infrastructure::stt::MockTranscriber;
 
-        let encounter_driver = crate::encounter_driver::EncounterDriver::new(audio, transcriber, event_bus.clone(), store.clone());
+        let encounter_driver = crate::application::encounter_driver::EncounterDriver::new(audio, transcriber, event_bus.clone(), store.clone());
         let summarizer = crate::infrastructure::ai::summarizer::MockSummarizer::new();
         let rt = Arc::new(tokio::runtime::Runtime::new().unwrap());
         let patients: HashMap<PatientId, PatientRecord> = HashMap::new();

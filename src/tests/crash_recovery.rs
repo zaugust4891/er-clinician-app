@@ -3,7 +3,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::infrastructure::audio::MockAudioCapture;
-use crate::encounter_driver::EncounterDriver;
+use crate::application::encounter_driver::EncounterDriver;
 use crate::application::EventBus;
 use crate::domain::NoteEvent;
 use crate::domain::{CaptureMode, PatientId, NotePhase};
