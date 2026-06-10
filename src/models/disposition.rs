@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 /// ED disposition — the most important single field in an ED note.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Disposition {
     Discharge {
         instructions: String,

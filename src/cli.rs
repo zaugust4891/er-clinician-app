@@ -4,8 +4,9 @@ use std::io::Write;
 use uuid::Uuid;
 
 use crate::audio::AudioCapture;
+use crate::conversions::disposition::{format_disposition_for_cli, parse_disposition};
 use crate::error::AppError::NoActivePatient;
-use crate::models::{CaptureMode, ClinicalResult, LabResult, patient};
+use crate::models::{CaptureMode, ClinicalResult, Disposition, LabResult};
 use crate::error::{AppResult, AppError};
 use crate::shift_manager::ShiftManager;
 use crate::stt::Transcriber;
@@ -20,6 +21,7 @@ pub enum Command {
     Start { mode: CaptureMode },             // start_encounter on active patient
     Stop,                                    // stop_encounter
     Lab { name: String, value: String, unit: String },
+    Dispo { disposition: Disposition },
     Mdm,
     Review,
     Sign,
@@ -99,6 +101,10 @@ impl Commands {
                 }
             }
 
+            "dispo" => Command::Dispo {
+                disposition: parse_disposition(args)?,
+            },
+
             "mdm" => Command::Mdm,
             "review" => Command::Review,
             "sign" => Command::Sign,
@@ -130,6 +136,11 @@ impl Commands {
         println!("  start <ambient|dictation>");
         println!("  stop");
         println!("  lab <name> <value> <unit>");
+        println!("  dispo discharge <instructions> [<follow-up>]");
+        println!("  dispo admit <service> [<bed>]");
+        println!("  dispo transfer <destination> [<reason>]");
+        println!("  dispo ama");
+        println!("  dispo lwbs");
         println!("  mdm");
         println!("  review");
         println!("  sign");
@@ -260,6 +271,13 @@ where
             Ok(true)
         }
 
+        Command::Dispo { disposition } => {
+            let label = format_disposition_for_cli(&disposition);
+            manager.set_disposition(disposition)?;
+            println!("Disposition set: {label}");
+            Ok(true)
+        }
+
         Command::Mdm => {
             manager.trigger_mdm()?;
             println!("MDM triggered.");
@@ -343,4 +361,72 @@ fn short_id(id: uuid::Uuid) -> String {
     id[id.len() - 8..].to_string()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::sync::Arc;
 
+    use crate::audio::MockAudioCapture;
+    use crate::encounter_driver::EncounterDriver;
+    use crate::events::EventBus;
+    use crate::models::{PatientId, PatientRecord, Shift};
+    use crate::repository::{Repository, SqliteRepository};
+    use crate::state;
+    use crate::stt::MockTranscriber;
+    use crate::summarizer::MockSummarizer;
+
+    fn test_manager() -> ShiftManager<MockAudioCapture, MockTranscriber, MockSummarizer> {
+        let conn = crate::db::open_memory_db().unwrap();
+        let repo: Arc<dyn Repository> = Arc::new(SqliteRepository::new(conn));
+        let bus = Arc::new(EventBus::new(32, Some(repo.clone())));
+        let store = state::new_store();
+        let driver = EncounterDriver::new(
+            MockAudioCapture::new(),
+            MockTranscriber,
+            bus.clone(),
+            store.clone(),
+        );
+        let runtime = Arc::new(tokio::runtime::Runtime::new().unwrap());
+
+        ShiftManager::new(
+            Shift::new(),
+            HashMap::<PatientId, PatientRecord>::new(),
+            driver,
+            bus,
+            store,
+            repo,
+            MockSummarizer::new(),
+            runtime,
+        )
+    }
+
+    #[test]
+    fn dispo_discharge_command_sets_note_disposition() {
+        let mut manager = test_manager();
+        let patient_id = manager.register_patient("chest pain");
+        manager.set_active_patient(patient_id).unwrap();
+
+        let args = vec![
+            "dispo".to_string(),
+            "discharge".to_string(),
+            "\"ibuprofen".to_string(),
+            "as".to_string(),
+            "needed\"".to_string(),
+            "\"Cardiology".to_string(),
+            "1wk\"".to_string(),
+        ];
+        let command = Commands::new(&args).unwrap();
+
+        assert!(handle_command(&mut manager, command).unwrap());
+
+        let note = manager.get_note(patient_id).unwrap();
+        assert_eq!(
+            note.disposition,
+            Some(Disposition::Discharge {
+                instructions: "ibuprofen as needed".to_string(),
+                follow_up: Some("Cardiology 1wk".to_string()),
+            })
+        );
+    }
+}

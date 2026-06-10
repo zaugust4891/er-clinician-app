@@ -2,7 +2,7 @@ use crate::error::{AppError, AppResult};
 use crate::{audio::AudioCapture, stt::Transcriber,};
 use crate::events::{EventBus, NoteEvent};
 use crate::export::format_note;
-use crate::models::{CaptureMode, EncounterId, PatientNote, PatientId, PatientRecord, ClinicalResult, NotePhase, Shift, ShiftId};
+use crate::models::{CaptureMode, EncounterId, PatientNote, PatientId, PatientRecord, ClinicalResult, Disposition, NotePhase, Shift, ShiftId};
 use crate::models::NoteSections;
 use crate::persistence::ShiftSnapshot;
 use crate::repository::Repository;
@@ -142,6 +142,12 @@ where
 
         Ok(())
         
+    }
+
+    pub fn set_disposition(&mut self, disposition: Disposition) -> AppResult<()> {
+        let patient_id = self.check_active_patient_id()?;
+        self.bus.publish(NoteEvent::disposition_set(patient_id, disposition), &self.store)?;
+        Ok(())
     }
 
     pub fn trigger_mdm(&mut self) -> AppResult<()> {

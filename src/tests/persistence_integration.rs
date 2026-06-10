@@ -2,7 +2,7 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use crate::events::{EventBus, NoteEvent};
-use crate::models::{CaptureMode, NotePhase};
+use crate::models::{CaptureMode, Disposition, NotePhase};
 use crate::repository::{Repository, SqliteRepository};
 
 #[test]
@@ -137,4 +137,36 @@ fn store_and_sqlite_stay_consistent() {
         from_store.encounters[0].transcript,
         from_db.encounters[0].transcript
     );
+}
+
+#[test]
+fn disposition_set_after_sign_is_noop() {
+    let conn = crate::db::open_memory_db().unwrap();
+    let repo = std::sync::Arc::new(SqliteRepository::new(conn));
+    let store = crate::state::new_store();
+    let bus = EventBus::new(32, Some(repo.clone()));
+
+    let patient_id = Uuid::now_v7();
+    let encounter_id = Uuid::now_v7();
+
+    bus.publish(NoteEvent::audio_started(patient_id, encounter_id, CaptureMode::Ambient), &store).unwrap();
+    bus.publish(NoteEvent::audio_stopped(patient_id, encounter_id), &store).unwrap();
+    bus.publish(NoteEvent::trigger_mdm(patient_id), &store).unwrap();
+    bus.publish(NoteEvent::review_ready(patient_id), &store).unwrap();
+    bus.publish(NoteEvent::sign(patient_id), &store).unwrap();
+    bus.publish(
+        NoteEvent::disposition_set(
+            patient_id,
+            Disposition::Discharge {
+                instructions: "home care".to_string(),
+                follow_up: Some("PCP".to_string()),
+            },
+        ),
+        &store,
+    )
+    .unwrap();
+
+    let note = store.get(&patient_id).unwrap();
+    assert_eq!(note.phase, NotePhase::Signed);
+    assert_eq!(note.disposition, None);
 }
