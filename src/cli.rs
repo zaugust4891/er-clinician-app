@@ -1,12 +1,18 @@
+
 use std::io::Write;
 
+use uuid::Uuid;
+
 use crate::audio::AudioCapture;
-use crate::models::CaptureMode;
+use crate::error::AppError::NoActivePatient;
+use crate::models::{CaptureMode, ClinicalResult, LabResult, patient};
 use crate::error::{AppResult, AppError};
 use crate::shift_manager::ShiftManager;
 use crate::stt::Transcriber;
 use crate::summarizer::Summarizer;
+use crate::conversions::labs::{parse_string_to_f64};
 
+use chrono::Utc;
 pub enum Command {
     New { chief_complaint: String },        // register a new patient on the shift
     List,                                    // list patients on the shift
@@ -222,10 +228,37 @@ where
             Ok(true)
         }
 
-        Command::Lab { .. } => Err(AppError::CliError(
-            "The lab command needs an active patient id accessor before it can be handled."
-                .to_string(),
-        )),
+        Command::Lab { name, value, unit } => {
+            let patient_id = manager
+                .active_patient_id()
+                .ok_or(NoActivePatient(
+                    "No active patient found".into(),
+                ))?;
+
+            let value: f64 = parse_string_to_f64(value)?;
+            
+            let result = ClinicalResult {
+                id: Uuid::now_v7(),
+                patient_id,
+                source: crate::models::ResultSource::Manual,
+                timestamp: Utc::now(),
+                result_type: crate::models::ResultType::Lab(LabResult{
+                    fhir_id: None,
+                    loinc_code: None,
+                    display_name: name.clone(),
+                    value,
+                    unit: unit.clone(),
+                    reference_range: None,
+                    is_abnormal: false
+                }),
+            };
+
+
+            manager.add_lab(result, Utc::now())?;
+            println!("Added lab: {name} = {value} {unit}");
+            
+            Ok(true)
+        }
 
         Command::Mdm => {
             manager.trigger_mdm()?;
@@ -245,10 +278,13 @@ where
             Ok(true)
         }
 
-        Command::Note => Err(AppError::CliError(
-            "The note command needs an active patient id accessor before it can be handled."
-                .to_string(),
-        )),
+        Command::Note => {
+            let note = manager.export_active_note()?;
+            
+            println!("{note}");
+
+            Ok(true)
+        }
 
         Command::Export => {
             let exported = manager.export_active_note()?;
@@ -301,3 +337,5 @@ fn short_id(id: uuid::Uuid) -> String {
     let id = id.to_string();
     id[id.len() - 8..].to_string()
 }
+
+

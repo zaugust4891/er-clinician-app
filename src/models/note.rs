@@ -1,3 +1,5 @@
+use std::fmt;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -6,7 +8,7 @@ use super::audit::{AuditAction, AuditEntry};
 use super::disposition::Disposition;
 use super::encounter::{Encounter, EncounterId};
 use super::patient::PatientId;
-use super::result::ClinicalResult;
+use super::result::{ClinicalResult, ResultType};
 use crate::state::{self, NoteState, Registered};
 
 /// Patient note lifecycle — supports cycles (Idle ↔ Encountering).
@@ -176,6 +178,129 @@ impl std::fmt::Debug for PatientNote {
     }
 }
 
+impl fmt::Display for PatientNote {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "ED PROVIDER NOTE")?;
+        writeln!(f)?;
+        writeln!(f, "Patient ID: {}", self.patient_id)?;
+        writeln!(f, "Note ID: {}", self.id)?;
+        writeln!(f, "Status: {:?}", self.phase)?;
+        writeln!(f, "Version: {}", self.version)?;
+        writeln!(f, "Created: {}", self.created_at)?;
+        writeln!(f, "Updated: {}", self.updated_at)?;
+        writeln!(f)?;
+
+        write_section(f, "HPI", self.note_sections.hpi.as_deref())?;
+
+        if let Some(ros) = self.note_sections.ros.as_deref() {
+            write_section(f, "Review of Systems", Some(ros))?;
+        } else {
+            write_section(f, "Review of Systems", Some("See HPI"))?;
+        }
+
+        write_section(f, "Physical Exam", self.note_sections.exam.as_deref())?;
+        write_results(f, &self.results)?;
+        write_section(
+            f,
+            "Medical Decision Making",
+            self.note_sections.mdm.as_deref(),
+        )?;
+
+        if let Some(disposition) = &self.disposition {
+            writeln!(f, "Disposition: {}", format_disposition(disposition))?;
+            writeln!(f)?;
+        } else {
+            write_section(
+                f,
+                "Disposition",
+                self.note_sections.disposition_text.as_deref(),
+            )?;
+        }
+
+        writeln!(f, "---")?;
+        writeln!(
+            f,
+            "Note assisted by AI documentation tool. All content reviewed and approved by signing provider."
+        )
+    }
+}
+
+fn write_section(f: &mut fmt::Formatter<'_>, title: &str, content: Option<&str>) -> fmt::Result {
+    if let Some(content) = content {
+        writeln!(f, "{title}:")?;
+        writeln!(f, "{content}")?;
+        writeln!(f)?;
+    }
+
+    Ok(())
+}
+
+fn write_results(f: &mut fmt::Formatter<'_>, results: &[ClinicalResult]) -> fmt::Result {
+    if results.is_empty() {
+        return Ok(());
+    }
+
+    writeln!(f, "Results Reviewed:")?;
+    for result in results {
+        match &result.result_type {
+            ResultType::Lab(lab) => {
+                let abnormal_marker = if lab.is_abnormal { " abnormal" } else { "" };
+                writeln!(
+                    f,
+                    "{}: {} {}{}",
+                    lab.display_name, lab.value, lab.unit, abnormal_marker
+                )?;
+            }
+            ResultType::Imaging(imaging) => {
+                let critical_marker = if imaging.is_critical { " critical" } else { "" };
+                writeln!(
+                    f,
+                    "{} {}: {}{}",
+                    imaging.modality, imaging.body_part, imaging.impression, critical_marker
+                )?;
+            }
+            ResultType::Vital(vital) => {
+                writeln!(f, "{:?}: {} {}", vital.vital_type, vital.value, vital.unit)?;
+            }
+        }
+    }
+    writeln!(f)
+}
+
+fn format_disposition(disposition: &Disposition) -> String {
+    match disposition {
+        Disposition::Discharge {
+            instructions,
+            follow_up,
+        } => {
+            let mut output = format!("Discharge\nInstructions: {instructions}");
+            if let Some(follow_up) = follow_up {
+                output.push_str(&format!("\nFollow-up: {follow_up}"));
+            }
+            output
+        }
+        Disposition::Admit { service, bed } => {
+            let mut output = format!("Admit to {service}");
+            if let Some(bed) = bed {
+                output.push_str(&format!(", Bed: {bed}"));
+            }
+            output
+        }
+        Disposition::Transfer {
+            destination,
+            reason,
+        } => {
+            let mut output = format!("Transfer to {destination}");
+            if let Some(reason) = reason {
+                output.push_str(&format!(", Reason: {reason}"));
+            }
+            output
+        }
+        Disposition::AMA => "Left Against Medical Advice (AMA)".into(),
+        Disposition::LWBS => "Left Without Being Seen (LWBS)".into(),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // State transition methods — these keep phase + state in sync
 // ---------------------------------------------------------------------------
@@ -292,5 +417,49 @@ impl PatientNote {
 
     pub fn handle_sign(&mut self) {
         self.apply_transition(|state, note| state.on_sign(note));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{LabResult, ResultSource};
+
+    #[test]
+    fn display_formats_patient_note_sections_and_results() {
+        let patient_id = Uuid::now_v7();
+        let mut note = PatientNote::new(patient_id);
+        note.note_sections.hpi = Some("Patient presents with chest pain.".into());
+        note.note_sections.exam = Some("CV: regular rate and rhythm.".into());
+        note.note_sections.mdm = Some("Low risk chest pain workup.".into());
+        note.results.push(ClinicalResult {
+            id: Uuid::now_v7(),
+            patient_id,
+            source: ResultSource::Manual,
+            timestamp: Utc::now(),
+            result_type: ResultType::Lab(LabResult {
+                fhir_id: None,
+                loinc_code: None,
+                display_name: "Troponin".into(),
+                value: 0.04,
+                unit: "ng/mL".into(),
+                reference_range: Some((0.0, 0.04)),
+                is_abnormal: false,
+            }),
+        });
+        note.disposition = Some(Disposition::Discharge {
+            instructions: "Return if symptoms worsen.".into(),
+            follow_up: Some("PCP in 2 days".into()),
+        });
+
+        let output = note.to_string();
+
+        assert!(output.contains("ED PROVIDER NOTE"));
+        assert!(output.contains(&format!("Patient ID: {patient_id}")));
+        assert!(output.contains("HPI:\nPatient presents with chest pain."));
+        assert!(output.contains("Review of Systems:\nSee HPI"));
+        assert!(output.contains("Troponin: 0.04 ng/mL"));
+        assert!(output.contains("Disposition: Discharge"));
+        assert!(output.contains("Follow-up: PCP in 2 days"));
     }
 }

@@ -21,6 +21,9 @@ pub enum AppError {
     #[error("no active patient: {0}")]
     NoActivePatient(String),
 
+    #[error("note error: {0}")]
+    NoteError(String),
+
     #[error("lab error: {0}")]
     LabResultError(String),
 
@@ -68,3 +71,16 @@ pub enum AppError {
 }
 
 pub type AppResult<T> = std::result::Result<T, AppError>;
+
+
+impl AppError {
+    pub fn parse_error<E>(context: impl Into<String>, error: E) -> Self
+    where
+        E: std::error::Error + Send + Sync + 'static,
+    {
+        AppError::ParseError { 
+            context: context.into(),
+            source: Box::new(error), 
+        }
+    }
+}

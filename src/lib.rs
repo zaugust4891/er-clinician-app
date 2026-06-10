@@ -1,6 +1,7 @@
 pub mod audio;
 pub mod claude_summarizer;
 pub mod cli;
+pub mod conversions;
 pub mod db;
 pub mod deidentify;
 pub mod encounter_driver;
