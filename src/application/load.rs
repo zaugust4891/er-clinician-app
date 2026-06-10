@@ -6,7 +6,7 @@ use crate::domain::patient::PatientId;
 use crate::domain::replay::{apply_event, replay};
 use crate::domain::{NoteEvent, PatientNote};
 use crate::error::AppResult;
-use crate::repository::Repository;
+use crate::infrastructure::persistence::repository::Repository;
 
 // ---------------------------------------------------------------------------
 // Patient note store

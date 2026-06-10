@@ -1,4 +1,4 @@
-use crate::claude_summarizer::ClaudeSummarizer;
+use crate::infrastructure::ai::claude::ClaudeSummarizer;
 use crate::error::AppResult;
 use crate::domain::NoteSections;
 

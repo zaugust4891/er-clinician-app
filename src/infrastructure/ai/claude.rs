@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult};
 use crate::domain::NoteSections;
-use crate::summarizer::Summarizer;
+use crate::infrastructure::ai::summarizer::Summarizer;
 
 // Request and response structs for Claude API.
 #[derive(Serialize)]

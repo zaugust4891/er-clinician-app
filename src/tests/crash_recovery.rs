@@ -2,14 +2,14 @@ use std::sync::Arc;
 
 use uuid::Uuid;
 
-use crate::audio::MockAudioCapture;
+use crate::infrastructure::audio::MockAudioCapture;
 use crate::encounter_driver::EncounterDriver;
 use crate::application::EventBus;
 use crate::domain::NoteEvent;
 use crate::domain::{CaptureMode, PatientId, NotePhase};
-use crate::repository::{Repository, SqliteRepository};
+use crate::infrastructure::persistence::repository::{Repository, SqliteRepository};
 use crate::application::load::{self as load, PatientNoteStore};
-use crate::stt::MockTranscriber;
+use crate::infrastructure::stt::MockTranscriber;
 
 struct CrashRecoverySetup {
     repo: Arc<dyn Repository>,
@@ -20,7 +20,7 @@ struct CrashRecoverySetup {
 }
 
 fn setup_crash_recovery_stack() -> CrashRecoverySetup {
-    let conn = crate::db::open_memory_db().unwrap();
+    let conn = crate::infrastructure::persistence::db::open_memory_db().unwrap();
     let repo: Arc<dyn Repository> = Arc::new(SqliteRepository::new(conn));
     let bus = Arc::new(EventBus::new(32, Some(repo.clone())));
     let store = load::new_store();

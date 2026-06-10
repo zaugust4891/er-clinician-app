@@ -3,14 +3,14 @@ use std::io::Write;
 
 use uuid::Uuid;
 
-use crate::audio::AudioCapture;
+use crate::infrastructure::audio::AudioCapture;
 use crate::conversions::disposition::{format_disposition_for_cli, parse_disposition};
 use crate::error::AppError::NoActivePatient;
 use crate::domain::{CaptureMode, ClinicalResult, Disposition, LabResult};
 use crate::error::{AppResult, AppError};
 use crate::shift_manager::ShiftManager;
-use crate::stt::Transcriber;
-use crate::summarizer::Summarizer;
+use crate::infrastructure::stt::Transcriber;
+use crate::infrastructure::ai::summarizer::Summarizer;
 use crate::conversions::labs::{parse_string_to_f64};
 
 use chrono::Utc;
@@ -367,17 +367,17 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
 
-    use crate::audio::MockAudioCapture;
+    use crate::infrastructure::audio::MockAudioCapture;
     use crate::encounter_driver::EncounterDriver;
     use crate::application::EventBus;
     use crate::domain::{PatientId, PatientRecord, Shift};
-    use crate::repository::{Repository, SqliteRepository};
+    use crate::infrastructure::persistence::repository::{Repository, SqliteRepository};
     use crate::application::load;
-    use crate::stt::MockTranscriber;
-    use crate::summarizer::MockSummarizer;
+    use crate::infrastructure::stt::MockTranscriber;
+    use crate::infrastructure::ai::summarizer::MockSummarizer;
 
     fn test_manager() -> ShiftManager<MockAudioCapture, MockTranscriber, MockSummarizer> {
-        let conn = crate::db::open_memory_db().unwrap();
+        let conn = crate::infrastructure::persistence::db::open_memory_db().unwrap();
         let repo: Arc<dyn Repository> = Arc::new(SqliteRepository::new(conn));
         let bus = Arc::new(EventBus::new(32, Some(repo.clone())));
         let store = load::new_store();

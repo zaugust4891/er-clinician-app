@@ -1,17 +1,18 @@
 use crate::error::{AppError, AppResult};
-use crate::{audio::AudioCapture, stt::Transcriber,};
+use crate::infrastructure::audio::AudioCapture;
+use crate::infrastructure::stt::Transcriber;
 use crate::application::EventBus;
 use crate::domain::NoteEvent;
 use crate::export::format_note;
 use crate::domain::{CaptureMode, EncounterId, PatientNote, PatientId, PatientRecord, ClinicalResult, Disposition, NotePhase, Shift, ShiftId};
 use crate::domain::NoteSections;
 use crate::persistence::ShiftSnapshot;
-use crate::repository::Repository;
+use crate::infrastructure::persistence::repository::Repository;
 use crate::application::load::PatientNoteStore;
 use crate::domain::replay::{apply_event, replay};
 use crate::encounter_driver::EncounterDriver;
-use crate::summarizer::Summarizer;
-use crate::deidentify::Deidentifier;
+use crate::infrastructure::ai::summarizer::Summarizer;
+use crate::infrastructure::ai::deidentify::Deidentifier;
 
 use tokio::runtime::Runtime;
 use std::sync::Arc;
@@ -382,16 +383,16 @@ mod tests {
     
     #[test]
     fn construct_shift_manager_with_mock_summarizer() {
-        let conn = crate::db::open_memory_db().unwrap();
-        let sql_lite_repo: Arc<dyn Repository> = Arc::new(crate::repository::SqliteRepository::new(conn));
+        let conn = crate::infrastructure::persistence::db::open_memory_db().unwrap();
+        let sql_lite_repo: Arc<dyn Repository> = Arc::new(crate::infrastructure::persistence::repository::SqliteRepository::new(conn));
         let event_bus = Arc::new(EventBus::new(1024, Some(sql_lite_repo.clone())));
 
         let store: crate::application::load::PatientNoteStore = crate::application::load::new_store();
-        let audio = crate::audio::MockAudioCapture::new();
-        let transcriber = crate::stt::MockTranscriber;
+        let audio = crate::infrastructure::audio::MockAudioCapture::new();
+        let transcriber = crate::infrastructure::stt::MockTranscriber;
 
         let encounter_driver = crate::encounter_driver::EncounterDriver::new(audio, transcriber, event_bus.clone(), store.clone());
-        let summarizer = crate::summarizer::MockSummarizer::new();
+        let summarizer = crate::infrastructure::ai::summarizer::MockSummarizer::new();
         let rt = Arc::new(tokio::runtime::Runtime::new().unwrap());
         let patients: HashMap<PatientId, PatientRecord> = HashMap::new();
         let shift = Shift::new();

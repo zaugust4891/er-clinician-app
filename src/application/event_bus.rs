@@ -3,7 +3,7 @@ use tokio::sync::broadcast;
 
 use crate::domain::{NoteEvent, NotePhase, PatientNote};
 use crate::error::AppResult;
-use crate::repository::Repository;
+use crate::infrastructure::persistence::repository::Repository;
 use crate::application::load::PatientNoteStore;
 use crate::domain::replay::apply_event;
 

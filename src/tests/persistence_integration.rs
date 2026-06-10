@@ -4,11 +4,11 @@ use uuid::Uuid;
 use crate::application::EventBus;
 use crate::domain::NoteEvent;
 use crate::domain::{CaptureMode, Disposition, NotePhase};
-use crate::repository::{Repository, SqliteRepository};
+use crate::infrastructure::persistence::repository::{Repository, SqliteRepository};
 
 #[test]
 fn publish_persists_projects_snapshots_and_loads() {
-    let conn = crate::db::open_memory_db().unwrap();
+    let conn = crate::infrastructure::persistence::db::open_memory_db().unwrap();
     let repo = std::sync::Arc::new(SqliteRepository::new(conn));
     let store = crate::application::load::new_store();
     let bus = EventBus::new(32, Some(repo.clone()));
@@ -43,7 +43,7 @@ fn publish_persists_projects_snapshots_and_loads() {
 
 #[test]
 fn load_nonexistent_patient_returns_none() {
-    let conn = crate::db::open_memory_db().unwrap();
+    let conn = crate::infrastructure::persistence::db::open_memory_db().unwrap();
     let repo = SqliteRepository::new(conn);
 
     let loaded = crate::application::load::load_patient_note(&repo, Uuid::now_v7()).unwrap();
@@ -54,7 +54,7 @@ fn load_nonexistent_patient_returns_none() {
 fn load_uses_snapshot_delta_path() {
     // Drive to Idle (first snapshot trigger), then publish one more event,
     // then reload. The reloaded note should reflect the post-Idle event.
-    let conn = crate::db::open_memory_db().unwrap();
+    let conn = crate::infrastructure::persistence::db::open_memory_db().unwrap();
     let repo = std::sync::Arc::new(SqliteRepository::new(conn));
     let store = crate::application::load::new_store();
     let bus = EventBus::new(32, Some(repo.clone()));
@@ -78,7 +78,7 @@ fn load_uses_snapshot_delta_path() {
 
 #[test]
 fn corrupted_checksum_falls_back_to_full_replay() {
-    let conn = crate::db::open_memory_db().unwrap();
+    let conn = crate::infrastructure::persistence::db::open_memory_db().unwrap();
     let repo = std::sync::Arc::new(SqliteRepository::new(conn));
     let store = crate::application::load::new_store();
     let bus = EventBus::new(32, Some(repo.clone()));
@@ -110,7 +110,7 @@ fn corrupted_checksum_falls_back_to_full_replay() {
 
 #[test]
 fn store_and_sqlite_stay_consistent() {
-    let conn = crate::db::open_memory_db().unwrap();
+    let conn = crate::infrastructure::persistence::db::open_memory_db().unwrap();
     let repo = std::sync::Arc::new(SqliteRepository::new(conn));
     let store = crate::application::load::new_store();
     let bus = EventBus::new(32, Some(repo.clone()));
@@ -142,7 +142,7 @@ fn store_and_sqlite_stay_consistent() {
 
 #[test]
 fn disposition_set_after_sign_is_noop() {
-    let conn = crate::db::open_memory_db().unwrap();
+    let conn = crate::infrastructure::persistence::db::open_memory_db().unwrap();
     let repo = std::sync::Arc::new(SqliteRepository::new(conn));
     let store = crate::application::load::new_store();
     let bus = EventBus::new(32, Some(repo.clone()));
