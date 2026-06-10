@@ -6,10 +6,10 @@ use dashmap::DashMap;
 use crate::error::{AppError, AppResult};
 use crate::events::NoteEvent;
 use crate::models::audit::{AuditAction, AuditEntry};
-use crate::models::note::NotePhase;
+use crate::models::note::{NotePhase, NoteSectionVersion};
 use crate::models::patient::PatientId;
 use crate::models::result::ClinicalResult;
-use crate::models::{Encounter, PatientNote};
+use crate::models::{Encounter, EncounterId, NoteSections, PatientNote};
 use crate::repository::Repository;
 // ---------------------------------------------------------------------------
 // NoteState trait — the core of the state pattern
@@ -293,6 +293,54 @@ pub fn apply_event(note: &mut PatientNote, event: &NoteEvent) {
             }
         }
 
+        NoteEvent::EncounterSummarized {
+            sections,
+            source_encounter_ids,
+            .. 
+        } => {
+            merge_sections(&mut note.note_sections, sections); 
+            note.record_section_versions(sections, source_encounter_ids);
+            note.version += 1;
+            note.updated_at = Utc::now();
+            note.audit_log.push(AuditEntry::new(AuditAction::NoteSectionGenerated, ""));
+        }
+
+        NoteEvent::MdmGenerated { 
+            mdm_text, 
+            source_encounter_ids,
+            .. 
+        } => {
+            note.note_sections.mdm = Some(mdm_text.clone());
+            note.section_history.push(NoteSectionVersion {
+                section: "mdm".into(), content: mdm_text.clone(),
+                version: note.version + 1,
+                generated_at: Utc::now(),
+                source_encounter_ids: source_encounter_ids.clone(),
+            });
+            note.version += 1;
+            note.updated_at = Utc::now();
+            note.audit_log.push(AuditEntry::new(AuditAction::MdmGenerated, ""));
+        }
+
+        NoteEvent::DispositionSet { 
+            disposition, 
+            .. 
+        } => {
+            // Mirror ingest_result's immutability guard:
+            //    - Signed notes reject mutation.
+            let can_mutate = note.state
+                .as_ref()
+                .map(|s| s.can_ingest_results())
+                .unwrap_or(false);
+            if can_mutate {
+                note.disposition = Some(disposition.clone());
+                note.version += 1;
+                note.updated_at = Utc::now();
+                note.audit_log.push(AuditEntry::new(AuditAction::DispositionSet, ""));
+            }
+        
+        }
+
         NoteEvent::ResultReceived { 
             result,
             ..
@@ -341,6 +389,23 @@ pub fn load_patient_note(repo: &dyn Repository, patient_id: PatientId) -> AppRes
     That's fine — `repository.rs` depends on `state` (via `PatientNote`), 
     but only for types, not for this function. The dependency graph stays acyclic.
     */
+}
+
+/// Fold an EncounterSummarized delta into the note's sections.
+/// Only HPI/ROS/Exam are touched, and only when the incoming field is Some.
+/// MDM and disposition_text are NEVER modified here - they are owned by
+/// MdmGenerated / DispositionSet respectively.
+fn merge_sections(dest: &mut crate::models::NoteSections, source: &crate::models::NoteSections) {
+    if source.hpi.is_some() {
+        dest.hpi = source.hpi.clone();
+    }
+
+    if source.ros.is_some() {
+        dest.ros = source.ros.clone();
+    }
+    if source.exam.is_some() {
+        dest.exam = source.exam.clone();
+    }
 }
 
 

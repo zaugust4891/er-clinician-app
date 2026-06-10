@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 use std::sync::Arc;
 use chrono::{DateTime, Utc};
-use crate::models::{CaptureMode, ClinicalResult, EncounterId, PatientId};
+use crate::models::{CaptureMode, ClinicalResult, Disposition, EncounterId, NoteSections, PatientId, disposition};
 use crate::repository::Repository;
 use crate::error::AppResult;
 
@@ -30,6 +30,15 @@ pub enum NoteEvent {
         text: String,
         clinical_occurred_at: DateTime<Utc>,
     },
+    /// AI produced/updated note prose from an
+    /// encounter transcript.
+    EncounterSummarized {
+        patient_id: PatientId,
+        encounter_id: EncounterId,
+        sections: NoteSections,
+        source_encounter_ids: Vec<EncounterId>,
+        clinical_occurred_at: DateTime<Utc>,
+    },
     /// A clinical result was ingested (manual or FHIR).
     ResultReceived {
         patient_id: PatientId,
@@ -41,9 +50,22 @@ pub enum NoteEvent {
         patient_id: PatientId,
         clinical_occurred_at: DateTime<Utc>,
     },
+    /// AI produced the MDM from accumulated data.
+    MdmGenerated {
+        patient_id: PatientId,
+        mdm_text: String,
+        source_encounter_ids: Vec<EncounterId>,
+        clinical_occurred_at: DateTime<Utc>,
+    },
     /// MDM draft is ready for review.
     ReviewReady {
         patient_id: PatientId,
+        clinical_occurred_at: DateTime<Utc>,
+    },
+    /// Clinician set the disposition.
+    DispositionSet {
+        patient_id: PatientId,
+        disposition: Disposition,
         clinical_occurred_at: DateTime<Utc>,
     },
     /// Clinician signed the note.
@@ -59,9 +81,12 @@ impl NoteEvent {
             NoteEvent::AudioStarted { patient_id, .. } => *patient_id,
             NoteEvent::AudioStopped { patient_id, .. } => *patient_id,
             NoteEvent::TranscriptReady { patient_id, .. } => *patient_id,
+            NoteEvent::EncounterSummarized { patient_id, .. } => *patient_id,
             NoteEvent::ResultReceived { patient_id, .. } => *patient_id,
             NoteEvent::TriggerMDM { patient_id, .. } => *patient_id,
+            NoteEvent::MdmGenerated { patient_id, .. } => *patient_id,
             NoteEvent::ReviewReady { patient_id, .. } => *patient_id,
+            NoteEvent::DispositionSet { patient_id, .. } => *patient_id,
             NoteEvent::Sign { patient_id, .. } => *patient_id,
         }
     }
@@ -71,9 +96,12 @@ impl NoteEvent {
             NoteEvent::AudioStarted { .. } => "AudioStarted",
             NoteEvent::AudioStopped { .. } => "AudioStopped",
             NoteEvent::TranscriptReady { .. } => "TranscriptReady",
+            NoteEvent::EncounterSummarized { .. } => "EncounterSummarized",
             NoteEvent::ResultReceived { .. } => "ResultReceived",
             NoteEvent::TriggerMDM { .. } => "TriggerMDM",
+            NoteEvent::MdmGenerated{ .. } => "MdmGenerated",
             NoteEvent::ReviewReady { .. } => "ReviewReady",
+            NoteEvent::DispositionSet { .. } => "DispositionSet",
             NoteEvent::Sign { .. } => "Sign",
         }
     }
@@ -90,6 +118,10 @@ impl NoteEvent {
         NoteEvent::TranscriptReady { patient_id, encounter_id, text, clinical_occurred_at }
     }
 
+    pub fn encounter_summarized(patient_id: PatientId, encounter_id: EncounterId, sections: NoteSections, source_encounter_ids: Vec<EncounterId>) -> Self {
+        NoteEvent::EncounterSummarized { patient_id, encounter_id, sections, source_encounter_ids, clinical_occurred_at: Utc::now() }
+    }
+
     pub fn result_received(patient_id: PatientId, result: ClinicalResult, clinical_occurred_at: DateTime<Utc>) -> Self {
         NoteEvent::ResultReceived { patient_id, result, clinical_occurred_at }
     }
@@ -97,9 +129,17 @@ impl NoteEvent {
     pub fn trigger_mdm(patient_id: PatientId) -> Self {
         NoteEvent::TriggerMDM { patient_id, clinical_occurred_at: Utc::now() }
     }
+    
+    pub fn mdm_generated(patient_id: PatientId, mdm_text: String, source_encounter_ids: Vec<EncounterId>) -> Self {
+        NoteEvent::MdmGenerated { patient_id, mdm_text, source_encounter_ids, clinical_occurred_at: Utc::now() }
+    }
 
     pub fn review_ready(patient_id: PatientId) -> Self {
         NoteEvent::ReviewReady { patient_id, clinical_occurred_at: Utc::now() }
+    }
+
+    pub fn disposition_set(patient_id: PatientId, disposition: Disposition) -> Self {
+        NoteEvent::DispositionSet { patient_id, disposition, clinical_occurred_at: Utc::now() }
     }
 
     pub fn sign(patient_id: PatientId) -> Self {
@@ -111,6 +151,7 @@ impl NoteEvent {
             NoteEvent::AudioStarted { encounter_id, ..} => Some(*encounter_id),
             NoteEvent::AudioStopped { encounter_id, .. } => Some(*encounter_id),
             NoteEvent::TranscriptReady { encounter_id, .. } => Some(*encounter_id),
+            NoteEvent::EncounterSummarized { encounter_id, .. } => Some(*encounter_id),
             _=> None,
         }
     }

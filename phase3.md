@@ -345,7 +345,7 @@ NoteEvent::EncounterSummarized { sections, source_encounter_ids, .. } => {
     record_section_versions(note, sections, source_encounter_ids);
     note.version += 1;
     note.updated_at = Utc::now();
-    note.audit_log.push(AuditEntry::new(AuditAction::SectionsGenerated, ""));
+    note.audit_log.push(AuditEntry::new(AuditAction::NoteSectionGenerated, ""));
 }
 NoteEvent::MdmGenerated { mdm_text, source_encounter_ids, .. } => {
     note.note_sections.mdm = Some(mdm_text.clone());

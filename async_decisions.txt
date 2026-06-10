@@ -1,0 +1,57 @@
+ Why a custom runtime buys you nothing here
+
+  Look at the actual shape of your I/O:
+
+  - AI calls are latency-bound, not scheduling-bound. A Claude call takes 1–5 seconds, ~all of it server-side inference and network. A custom
+  executor optimizes scheduling overhead measured in microseconds. You'd be shaving microseconds off an operation dominated by seconds. The
+  bottleneck isn't your event loop — it's Anthropic's GPUs.
+  - Your concurrency profile is tiny. One clinician, one device, a handful of patients, a few calls each. Custom runtimes earn their keep at
+  10k+ concurrent connections on a data-plane server. You're at the opposite end of the spectrum. There's nothing to schedule cleverly.
+  - You're already using Hyper — correctly. reqwest is Hyper + tokio + rustls/native-tls, wrapped at the right abstraction. Going to raw Hyper
+  + manual TLS means you now own connection pooling, HTTP/2, redirects, timeouts, retries, and TLS certificate validation by hand. Getting
+  cert validation subtly wrong in a HIPAA-adjacent app is a security liability, not an optimization.
+
+  The book (Flitton & Morton's Async Rust, if that's the one) builds a runtime and wires in Hyper to teach you how async works underneath —
+  wakers, polling, why spawn_blocking exists. That knowledge makes you a better tokio user. It is not a recommendation to ship your own
+  executor. Almost no production Rust does; the ones that do are embedded/no_std, or specialized thread-per-core DB engines (glommio/monoio) —
+  none of which is you.
+
+  The iOS dimension makes this even clearer
+
+  Your endgame is a Rust core embedded in an iOS app via FFI (uniffi). There, the load-bearing async decision is whether the FFI surface is 
+  blocking or async — iOS has its own run loop, and you either expose blocking calls that Swift runs off-main-thread, or use uniffi's async
+  support backed by a tokio runtime you start. A bespoke executor fights the platform and makes the bridge harder. This alone rules out a
+  custom runtime.
+
+  What actually matters for your phases (where to spend the learning)
+
+  These are the real async decisions — all of them configuring/using tokio, not replacing it:
+
+  1. Runtime configuration, not customization. Use a current_thread runtime, not multi-thread. It's lighter, simpler, and matches your
+  single-user model. That's the Builder::new_current_thread().enable_all() choice already implied in phase3.md — a config line, not an
+  architecture.
+  2. whisper-rs is CPU-bound — keep it off the reactor entirely. This is the one genuine gotcha. STT inference is not async I/O; it's compute.
+  It belongs on tokio::task::spawn_blocking or a dedicated thread, or it'll starve the executor. A custom async runtime does literally
+  nothing for CPU work — a common misconception the book should help you avoid.
+  3. Timeouts, retries, cancellation — this is what "optimizes AI calls." Wrap calls in tokio::time::timeout, retry with jittered backoff, and
+  cancel in-flight summarization when the clinician switches patients (structured concurrency / dropping the future). That's real latency and
+  cost optimization, all from tokio primitives + reqwest.
+  4. Concurrency where it helps. A patient with 5–15 encounters → summarize independent ones concurrently with FuturesUnordered/join_all, and
+  cap concurrent Claude calls with a Semaphore (rate limits + cost). Stream the Claude response (reqwest::Response::bytes_stream, SSE) for
+  perceived latency. Combinators, not a runtime.
+  5. Phase 8 HL7/MLLP is the only exotic I/O — long-lived TCP, MLLP framing. Even there the answer is tokio TcpStream +
+  tokio_util::codec::Framed with a custom codec. Standard, not custom-runtime.
+  6. FHIR (6–7) is just more HTTPS — reqwest again, plus OAuth token refresh. If middleware piles up (retry/timeout/rate-limit layers), reach
+  for tower layers over reqwest before anything lower-level.
+
+  Bottom line
+
+  Keep tokio + reqwest. The productive translation of what you're reading is: understand the internals so you use the runtime correctly —
+  spawn_blocking for whisper, current_thread config, timeouts/cancellation/semaphores around AI calls, streaming responses. The unproductive
+  translation is hand-rolling an executor or raw Hyper/TLS, which adds security-critical surface area and complicates your iOS FFI for a
+  workload that is latency-bound and barely concurrent.
+
+  The only "what if" where lower-level control even enters the conversation is if you build the optional multi-tenant sync server from
+  approck-feasibility-analysis.md — and even then it's axum/hyper-as-a-library on stock tokio, never a custom runtime. If you get there, ping
+  me and we'll scope it; for everything on the current roadmap, stock tokio is the right call.
+

@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use super::audit::{AuditAction, AuditEntry};
 use super::disposition::Disposition;
-use super::encounter::Encounter;
+use super::encounter::{Encounter, EncounterId};
 use super::patient::PatientId;
 use super::result::ClinicalResult;
 use crate::state::{self, NoteState, Registered};
@@ -81,6 +81,23 @@ pub struct NoteSectionVersion {
     pub version: u64,
     pub generated_at: DateTime<Utc>,
     pub source_encounter_ids: Vec<Uuid>,
+}
+
+impl NoteSectionVersion {
+    pub fn new(
+        section: impl Into<String>,
+        content: impl Into<String>,
+        version: u64,
+        source_encounter_ids: Vec<EncounterId>,
+    ) -> Self {
+        Self {
+            section: section.into(),
+            content: content.into(),
+            version,
+            generated_at: Utc::now(),
+            source_encounter_ids,
+        }
+    }
 }
 
 /// The complete patient note — the central domain object.
@@ -190,6 +207,42 @@ impl PatientNote {
         if self.state.is_none() {
             self.state = Some(state::state_from_phase(&self.phase));
         }
+    }
+
+    pub fn record_section_versions(
+        &mut self,
+        sections: &NoteSections,
+        source_encounter_ids: &[EncounterId]
+    ) {
+        let version = self.version + 1;
+
+        if let Some(hpi) = &sections.hpi  {
+            self.section_history.push(NoteSectionVersion::new(
+                "hpi",
+                hpi.clone(),
+                version,
+                source_encounter_ids.to_vec(),
+            ));
+        }
+
+        if let Some(ros) = &sections.ros {
+            self.section_history.push(NoteSectionVersion::new(
+                "ros",
+                ros.clone(),
+                version,
+                source_encounter_ids.to_vec(),
+            ));
+        }
+
+        if let Some(exam) = &sections.exam {
+            self.section_history.push(NoteSectionVersion::new(
+                "exam",
+                exam.clone(),
+                version,
+                source_encounter_ids.to_vec(),
+            ));
+        }
+    
     }
 
     /// Apply a state transition: take the state out, call the method,
