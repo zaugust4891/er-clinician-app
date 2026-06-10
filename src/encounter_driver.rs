@@ -3,7 +3,7 @@ use crate::{audio::AudioCapture, stt::Transcriber,};
 use crate::application::EventBus;
 use crate::domain::NoteEvent;
 use crate::domain::{PatientId, EncounterId, CaptureMode};
-use crate::state::PatientNoteStore;
+use crate::application::load::PatientNoteStore;
 
 use std::sync::Arc;
 use chrono::Utc;
@@ -128,7 +128,7 @@ mod tests {
     use crate::audio::MockAudioCapture;
     use crate::domain::NoteEvent;
     use crate::domain::NotePhase;
-    use crate::state;
+    use crate::application::load;
     use crate::stt::MockTranscriber;
 
     fn test_driver() -> (
@@ -138,7 +138,7 @@ mod tests {
     ) {
         let bus = Arc::new(EventBus::new(16, None));
         let receiver = bus.subscribe();
-        let store = state::new_store();
+        let store = load::new_store();
         let driver = EncounterDriver::new(
             MockAudioCapture::new(),
             MockTranscriber,

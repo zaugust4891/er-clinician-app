@@ -9,7 +9,7 @@ use super::disposition::Disposition;
 use super::encounter::{Encounter, EncounterId};
 use super::patient::PatientId;
 use super::result::{ClinicalResult, ResultType};
-use crate::state::{self, NoteState, Registered};
+use crate::domain::state::{self, NoteState, Registered};
 
 /// Patient note lifecycle — supports cycles (Idle ↔ Encountering).
 ///

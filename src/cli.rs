@@ -372,7 +372,7 @@ mod tests {
     use crate::application::EventBus;
     use crate::domain::{PatientId, PatientRecord, Shift};
     use crate::repository::{Repository, SqliteRepository};
-    use crate::state;
+    use crate::application::load;
     use crate::stt::MockTranscriber;
     use crate::summarizer::MockSummarizer;
 
@@ -380,7 +380,7 @@ mod tests {
         let conn = crate::db::open_memory_db().unwrap();
         let repo: Arc<dyn Repository> = Arc::new(SqliteRepository::new(conn));
         let bus = Arc::new(EventBus::new(32, Some(repo.clone())));
-        let store = state::new_store();
+        let store = load::new_store();
         let driver = EncounterDriver::new(
             MockAudioCapture::new(),
             MockTranscriber,

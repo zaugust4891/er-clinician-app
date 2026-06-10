@@ -8,7 +8,7 @@ use er_note_app::application::EventBus;
 use er_note_app::domain::{PatientId, PatientNote, PatientRecord, Shift};
 use er_note_app::repository::{Repository, SqliteRepository};
 use er_note_app::shift_manager::ShiftManager;
-use er_note_app::state::{self, PatientNoteStore, load_patient_note};
+use er_note_app::application::load::{self, PatientNoteStore, load_patient_note};
 use er_note_app::stt::MockTranscriber;
 use er_note_app::persistence::ShiftSnapshot;
 use dotenvy::dotenv;
@@ -77,7 +77,7 @@ fn main() -> AppResult<()> {
     let sql_lite_repo: Arc<dyn Repository> = Arc::new(SqliteRepository::new(conn));
 
     let event_bus = Arc::new(EventBus::new(1024, Some(sql_lite_repo.clone())));
-    let store: PatientNoteStore = state::new_store();
+    let store: PatientNoteStore = load::new_store();
     
     let audio = MockAudioCapture::new();
     let transcriber = MockTranscriber;

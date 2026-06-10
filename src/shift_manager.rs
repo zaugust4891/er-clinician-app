@@ -7,8 +7,8 @@ use crate::domain::{CaptureMode, EncounterId, PatientNote, PatientId, PatientRec
 use crate::domain::NoteSections;
 use crate::persistence::ShiftSnapshot;
 use crate::repository::Repository;
-use crate::state::PatientNoteStore;
-use crate::state::{apply_event, replay};
+use crate::application::load::PatientNoteStore;
+use crate::domain::replay::{apply_event, replay};
 use crate::encounter_driver::EncounterDriver;
 use crate::summarizer::Summarizer;
 use crate::deidentify::Deidentifier;
@@ -386,7 +386,7 @@ mod tests {
         let sql_lite_repo: Arc<dyn Repository> = Arc::new(crate::repository::SqliteRepository::new(conn));
         let event_bus = Arc::new(EventBus::new(1024, Some(sql_lite_repo.clone())));
 
-        let store: crate::state::PatientNoteStore = crate::state::new_store();
+        let store: crate::application::load::PatientNoteStore = crate::application::load::new_store();
         let audio = crate::audio::MockAudioCapture::new();
         let transcriber = crate::stt::MockTranscriber;
 

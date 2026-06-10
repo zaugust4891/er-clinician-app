@@ -4,8 +4,10 @@ pub mod encounter;
 pub mod events;
 pub mod note;
 pub mod patient;
+pub mod replay;
 pub mod result;
 pub mod shift;
+pub mod state;
 
 // Re-export core types for convenience.
 pub use audit::{AuditAction, AuditEntry};

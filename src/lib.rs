@@ -12,7 +12,6 @@ pub mod export;
 pub mod persistence;
 pub mod repository;
 pub mod shift_manager;
-pub mod state;
 pub mod stt;
 pub mod summarizer;
 

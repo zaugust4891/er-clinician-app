@@ -8,7 +8,7 @@ use crate::application::EventBus;
 use crate::domain::NoteEvent;
 use crate::domain::{CaptureMode, PatientId, NotePhase};
 use crate::repository::{Repository, SqliteRepository};
-use crate::state::{self, PatientNoteStore};
+use crate::application::load::{self as load, PatientNoteStore};
 use crate::stt::MockTranscriber;
 
 struct CrashRecoverySetup {
@@ -23,7 +23,7 @@ fn setup_crash_recovery_stack() -> CrashRecoverySetup {
     let conn = crate::db::open_memory_db().unwrap();
     let repo: Arc<dyn Repository> = Arc::new(SqliteRepository::new(conn));
     let bus = Arc::new(EventBus::new(32, Some(repo.clone())));
-    let store = state::new_store();
+    let store = load::new_store();
 
     let audio = MockAudioCapture::new();
     let transcriber = MockTranscriber;
@@ -53,7 +53,7 @@ fn crash_recovery_setup_stack_compiles() {
     assert!(!setup.driver.has_active_encounter());
 
     let _receiver = setup.bus.subscribe();
-    let loaded = state::load_patient_note(setup.repo.as_ref(), setup.patient_id).unwrap();
+    let loaded = load::load_patient_note(setup.repo.as_ref(), setup.patient_id).unwrap();
     assert!(loaded.is_none());
 }
 
@@ -132,7 +132,7 @@ fn full_lifecycle_survives_simulated_crash() {
     assert_eq!(repo.event_count().unwrap(), 8);
     assert_eq!(repo.snapshot_count().unwrap(), 1);
 
-    let loaded = state::load_patient_note(repo.as_ref(), patient_id)
+    let loaded = load::load_patient_note(repo.as_ref(), patient_id)
         .unwrap()
         .expect("patient note should reload from SQLite after simulated crash");
 
@@ -207,10 +207,10 @@ fn switch_patient_mid_encounter_persists_both() {
     assert_eq!(repo.event_count().unwrap(), 6);
     assert_eq!(repo.snapshot_count().unwrap(), 2);
 
-    let loaded_a = state::load_patient_note(repo.as_ref(), patient_a)
+    let loaded_a = load::load_patient_note(repo.as_ref(), patient_a)
         .unwrap()
         .expect("patient A should reload from SQLite after switch crash");
-    let loaded_b = state::load_patient_note(repo.as_ref(), patient_b)
+    let loaded_b = load::load_patient_note(repo.as_ref(), patient_b)
         .unwrap()
         .expect("patient B should reload from SQLite after switch crash");
 

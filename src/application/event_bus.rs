@@ -4,7 +4,8 @@ use tokio::sync::broadcast;
 use crate::domain::{NoteEvent, NotePhase, PatientNote};
 use crate::error::AppResult;
 use crate::repository::Repository;
-use crate::state::{apply_event, PatientNoteStore};
+use crate::application::load::PatientNoteStore;
+use crate::domain::replay::apply_event;
 
 /// Broadcast event bus — multiple consumers, single producer per event.
 /// Persists first before broadcasting to in-memory subscribers - durable before ephemeral

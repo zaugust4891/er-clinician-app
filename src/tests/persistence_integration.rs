@@ -10,7 +10,7 @@ use crate::repository::{Repository, SqliteRepository};
 fn publish_persists_projects_snapshots_and_loads() {
     let conn = crate::db::open_memory_db().unwrap();
     let repo = std::sync::Arc::new(SqliteRepository::new(conn));
-    let store = crate::state::new_store();
+    let store = crate::application::load::new_store();
     let bus = EventBus::new(32, Some(repo.clone()));
 
     let patient_id = Uuid::now_v7();
@@ -27,7 +27,7 @@ fn publish_persists_projects_snapshots_and_loads() {
     assert_eq!(store.get(&patient_id).unwrap().phase, NotePhase::Signed);
 
     // Load from repository round-trips the state.
-    let loaded = crate::state::load_patient_note(repo.as_ref(), patient_id)
+    let loaded = crate::application::load::load_patient_note(repo.as_ref(), patient_id)
         .unwrap()
         .expect("note exists");
 
@@ -46,7 +46,7 @@ fn load_nonexistent_patient_returns_none() {
     let conn = crate::db::open_memory_db().unwrap();
     let repo = SqliteRepository::new(conn);
 
-    let loaded = crate::state::load_patient_note(&repo, Uuid::now_v7()).unwrap();
+    let loaded = crate::application::load::load_patient_note(&repo, Uuid::now_v7()).unwrap();
     assert!(loaded.is_none());
 }
 
@@ -56,7 +56,7 @@ fn load_uses_snapshot_delta_path() {
     // then reload. The reloaded note should reflect the post-Idle event.
     let conn = crate::db::open_memory_db().unwrap();
     let repo = std::sync::Arc::new(SqliteRepository::new(conn));
-    let store = crate::state::new_store();
+    let store = crate::application::load::new_store();
     let bus = EventBus::new(32, Some(repo.clone()));
 
     let patient_id = Uuid::now_v7();
@@ -69,7 +69,7 @@ fn load_uses_snapshot_delta_path() {
     bus.publish(NoteEvent::trigger_mdm(patient_id), &store).unwrap();
     // Not yet snapshotted in the Finalizing case — a snapshot IS written on Finalizing.
 
-    let loaded = crate::state::load_patient_note(repo.as_ref(), patient_id)
+    let loaded = crate::application::load::load_patient_note(repo.as_ref(), patient_id)
         .unwrap()
         .unwrap();
     assert_eq!(loaded.phase, NotePhase::Finalizing);
@@ -80,7 +80,7 @@ fn load_uses_snapshot_delta_path() {
 fn corrupted_checksum_falls_back_to_full_replay() {
     let conn = crate::db::open_memory_db().unwrap();
     let repo = std::sync::Arc::new(SqliteRepository::new(conn));
-    let store = crate::state::new_store();
+    let store = crate::application::load::new_store();
     let bus = EventBus::new(32, Some(repo.clone()));
 
     let patient_id = Uuid::now_v7();
@@ -101,7 +101,7 @@ fn corrupted_checksum_falls_back_to_full_replay() {
     assert!(snap.is_none(), "corrupted checksum should return None");
 
     // load_patient_note still works via full replay fallback.
-    let loaded = crate::state::load_patient_note(repo.as_ref(), patient_id)
+    let loaded = crate::application::load::load_patient_note(repo.as_ref(), patient_id)
         .unwrap()
         .expect("full replay succeeds");
     assert_eq!(loaded.phase, NotePhase::Idle);
@@ -112,7 +112,7 @@ fn corrupted_checksum_falls_back_to_full_replay() {
 fn store_and_sqlite_stay_consistent() {
     let conn = crate::db::open_memory_db().unwrap();
     let repo = std::sync::Arc::new(SqliteRepository::new(conn));
-    let store = crate::state::new_store();
+    let store = crate::application::load::new_store();
     let bus = EventBus::new(32, Some(repo.clone()));
 
     let patient_id = Uuid::now_v7();
@@ -126,7 +126,7 @@ fn store_and_sqlite_stay_consistent() {
     bus.publish(NoteEvent::sign(patient_id), &store).unwrap();
 
     let from_store = store.get(&patient_id).unwrap().clone();
-    let from_db = crate::state::load_patient_note(repo.as_ref(), patient_id)
+    let from_db = crate::application::load::load_patient_note(repo.as_ref(), patient_id)
         .unwrap()
         .expect("note exists");
 
@@ -144,7 +144,7 @@ fn store_and_sqlite_stay_consistent() {
 fn disposition_set_after_sign_is_noop() {
     let conn = crate::db::open_memory_db().unwrap();
     let repo = std::sync::Arc::new(SqliteRepository::new(conn));
-    let store = crate::state::new_store();
+    let store = crate::application::load::new_store();
     let bus = EventBus::new(32, Some(repo.clone()));
 
     let patient_id = Uuid::now_v7();
