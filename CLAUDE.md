@@ -70,7 +70,7 @@ The CLI persists event data to `./er_notes.db` and stores non-event-sourced shif
 
 ### Crash Recovery Coverage
 
-`src/tests/crash_recovery.rs` verifies:
+`tests/crash_recovery.rs` verifies:
 
 - multi-encounter lifecycle survives dropping the in-memory DashMap and reloading from SQLite
 - `switch_patient` closes the old patient's encounter, starts the new patient's encounter, and both patients reload correctly after simulated crash
@@ -127,24 +127,57 @@ ED physician validated the concept. Two key questions answered in `docs/product/
 
 Product pitch document: `docs/product/product-summary.md`
 
+## Project Layout (Layered, Option 1)
+
+Reorganized 2026-06-10 per `docs/planning/folder-structure-options.md`. Four layers
+under `src/`; the dependency rule is **arrows point inward only** — `domain/` imports
+nothing from the other layers and performs no I/O (no rusqlite/reqwest/tokio/dashmap).
+Each layer folder maps 1:1 to a future workspace crate (Option 2, planned after Phase 3).
+
+```
+src/
+├── domain/          # pure core (future er-domain)
+│   ├── note.rs encounter.rs patient.rs shift.rs result.rs disposition.rs audit.rs
+│   ├── events.rs    # NoteEvent enum + constructors (no EventBus here)
+│   ├── state.rs     # NoteState trait, phase structs, ingest_result
+│   └── replay.rs    # apply_event, replay
+├── application/     # orchestration (future er-app)
+│   ├── event_bus.rs # persist-first publish, projection, snapshot trigger
+│   ├── load.rs      # PatientNoteStore, load_patient_note
+│   ├── shift_manager.rs encounter_driver.rs shift_snapshot.rs conversions/
+├── infrastructure/  # outside world (future er-store / er-ai / er-pipeline)
+│   ├── persistence/ # repository.rs, db.rs
+│   ├── ai/          # claude.rs, summarizer.rs, deidentify.rs
+│   ├── audio.rs stt.rs
+├── interface/       # delivery (future er-cli)
+│   ├── cli.rs export.rs
+├── error.rs main.rs
+tests/               # integration tests — compile against the public API only
+docs/                # architecture / product / planning documents
+```
+
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `src/state.rs` | State pattern, NoteState trait, replay, apply_event, load_patient_note, PatientNoteStore |
-| `src/models/note.rs` | PatientNote aggregate, NotePhase enum, transition methods |
-| `src/events.rs` | NoteEvent enum + constructors, EventBus (persist-first broadcast) |
-| `src/repository.rs` | Repository trait, SqliteRepository (events + snapshots + checksum) |
-| `src/tests/persistence_integration.rs` | Integration tests: round-trip, snapshot, checksum, consistency |
-| `src/tests/crash_recovery.rs` | Phase 2 crash-recovery integration tests |
-| `src/encounter_driver.rs` | Mock audio/STT encounter orchestration |
-| `src/shift_manager.rs` | Multi-patient shift orchestration and CLI-facing manager API |
-| `src/cli.rs` | CLI command parsing and dispatch |
+| `src/domain/note.rs` | PatientNote aggregate, NotePhase enum, transition methods |
+| `src/domain/state.rs` | State pattern, NoteState trait, ingest_result |
+| `src/domain/events.rs` | NoteEvent enum + constructors |
+| `src/domain/replay.rs` | apply_event, replay (pure event application) |
+| `src/application/event_bus.rs` | EventBus (persist-first publish, projection, snapshots) |
+| `src/application/load.rs` | PatientNoteStore, load_patient_note (snapshot fast-path) |
+| `src/application/shift_manager.rs` | Multi-patient shift orchestration and CLI-facing manager API |
+| `src/application/encounter_driver.rs` | Mock audio/STT encounter orchestration |
+| `src/application/shift_snapshot.rs` | ShiftSnapshot for shift.json save/resume |
+| `src/infrastructure/persistence/repository.rs` | Repository trait, SqliteRepository (events + snapshots + checksum) |
+| `src/infrastructure/persistence/db.rs` | SQLite schema, open_db/open_memory_db |
+| `src/infrastructure/ai/claude.rs` | Real Claude API client for HPI/ROS/Exam/MDM |
+| `src/infrastructure/ai/deidentify.rs` | PHI stripping before API calls |
+| `src/interface/cli.rs` | CLI command parsing and dispatch |
+| `src/interface/export.rs` | Plain text note formatting |
 | `src/main.rs` | Interactive developer CLI startup, command loop, shift save/resume |
-| `src/db.rs` | SQLite schema, open_db/open_memory_db |
-| `src/claude_summarizer.rs` | Real Claude API client for HPI/ROS/Exam/MDM |
-| `src/export.rs` | Plain text note formatting |
-| `src/deidentify.rs` | PHI stripping before API calls |
 | `src/bin/spike_summarizer.rs` | End-to-end Claude test (chest pain case) |
+| `tests/persistence_integration.rs` | Integration tests: round-trip, snapshot, checksum, consistency |
+| `tests/crash_recovery.rs` | Phase 2 crash-recovery integration tests |
 | `docs/product/doctor-feedback-responses.md` | Responses to ED doctor's questions |
 | `docs/product/product-summary.md` | Product pitch document |
