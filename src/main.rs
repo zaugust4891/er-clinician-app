@@ -1,6 +1,6 @@
 use er_note_app::infrastructure::audio::MockAudioCapture;
 use er_note_app::infrastructure::ai::claude::ClaudeSummarizer;
-use er_note_app::cli::{Commands, handle_command};
+use er_note_app::interface::cli::{Commands, handle_command};
 use er_note_app::infrastructure::persistence::db;
 use er_note_app::application::encounter_driver::EncounterDriver;
 use er_note_app::error::{AppError, AppResult};

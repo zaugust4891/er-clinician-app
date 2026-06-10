@@ -3,7 +3,7 @@ use crate::infrastructure::audio::AudioCapture;
 use crate::infrastructure::stt::Transcriber;
 use crate::application::EventBus;
 use crate::domain::NoteEvent;
-use crate::export::format_note;
+use crate::interface::export::format_note;
 use crate::domain::{CaptureMode, EncounterId, PatientNote, PatientId, PatientRecord, ClinicalResult, Disposition, NotePhase, Shift, ShiftId};
 use crate::domain::NoteSections;
 use crate::application::shift_snapshot::ShiftSnapshot;
