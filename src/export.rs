@@ -1,4 +1,4 @@
-use crate::models::{Disposition, NoteSections, PatientRecord};
+use crate::domain::{Disposition, NoteSections, PatientRecord};
 
 /// Format a patient note for export (copy to clipboard → paste into Epic).
 /// Plain text only — no markdown, no HTML. Epic note fields accept plain text.

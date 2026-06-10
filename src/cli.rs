@@ -6,7 +6,7 @@ use uuid::Uuid;
 use crate::audio::AudioCapture;
 use crate::conversions::disposition::{format_disposition_for_cli, parse_disposition};
 use crate::error::AppError::NoActivePatient;
-use crate::models::{CaptureMode, ClinicalResult, Disposition, LabResult};
+use crate::domain::{CaptureMode, ClinicalResult, Disposition, LabResult};
 use crate::error::{AppResult, AppError};
 use crate::shift_manager::ShiftManager;
 use crate::stt::Transcriber;
@@ -251,9 +251,9 @@ where
             let result = ClinicalResult {
                 id: Uuid::now_v7(),
                 patient_id,
-                source: crate::models::ResultSource::Manual,
+                source: crate::domain::ResultSource::Manual,
                 timestamp: Utc::now(),
-                result_type: crate::models::ResultType::Lab(LabResult{
+                result_type: crate::domain::ResultType::Lab(LabResult{
                     fhir_id: None,
                     loinc_code: None,
                     display_name: name.clone(),
@@ -370,7 +370,7 @@ mod tests {
     use crate::audio::MockAudioCapture;
     use crate::encounter_driver::EncounterDriver;
     use crate::events::EventBus;
-    use crate::models::{PatientId, PatientRecord, Shift};
+    use crate::domain::{PatientId, PatientRecord, Shift};
     use crate::repository::{Repository, SqliteRepository};
     use crate::state;
     use crate::stt::MockTranscriber;

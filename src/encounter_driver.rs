@@ -1,7 +1,7 @@
 use crate::error::{AppError, AppResult};
 use crate::{audio::AudioCapture, stt::Transcriber,};
 use crate::events::{EventBus, NoteEvent};
-use crate::models::{PatientId, EncounterId, CaptureMode};
+use crate::domain::{PatientId, EncounterId, CaptureMode};
 use crate::state::PatientNoteStore;
 
 use std::sync::Arc;
@@ -126,7 +126,7 @@ mod tests {
     use super::*;
     use crate::audio::MockAudioCapture;
     use crate::events::NoteEvent;
-    use crate::models::NotePhase;
+    use crate::domain::NotePhase;
     use crate::state;
     use crate::stt::MockTranscriber;
 

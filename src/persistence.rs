@@ -1,4 +1,4 @@
-use crate::models::{PatientRecord, Shift};
+use crate::domain::{PatientRecord, Shift};
 
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct ShiftSnapshot {

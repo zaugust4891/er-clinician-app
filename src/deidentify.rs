@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use regex::Regex;
 
-use crate::models::{PatientId, PatientRecord};
+use crate::domain::{PatientId, PatientRecord};
 
 /// Strips PHI from text before sending to external LLM APIs.
 ///

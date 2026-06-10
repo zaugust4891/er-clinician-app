@@ -1,5 +1,5 @@
 use crate::error::{AppError, AppResult};
-use crate::models::Disposition;
+use crate::domain::Disposition;
 
 pub fn parse_disposition(args: &[String]) -> AppResult<Disposition> {
     if args.len() < 2 {

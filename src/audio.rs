@@ -1,5 +1,5 @@
 use crate::error::{AppResult, AppError};
-use crate::models::{CaptureMode, PatientId, EncounterId};
+use crate::domain::{CaptureMode, PatientId, EncounterId};
 
 /// Platform-agnostic audio capture interface.
 ///

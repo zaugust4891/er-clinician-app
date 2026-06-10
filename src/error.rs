@@ -1,4 +1,4 @@
-use crate::models::NotePhase;
+use crate::domain::NotePhase;
 
 /// Unified error type for the application.
 #[derive(Debug, thiserror::Error)]

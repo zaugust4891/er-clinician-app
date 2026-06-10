@@ -2,7 +2,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult};
-use crate::models::NoteSections;
+use crate::domain::NoteSections;
 use crate::summarizer::Summarizer;
 
 // Request and response structs for Claude API.

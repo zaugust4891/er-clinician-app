@@ -1,6 +1,6 @@
 use crate::claude_summarizer::ClaudeSummarizer;
 use crate::error::AppResult;
-use crate::models::NoteSections;
+use crate::domain::NoteSections;
 
 /// LLM-based note summarization interface.
 ///

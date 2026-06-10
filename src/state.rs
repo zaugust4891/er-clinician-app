@@ -5,11 +5,11 @@ use dashmap::DashMap;
 
 use crate::error::{AppError, AppResult};
 use crate::events::NoteEvent;
-use crate::models::audit::{AuditAction, AuditEntry};
-use crate::models::note::{NotePhase, NoteSectionVersion};
-use crate::models::patient::PatientId;
-use crate::models::result::ClinicalResult;
-use crate::models::{Encounter, EncounterId, NoteSections, PatientNote};
+use crate::domain::audit::{AuditAction, AuditEntry};
+use crate::domain::note::{NotePhase, NoteSectionVersion};
+use crate::domain::patient::PatientId;
+use crate::domain::result::ClinicalResult;
+use crate::domain::{Encounter, EncounterId, NoteSections, PatientNote};
 use crate::repository::Repository;
 // ---------------------------------------------------------------------------
 // NoteState trait — the core of the state pattern
@@ -395,7 +395,7 @@ pub fn load_patient_note(repo: &dyn Repository, patient_id: PatientId) -> AppRes
 /// Only HPI/ROS/Exam are touched, and only when the incoming field is Some.
 /// MDM and disposition_text are NEVER modified here - they are owned by
 /// MdmGenerated / DispositionSet respectively.
-fn merge_sections(dest: &mut crate::models::NoteSections, source: &crate::models::NoteSections) {
+fn merge_sections(dest: &mut crate::domain::NoteSections, source: &crate::domain::NoteSections) {
     if source.hpi.is_some() {
         dest.hpi = source.hpi.clone();
     }
@@ -417,8 +417,8 @@ fn merge_sections(dest: &mut crate::models::NoteSections, source: &crate::models
 mod tests {
     use uuid::Uuid;
 
-    use crate::models::CaptureMode;
-    use crate::models::{LabResult, ResultSource, ResultType};
+    use crate::domain::CaptureMode;
+    use crate::domain::{LabResult, ResultSource, ResultType};
 
     use super::*;
 
@@ -640,9 +640,9 @@ mod tests {
         let result = ClinicalResult {
             id: uuid::Uuid::now_v7(),
             patient_id: note.patient_id,
-            source: crate::models::ResultSource::Manual,
+            source: crate::domain::ResultSource::Manual,
             timestamp: Utc::now(),
-            result_type: crate::models::ResultType::Lab(crate::models::LabResult {
+            result_type: crate::domain::ResultType::Lab(crate::domain::LabResult {
                 fhir_id: None,
                 loinc_code: None,
                 display_name: "Troponin".into(),

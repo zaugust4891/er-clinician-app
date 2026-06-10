@@ -5,7 +5,7 @@ use uuid::Uuid;
 use crate::audio::MockAudioCapture;
 use crate::encounter_driver::EncounterDriver;
 use crate::events::{EventBus, NoteEvent};
-use crate::models::{CaptureMode, PatientId, NotePhase};
+use crate::domain::{CaptureMode, PatientId, NotePhase};
 use crate::repository::{Repository, SqliteRepository};
 use crate::state::{self, PatientNoteStore};
 use crate::stt::MockTranscriber;

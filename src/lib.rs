@@ -8,7 +8,7 @@ pub mod encounter_driver;
 pub mod error;
 pub mod events;
 pub mod export;
-pub mod models;
+pub mod domain;
 pub mod persistence;
 pub mod repository;
 pub mod shift_manager;

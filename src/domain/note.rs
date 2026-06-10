@@ -423,7 +423,7 @@ impl PatientNote {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{LabResult, ResultSource};
+    use crate::domain::{LabResult, ResultSource};
 
     #[test]
     fn display_formats_patient_note_sections_and_results() {

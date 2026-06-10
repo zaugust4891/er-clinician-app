@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 use std::sync::Arc;
 use chrono::{DateTime, Utc};
-use crate::models::{CaptureMode, ClinicalResult, Disposition, EncounterId, NoteSections, PatientId, disposition};
+use crate::domain::{CaptureMode, ClinicalResult, Disposition, EncounterId, NoteSections, PatientId, disposition};
 use crate::repository::Repository;
 use crate::error::AppResult;
 
@@ -158,7 +158,7 @@ impl NoteEvent {
 }
 
 use crate::state::{apply_event, PatientNoteStore};
-use crate::models::{NotePhase, PatientNote};
+use crate::domain::{NotePhase, PatientNote};
 /// Broadcast event bus — multiple consumers, single producer per event.
 /// Persists first before broadcasting to in-memory subscribers - durable before ephemeral
 pub struct EventBus {
@@ -250,8 +250,8 @@ impl Default for EventBus {
 mod tests {
 
     use super::*;
-    use crate::models::{PatientId};
-    use crate::models::encounter::CaptureMode;
+    use crate::domain::{PatientId};
+    use crate::domain::encounter::CaptureMode;
 
 
     /// Unit test for extract_patient_id() method.
@@ -282,13 +282,13 @@ mod tests {
             (NoteEvent::TranscriptReady { patient_id, encounter_id, text: "hello".into(), clinical_occurred_at: now }, "TranscriptReady"),
             (NoteEvent::ResultReceived {
                 patient_id,
-                result: crate::models::ClinicalResult {
+                result: crate::domain::ClinicalResult {
                     id: uuid::Uuid::now_v7(),
                     patient_id,
-                    source: crate::models::ResultSource::Manual,
+                    source: crate::domain::ResultSource::Manual,
                     timestamp: now,
-                    result_type: crate::models::ResultType::Vital(crate::models::result::VitalSign {
-                        vital_type: crate::models::result::VitalType::HeartRate,
+                    result_type: crate::domain::ResultType::Vital(crate::domain::result::VitalSign {
+                        vital_type: crate::domain::result::VitalType::HeartRate,
                         value: 72.0,
                         unit: "bpm".into(),
                     }),

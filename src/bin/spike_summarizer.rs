@@ -1,6 +1,6 @@
 use er_note_app::claude_summarizer::ClaudeSummarizer;
 use er_note_app::export::format_note;
-use er_note_app::models::{Disposition, NoteSections, PatientRecord};
+use er_note_app::domain::{Disposition, NoteSections, PatientRecord};
 use er_note_app::summarizer::Summarizer;
 
 #[tokio::main]
