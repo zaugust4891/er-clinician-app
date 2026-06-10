@@ -1,16 +1,16 @@
 use chrono::Utc;
 use uuid::Uuid;
 
-use crate::application::EventBus;
-use crate::domain::NoteEvent;
-use crate::domain::{CaptureMode, Disposition, NotePhase};
-use crate::infrastructure::persistence::repository::{Repository, SqliteRepository};
+use er_note_app::application::EventBus;
+use er_note_app::domain::NoteEvent;
+use er_note_app::domain::{CaptureMode, Disposition, NotePhase};
+use er_note_app::infrastructure::persistence::repository::{Repository, SqliteRepository};
 
 #[test]
 fn publish_persists_projects_snapshots_and_loads() {
-    let conn = crate::infrastructure::persistence::db::open_memory_db().unwrap();
+    let conn = er_note_app::infrastructure::persistence::db::open_memory_db().unwrap();
     let repo = std::sync::Arc::new(SqliteRepository::new(conn));
-    let store = crate::application::load::new_store();
+    let store = er_note_app::application::load::new_store();
     let bus = EventBus::new(32, Some(repo.clone()));
 
     let patient_id = Uuid::now_v7();
@@ -27,7 +27,7 @@ fn publish_persists_projects_snapshots_and_loads() {
     assert_eq!(store.get(&patient_id).unwrap().phase, NotePhase::Signed);
 
     // Load from repository round-trips the state.
-    let loaded = crate::application::load::load_patient_note(repo.as_ref(), patient_id)
+    let loaded = er_note_app::application::load::load_patient_note(repo.as_ref(), patient_id)
         .unwrap()
         .expect("note exists");
 
@@ -43,10 +43,10 @@ fn publish_persists_projects_snapshots_and_loads() {
 
 #[test]
 fn load_nonexistent_patient_returns_none() {
-    let conn = crate::infrastructure::persistence::db::open_memory_db().unwrap();
+    let conn = er_note_app::infrastructure::persistence::db::open_memory_db().unwrap();
     let repo = SqliteRepository::new(conn);
 
-    let loaded = crate::application::load::load_patient_note(&repo, Uuid::now_v7()).unwrap();
+    let loaded = er_note_app::application::load::load_patient_note(&repo, Uuid::now_v7()).unwrap();
     assert!(loaded.is_none());
 }
 
@@ -54,9 +54,9 @@ fn load_nonexistent_patient_returns_none() {
 fn load_uses_snapshot_delta_path() {
     // Drive to Idle (first snapshot trigger), then publish one more event,
     // then reload. The reloaded note should reflect the post-Idle event.
-    let conn = crate::infrastructure::persistence::db::open_memory_db().unwrap();
+    let conn = er_note_app::infrastructure::persistence::db::open_memory_db().unwrap();
     let repo = std::sync::Arc::new(SqliteRepository::new(conn));
-    let store = crate::application::load::new_store();
+    let store = er_note_app::application::load::new_store();
     let bus = EventBus::new(32, Some(repo.clone()));
 
     let patient_id = Uuid::now_v7();
@@ -69,7 +69,7 @@ fn load_uses_snapshot_delta_path() {
     bus.publish(NoteEvent::trigger_mdm(patient_id), &store).unwrap();
     // Not yet snapshotted in the Finalizing case — a snapshot IS written on Finalizing.
 
-    let loaded = crate::application::load::load_patient_note(repo.as_ref(), patient_id)
+    let loaded = er_note_app::application::load::load_patient_note(repo.as_ref(), patient_id)
         .unwrap()
         .unwrap();
     assert_eq!(loaded.phase, NotePhase::Finalizing);
@@ -78,9 +78,9 @@ fn load_uses_snapshot_delta_path() {
 
 #[test]
 fn corrupted_checksum_falls_back_to_full_replay() {
-    let conn = crate::infrastructure::persistence::db::open_memory_db().unwrap();
+    let conn = er_note_app::infrastructure::persistence::db::open_memory_db().unwrap();
     let repo = std::sync::Arc::new(SqliteRepository::new(conn));
-    let store = crate::application::load::new_store();
+    let store = er_note_app::application::load::new_store();
     let bus = EventBus::new(32, Some(repo.clone()));
 
     let patient_id = Uuid::now_v7();
@@ -101,7 +101,7 @@ fn corrupted_checksum_falls_back_to_full_replay() {
     assert!(snap.is_none(), "corrupted checksum should return None");
 
     // load_patient_note still works via full replay fallback.
-    let loaded = crate::application::load::load_patient_note(repo.as_ref(), patient_id)
+    let loaded = er_note_app::application::load::load_patient_note(repo.as_ref(), patient_id)
         .unwrap()
         .expect("full replay succeeds");
     assert_eq!(loaded.phase, NotePhase::Idle);
@@ -110,9 +110,9 @@ fn corrupted_checksum_falls_back_to_full_replay() {
 
 #[test]
 fn store_and_sqlite_stay_consistent() {
-    let conn = crate::infrastructure::persistence::db::open_memory_db().unwrap();
+    let conn = er_note_app::infrastructure::persistence::db::open_memory_db().unwrap();
     let repo = std::sync::Arc::new(SqliteRepository::new(conn));
-    let store = crate::application::load::new_store();
+    let store = er_note_app::application::load::new_store();
     let bus = EventBus::new(32, Some(repo.clone()));
 
     let patient_id = Uuid::now_v7();
@@ -126,7 +126,7 @@ fn store_and_sqlite_stay_consistent() {
     bus.publish(NoteEvent::sign(patient_id), &store).unwrap();
 
     let from_store = store.get(&patient_id).unwrap().clone();
-    let from_db = crate::application::load::load_patient_note(repo.as_ref(), patient_id)
+    let from_db = er_note_app::application::load::load_patient_note(repo.as_ref(), patient_id)
         .unwrap()
         .expect("note exists");
 
@@ -142,9 +142,9 @@ fn store_and_sqlite_stay_consistent() {
 
 #[test]
 fn disposition_set_after_sign_is_noop() {
-    let conn = crate::infrastructure::persistence::db::open_memory_db().unwrap();
+    let conn = er_note_app::infrastructure::persistence::db::open_memory_db().unwrap();
     let repo = std::sync::Arc::new(SqliteRepository::new(conn));
-    let store = crate::application::load::new_store();
+    let store = er_note_app::application::load::new_store();
     let bus = EventBus::new(32, Some(repo.clone()));
 
     let patient_id = Uuid::now_v7();

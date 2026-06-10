@@ -33,7 +33,11 @@ impl SqliteRepository {
     }
 }
 
-#[cfg(test)]
+/// Test-support escape hatch: lets integration tests corrupt rows to
+/// exercise checksum-mismatch fallback paths. Not for production use —
+/// becomes a `test-util` feature when this module is extracted to its
+/// own crate.
+#[doc(hidden)]
 impl SqliteRepository {
     pub fn execute_raw(&self, sql: &str, params: &[&dyn rusqlite::types::ToSql]) {
         let conn = self.conn.lock().unwrap();
