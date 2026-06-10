@@ -279,10 +279,15 @@ where
         }
 
         Command::Note => {
-            let note = manager.export_active_note()?;
+            let patient_id = manager
+                .active_patient_id()
+                .ok_or(NoActivePatient("No active patient found".into()))?;
             
-            println!("{note}");
+            let note = manager
+                .get_note(patient_id)
+                .ok_or(AppError::NoteError("No note found".into()))?;
 
+            println!("{note}");
             Ok(true)
         }
 
