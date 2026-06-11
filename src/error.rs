@@ -29,7 +29,7 @@ pub enum AppError {
 
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
-    
+
     #[error("deserialization error: {0}")]
     DeserializeError(String),
 
@@ -66,21 +66,18 @@ pub enum AppError {
 
     #[error("other error: {0}")]
     OtherError(String),
-
-
 }
 
 pub type AppResult<T> = std::result::Result<T, AppError>;
-
 
 impl AppError {
     pub fn parse_error<E>(context: impl Into<String>, error: E) -> Self
     where
         E: std::error::Error + Send + Sync + 'static,
     {
-        AppError::ParseError { 
+        AppError::ParseError {
             context: context.into(),
-            source: Box::new(error), 
+            source: Box::new(error),
         }
     }
 }

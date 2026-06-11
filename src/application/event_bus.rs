@@ -1,11 +1,11 @@
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
+use crate::application::load::PatientNoteStore;
+use crate::domain::replay::apply_event;
 use crate::domain::{NoteEvent, NotePhase, PatientNote};
 use crate::error::AppResult;
 use crate::infrastructure::persistence::repository::Repository;
-use crate::application::load::PatientNoteStore;
-use crate::domain::replay::apply_event;
 
 /// Broadcast event bus — multiple consumers, single producer per event.
 /// Persists first before broadcasting to in-memory subscribers - durable before ephemeral
@@ -39,13 +39,12 @@ impl EventBus {
         // they are updated in the same code path. Broadcast subscribers never touch state.
 
         let phase_after = {
-            let mut entry = store.entry(patient_id).or_insert_with(|| {
-                PatientNote::new(patient_id)
-            });
+            let mut entry = store
+                .entry(patient_id)
+                .or_insert_with(|| PatientNote::new(patient_id));
             apply_event(&mut *entry, &event);
             entry.phase.clone()
             // DashMap write lock on this shard is dropped - NotePhase escapes
-
         };
 
         // 3. Trigger snapshot on significant phase transitions.

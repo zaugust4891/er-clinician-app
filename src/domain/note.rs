@@ -9,6 +9,8 @@ use super::disposition::Disposition;
 use super::encounter::{Encounter, EncounterId};
 use super::patient::PatientId;
 use super::result::{ClinicalResult, ResultType};
+use crate::domain::Medication;
+use crate::domain::diagnosis::Diagnosis;
 use crate::domain::state::{self, NoteState, Registered};
 
 /// Patient note lifecycle — supports cycles (Idle ↔ Encountering).
@@ -118,6 +120,9 @@ pub struct PatientNote {
     pub state: Option<Box<dyn NoteState>>,
     pub encounter_count: u32,
     pub encounters: Vec<Encounter>,
+    pub diagnoses: Vec<Diagnosis>,
+    pub medication: Vec<Medication>,
+    pub data_reviewed: Vec<String>, // free-text orders/consults/results-reviwed for the MDM
     pub results: Vec<ClinicalResult>,
     pub note_sections: NoteSections,
     pub section_history: Vec<NoteSectionVersion>,
@@ -141,6 +146,9 @@ impl Clone for PatientNote {
             state: self.state.as_ref().map(|s| s.clone_state()),
             encounter_count: self.encounter_count,
             encounters: self.encounters.clone(),
+            diagnoses: self.diagnoses.clone(),
+            medication: self.medication.clone(),
+            data_reviewed: self.data_reviewed.clone(),
             results: self.results.clone(),
             note_sections: self.note_sections.clone(),
             section_history: self.section_history.clone(),
@@ -172,6 +180,7 @@ impl std::fmt::Debug for PatientNote {
             .field("state", &state_name)
             .field("encounter_count", &self.encounter_count)
             .field("encounters", &self.encounters.len())
+            .field("medication", &self.medication)
             .field("results", &self.results.len())
             .field("version", &self.version)
             .finish()
@@ -197,6 +206,17 @@ impl fmt::Display for PatientNote {
         } else {
             write_section(f, "Review of Systems", Some("See HPI"))?;
         }
+
+        let meds: String = self
+            .medication
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        let meds_option: Option<&str> = (!self.medication.is_empty()).then_some(meds.as_str());
+
+        write_section(f, "Medication: {}", meds_option)?;
 
         write_section(f, "Physical Exam", self.note_sections.exam.as_deref())?;
         write_results(f, &self.results)?;
@@ -315,6 +335,9 @@ impl PatientNote {
             state: Some(Box::new(Registered)),
             encounter_count: 0,
             encounters: Vec::new(),
+            diagnoses: Vec::new(),
+            medication: Vec::new(),
+            data_reviewed: Vec::new(), 
             results: Vec::new(),
             note_sections: NoteSections::default(),
             section_history: Vec::new(),

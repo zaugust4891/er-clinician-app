@@ -1,5 +1,5 @@
-use crate::error::{AppError, AppResult};
 use crate::domain::Disposition;
+use crate::error::{AppError, AppResult};
 
 pub fn parse_disposition(args: &[String]) -> AppResult<Disposition> {
     if args.len() < 2 {
@@ -156,13 +156,7 @@ mod tests {
     #[test]
     fn parses_transfer_reason_tail() {
         let disposition = parse_disposition(&args(&[
-            "dispo",
-            "transfer",
-            "MGH",
-            "higher",
-            "level",
-            "of",
-            "care",
+            "dispo", "transfer", "MGH", "higher", "level", "of", "care",
         ]))
         .unwrap();
 

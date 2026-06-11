@@ -1,6 +1,4 @@
-use crate::error::{AppResult, AppError};
-
-
+use crate::error::{AppError, AppResult};
 
 pub fn parse_string_to_f64(input: String) -> AppResult<f64> {
     match input.parse::<f64>() {

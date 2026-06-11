@@ -1,8 +1,8 @@
 use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
 
-use crate::domain::{PatientId, PatientNote};
 use crate::domain::NoteEvent;
+use crate::domain::{PatientId, PatientNote};
 use crate::error::{AppError, AppResult};
 
 pub trait Repository: Send + Sync {
@@ -10,9 +10,18 @@ pub trait Repository: Send + Sync {
 
     fn get_events(&self, patient_id: PatientId) -> AppResult<Vec<StoredEvent>>;
 
-    fn get_events_since(&self, patient_id: PatientId, sequence_id: u64) -> AppResult<Vec<StoredEvent>>;
+    fn get_events_since(
+        &self,
+        patient_id: PatientId,
+        sequence_id: u64,
+    ) -> AppResult<Vec<StoredEvent>>;
 
-    fn save_snapshot(&self, patient_id: PatientId, sequence_id: u64, snapshot: &PatientNote) -> AppResult<()>;
+    fn save_snapshot(
+        &self,
+        patient_id: PatientId,
+        sequence_id: u64,
+        snapshot: &PatientNote,
+    ) -> AppResult<()>;
 
     fn get_latest_snapshot(&self, patient_id: PatientId) -> AppResult<Option<(u64, PatientNote)>>;
 
@@ -64,16 +73,13 @@ impl Repository for SqliteRepository {
         let mut stmt = conn.prepare(
             "SELECT sequence_id, payload, occurred_at FROM events WHERE patient_id = ?1 ORDER BY sequence_id ASC"
         )?;
-        let rows = stmt.query_map(
-            rusqlite::params![patient_id.to_string()],
-            |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,         // sequence_id (column index 0)
-                    row.get::<_, String>(1)?,       // payload JSON (column index 1)
-                    row.get::<_, String>(2)?,       // occurred_at string (column index 2)
-                ))
-            },
-        )?;
+        let rows = stmt.query_map(rusqlite::params![patient_id.to_string()], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,    // sequence_id (column index 0)
+                row.get::<_, String>(1)?, // payload JSON (column index 1)
+                row.get::<_, String>(2)?, // occurred_at string (column index 2)
+            ))
+        })?;
 
         let mut events = Vec::new();
         for row in rows {
@@ -91,14 +97,18 @@ impl Repository for SqliteRepository {
         Ok(events)
     }
 
-    fn get_events_since(&self, patient_id: PatientId, sequence_id: u64) -> AppResult<Vec<StoredEvent>> {
+    fn get_events_since(
+        &self,
+        patient_id: PatientId,
+        sequence_id: u64,
+    ) -> AppResult<Vec<StoredEvent>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT sequence_id, payload, occurred_at 
             FROM events 
             WHERE patient_id = ?1 
             AND sequence_id > ?2 
-            ORDER BY sequence_id ASC"
+            ORDER BY sequence_id ASC",
         )?;
 
         let rows = stmt.query_map(
@@ -116,8 +126,8 @@ impl Repository for SqliteRepository {
         for row in rows {
             let (seq_id, payload_json, occurred_at_str) = row?;
             // Contextual JSON Parsing
-            let event: NoteEvent = serde_json::from_str(&payload_json)
-                .map_err(|e| AppError::ParseError {
+            let event: NoteEvent =
+                serde_json::from_str(&payload_json).map_err(|e| AppError::ParseError {
                     context: format!("Event payload (sequence_id: {})", seq_id),
                     source: Box::new(e),
                 })?;
@@ -129,7 +139,7 @@ impl Repository for SqliteRepository {
                     source: Box::new(e),
                 })?
                 .with_timezone(&Utc);
-            events.push(StoredEvent{
+            events.push(StoredEvent {
                 sequence_id: seq_id as u64,
                 event,
                 occurred_at,
@@ -173,10 +183,7 @@ impl Repository for SqliteRepository {
         Ok(())
     }
 
-    fn get_latest_snapshot(
-        &self,
-        patient_id: PatientId,
-    ) -> AppResult<Option<(u64, PatientNote)>> {
+    fn get_latest_snapshot(&self, patient_id: PatientId) -> AppResult<Option<(u64, PatientNote)>> {
         let conn = self.conn.lock().unwrap();
 
         // 0 or 1 row — patient_id is the PRIMARY KEY.
@@ -242,7 +249,6 @@ impl Repository for SqliteRepository {
         })?;
         Ok(count)
     }
-
 }
 
 #[derive(Debug, Clone)]

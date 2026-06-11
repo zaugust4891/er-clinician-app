@@ -12,10 +12,7 @@ pub fn format_note(
 
     out.push_str("ED PROVIDER NOTE\n\n");
 
-    out.push_str(&format!(
-        "Chief Complaint: {}\n\n",
-        patient.chief_complaint
-    ));
+    out.push_str(&format!("Chief Complaint: {}\n\n", patient.chief_complaint));
 
     if let Some(hpi) = &sections.hpi {
         out.push_str(&format!("HPI:\n{hpi}\n\n"));

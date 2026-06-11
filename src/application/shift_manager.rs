@@ -1,26 +1,28 @@
-use crate::error::{AppError, AppResult};
-use crate::infrastructure::audio::AudioCapture;
-use crate::infrastructure::stt::Transcriber;
 use crate::application::EventBus;
-use crate::domain::NoteEvent;
-use crate::interface::export::format_note;
-use crate::domain::{CaptureMode, EncounterId, PatientNote, PatientId, PatientRecord, ClinicalResult, Disposition, NotePhase, Shift, ShiftId};
-use crate::domain::NoteSections;
-use crate::application::shift_snapshot::ShiftSnapshot;
-use crate::infrastructure::persistence::repository::Repository;
-use crate::application::load::PatientNoteStore;
-use crate::domain::replay::{apply_event, replay};
 use crate::application::encounter_driver::EncounterDriver;
-use crate::infrastructure::ai::summarizer::Summarizer;
+use crate::application::load::PatientNoteStore;
+use crate::application::shift_snapshot::ShiftSnapshot;
+use crate::domain::NoteEvent;
+use crate::domain::NoteSections;
+use crate::domain::replay::{apply_event, replay};
+use crate::domain::{
+    CaptureMode, ClinicalResult, Disposition, EncounterId, NotePhase, PatientId, PatientNote,
+    PatientRecord, Shift, ShiftId,
+};
+use crate::error::{AppError, AppResult};
 use crate::infrastructure::ai::deidentify::Deidentifier;
+use crate::infrastructure::ai::summarizer::Summarizer;
+use crate::infrastructure::audio::AudioCapture;
+use crate::infrastructure::persistence::repository::Repository;
+use crate::infrastructure::stt::Transcriber;
+use crate::interface::export::format_note;
 
-use tokio::runtime::Runtime;
-use std::sync::Arc;
-use std::collections::HashMap;
 use chrono::{DateTime, Utc};
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::runtime::Runtime;
 
-
-pub struct ShiftManager<A, T, S> 
+pub struct ShiftManager<A, T, S>
 where
     A: AudioCapture,
     T: Transcriber,
@@ -38,13 +40,13 @@ where
     deidentifier: Deidentifier,
 }
 
-impl<A, T, S>ShiftManager<A, T, S> 
+impl<A, T, S> ShiftManager<A, T, S>
 where
     A: AudioCapture,
     T: Transcriber,
     S: Summarizer,
 {
-     pub fn new(
+    pub fn new(
         shift: Shift,
         patients: HashMap<PatientId, PatientRecord>,
         driver: EncounterDriver<A, T>,
@@ -67,7 +69,7 @@ where
             deidentifier: Deidentifier::new(),
         }
     }
-    
+
     pub fn register_patient(&mut self, chief_complaint: &str) -> PatientId {
         // create PatientRecord
         let patient_record = PatientRecord::new(chief_complaint);
@@ -78,25 +80,20 @@ where
         self.patients.insert(patient_id, patient_record);
         // insert a new empty PatientNote into the store.
         self.store.insert(patient_id, PatientNote::new(patient_id));
-        
+
         patient_id
-        
     }
 
     pub fn start_encounter(&mut self, mode: CaptureMode) -> AppResult<EncounterId> {
-        let patient_id = self.active_patient_id.ok_or_else(|| { AppError::Audio(
-                "No active patient. Please register and select one first."
-                    .to_string()
-            )
+        let patient_id = self.active_patient_id.ok_or_else(|| {
+            AppError::Audio("No active patient. Please register and select one first.".to_string())
         })?;
 
         self.driver.start_encounter(patient_id, mode)
-        
     }
 
     pub fn stop_encounter(&mut self) -> AppResult<EncounterId> {
         self.driver.stop_encounter()
-
     }
 
     pub fn stop_active_encounter_for_shutdown(&mut self) -> AppResult<Option<EncounterId>> {
@@ -107,11 +104,11 @@ where
         }
     }
 
-    pub fn set_active_patient(&mut self, new_id: PatientId ) -> AppResult<()> {
+    pub fn set_active_patient(&mut self, new_id: PatientId) -> AppResult<()> {
         // Validate the patient is actually registered in this shift
         if !self.patients.contains_key(&new_id) {
             return Err(AppError::PatientNotFound(new_id));
-        } 
+        }
 
         // No-op - if it's already the active patient.
         if self.active_patient_id == Some(new_id) {
@@ -129,26 +126,32 @@ where
         Ok(())
     }
 
-    pub fn add_lab(&mut self, result: ClinicalResult, clinical_occurred_at: DateTime<Utc>) -> AppResult<()> {
-        
+    pub fn add_lab(
+        &mut self,
+        result: ClinicalResult,
+        clinical_occurred_at: DateTime<Utc>,
+    ) -> AppResult<()> {
         let patient_id = self.check_active_patient_id()?;
 
         if result.patient_id != patient_id {
-            Err(AppError::LabResultError("Lab Result's patient Id does not match active patient id.".to_string()))?;
+            Err(AppError::LabResultError(
+                "Lab Result's patient Id does not match active patient id.".to_string(),
+            ))?;
         }
 
+        let lab_result_event = NoteEvent::result_received(patient_id, result, clinical_occurred_at);
 
-        let lab_result_event = NoteEvent::result_received(patient_id, result, clinical_occurred_at); 
-        
         self.bus.publish(lab_result_event, &self.store)?;
 
         Ok(())
-        
     }
 
     pub fn set_disposition(&mut self, disposition: Disposition) -> AppResult<()> {
         let patient_id = self.check_active_patient_id()?;
-        self.bus.publish(NoteEvent::disposition_set(patient_id, disposition), &self.store)?;
+        self.bus.publish(
+            NoteEvent::disposition_set(patient_id, disposition),
+            &self.store,
+        )?;
         Ok(())
     }
 
@@ -160,7 +163,7 @@ where
         let trigger_mdm_event = NoteEvent::trigger_mdm(patient_id);
 
         self.bus.publish(trigger_mdm_event, &self.store)?;
-        
+
         Ok(())
     }
 
@@ -171,7 +174,7 @@ where
         let review_ready = NoteEvent::review_ready(patient_id);
 
         self.bus.publish(review_ready, &self.store)?;
-        
+
         Ok(())
     }
 
@@ -196,9 +199,9 @@ where
             .patients
             .get(&patient_id)
             .ok_or(AppError::PatientNotFound(patient_id))?;
-        let note = self
-            .get_note(patient_id)
-            .ok_or_else(|| AppError::NoActivePatient("No note found for active patient.".to_string()))?;
+        let note = self.get_note(patient_id).ok_or_else(|| {
+            AppError::NoActivePatient("No note found for active patient.".to_string())
+        })?;
 
         let mut sections = note.note_sections.clone();
         if sections_are_empty(&sections) {
@@ -223,7 +226,8 @@ where
             .iter()
             .filter_map(|id| {
                 let record = self.patients.get(id)?;
-                let phase = self.store
+                let phase = self
+                    .store
                     .get(id)
                     .map(|n| n.phase.clone())
                     .unwrap_or(NotePhase::Registered);
@@ -256,24 +260,23 @@ where
         self.ensure_no_active_encounter("reload active patient")?;
         let patient_id = self.check_active_patient_id()?;
 
-        let (note, replayed_count) = if let Some((sequence_id, mut note)) =
-            self.repo.get_latest_snapshot(patient_id)?
-        {
-            let delta = self.repo.get_events_since(patient_id, sequence_id)?;
-            for stored in &delta {
-                apply_event(&mut note, &stored.event);
-            }
-            (note, delta.len())
-        } else {
-            let events = self.repo.get_events(patient_id)?;
-            if events.is_empty() {
-                (PatientNote::new(patient_id), 0)
+        let (note, replayed_count) =
+            if let Some((sequence_id, mut note)) = self.repo.get_latest_snapshot(patient_id)? {
+                let delta = self.repo.get_events_since(patient_id, sequence_id)?;
+                for stored in &delta {
+                    apply_event(&mut note, &stored.event);
+                }
+                (note, delta.len())
             } else {
-                let owned_events: Vec<NoteEvent> =
-                    events.iter().map(|stored| stored.event.clone()).collect();
-                (replay(patient_id, &owned_events), events.len())
-            }
-        };
+                let events = self.repo.get_events(patient_id)?;
+                if events.is_empty() {
+                    (PatientNote::new(patient_id), 0)
+                } else {
+                    let owned_events: Vec<NoteEvent> =
+                        events.iter().map(|stored| stored.event.clone()).collect();
+                    (replay(patient_id, &owned_events), events.len())
+                }
+            };
 
         self.store.insert(patient_id, note);
         Ok(replayed_count)
@@ -292,19 +295,19 @@ where
         }
 
         self.shift.end_shift();
-        
+
         Ok(())
     }
 
     fn check_active_patient_id(&self) -> AppResult<PatientId> {
         self.active_patient_id
             .ok_or_else(|| AppError::NoActivePatient("No active patient found.".to_string()))
-
-    } 
+    }
 
     fn active_note_phase(&self) -> AppResult<NotePhase> {
         let patient_id = self.check_active_patient_id()?;
-        Ok(self.store
+        Ok(self
+            .store
             .get(&patient_id)
             .map(|n| n.phase.clone())
             .unwrap_or(NotePhase::Registered))
@@ -331,10 +334,6 @@ where
 
         Ok(())
     }
-
-
-
-
 }
 
 fn sections_are_empty(sections: &NoteSections) -> bool {
@@ -374,24 +373,31 @@ fn results_text(note: &PatientNote) -> Option<String> {
 
 /// Phase 3 Step 0a test
 /// The test should construct a ShiftManager with MockSummarizer,
-/// use its runtime to block_on a summarize_encounter call, 
-/// and assert the mock HPI comes back. 
+/// use its runtime to block_on a summarize_encounter call,
+/// and assert the mock HPI comes back.
 #[cfg(test)]
 
 mod tests {
     use super::*;
-    
+
     #[test]
     fn construct_shift_manager_with_mock_summarizer() {
         let conn = crate::infrastructure::persistence::db::open_memory_db().unwrap();
-        let sql_lite_repo: Arc<dyn Repository> = Arc::new(crate::infrastructure::persistence::repository::SqliteRepository::new(conn));
+        let sql_lite_repo: Arc<dyn Repository> =
+            Arc::new(crate::infrastructure::persistence::repository::SqliteRepository::new(conn));
         let event_bus = Arc::new(EventBus::new(1024, Some(sql_lite_repo.clone())));
 
-        let store: crate::application::load::PatientNoteStore = crate::application::load::new_store();
+        let store: crate::application::load::PatientNoteStore =
+            crate::application::load::new_store();
         let audio = crate::infrastructure::audio::MockAudioCapture::new();
         let transcriber = crate::infrastructure::stt::MockTranscriber;
 
-        let encounter_driver = crate::application::encounter_driver::EncounterDriver::new(audio, transcriber, event_bus.clone(), store.clone());
+        let encounter_driver = crate::application::encounter_driver::EncounterDriver::new(
+            audio,
+            transcriber,
+            event_bus.clone(),
+            store.clone(),
+        );
         let summarizer = crate::infrastructure::ai::summarizer::MockSummarizer::new();
         let rt = Arc::new(tokio::runtime::Runtime::new().unwrap());
         let patients: HashMap<PatientId, PatientRecord> = HashMap::new();
@@ -407,24 +413,19 @@ mod tests {
             rt.clone(),
         );
 
-        let result = shift_manager.runtime.block_on(
-            shift_manager.summarizer.summarize_encounter(
+        let result = shift_manager
+            .runtime
+            .block_on(shift_manager.summarizer.summarize_encounter(
                 "test transcript",
-                &NoteSections::default(), 
-                1
-            )
-        );
+                &NoteSections::default(),
+                1,
+            ));
 
         let sections = result.unwrap();
         assert_eq!(
             sections.hpi.as_deref(),
             Some("[mock HPI from encounter transcript]")
         );
-        assert_eq!(
-            sections.exam.as_deref(),
-            Some("[mock exam findings]")
-        );
-
+        assert_eq!(sections.exam.as_deref(), Some("[mock exam findings]"));
     }
-
 }

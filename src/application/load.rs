@@ -24,7 +24,10 @@ pub fn new_store() -> PatientNoteStore {
 /// Load a PatientNote from the repository. Uses the snapshot fast-path
 /// when available, falls back to full event replay when not. Returns
 /// None if no events exist for this patient (fresh/unknown patient).
-pub fn load_patient_note(repo: &dyn Repository, patient_id: PatientId) -> AppResult<Option<PatientNote>> {
+pub fn load_patient_note(
+    repo: &dyn Repository,
+    patient_id: PatientId,
+) -> AppResult<Option<PatientNote>> {
     // Fast path: snapshot exists and checksum validates.
     if let Some((sequence_id, mut note)) = repo.get_latest_snapshot(patient_id)? {
         let delta = repo.get_events_since(patient_id, sequence_id)?;

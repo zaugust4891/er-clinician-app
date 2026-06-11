@@ -1,6 +1,6 @@
-use crate::infrastructure::ai::claude::ClaudeSummarizer;
-use crate::error::AppResult;
 use crate::domain::NoteSections;
+use crate::error::AppResult;
+use crate::infrastructure::ai::claude::ClaudeSummarizer;
 
 /// LLM-based note summarization interface.
 ///
@@ -33,7 +33,12 @@ pub enum AppSummarizer {
 }
 
 impl Summarizer for AppSummarizer {
-    async fn summarize_encounter(&self, t: &str, p: &NoteSections, n: u32) -> AppResult<NoteSections> {
+    async fn summarize_encounter(
+        &self,
+        t: &str,
+        p: &NoteSections,
+        n: u32,
+    ) -> AppResult<NoteSections> {
         match self {
             AppSummarizer::Claude(c) => c.summarize_encounter(t, p, n).await,
             AppSummarizer::Mock(m) => m.summarize_encounter(t, p, n).await,

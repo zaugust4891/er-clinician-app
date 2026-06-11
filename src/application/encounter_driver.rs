@@ -1,14 +1,14 @@
+use crate::application::EventBus;
+use crate::application::load::PatientNoteStore;
+use crate::domain::NoteEvent;
+use crate::domain::{CaptureMode, EncounterId, PatientId};
 use crate::error::{AppError, AppResult};
 use crate::infrastructure::audio::AudioCapture;
 use crate::infrastructure::stt::Transcriber;
-use crate::application::EventBus;
-use crate::domain::NoteEvent;
-use crate::domain::{PatientId, EncounterId, CaptureMode};
-use crate::application::load::PatientNoteStore;
 
-use std::sync::Arc;
 use chrono::Utc;
-use uuid::{Uuid};
+use std::sync::Arc;
+use uuid::Uuid;
 
 pub struct ActiveEncounter {
     patient_id: PatientId,
@@ -22,8 +22,7 @@ pub struct EncounterDriver<A: AudioCapture, T: Transcriber> {
     active_encounter: Option<ActiveEncounter>,
 }
 
-impl<A: AudioCapture, T: Transcriber>EncounterDriver<A, T> {
-
+impl<A: AudioCapture, T: Transcriber> EncounterDriver<A, T> {
     pub fn new(audio: A, transcriber: T, bus: Arc<EventBus>, store: PatientNoteStore) -> Self {
         Self {
             audio,
@@ -35,65 +34,87 @@ impl<A: AudioCapture, T: Transcriber>EncounterDriver<A, T> {
     }
     /// this method's purpose is to begin recording audio for a patient and publish the 'AudioStarted' event
     /// into the event-sourced pipeline.
-    /// This will eventually be called by ShiftManager::set_active_patient() 
+    /// This will eventually be called by ShiftManager::set_active_patient()
     /// (set_active_patient will be called by the quick-switch functionality which will be wired up to the UI's one-tap button on the 'active' screen.
-    pub fn start_encounter(&mut self, patient_id: PatientId, mode: CaptureMode ) -> AppResult<EncounterId> {
+    pub fn start_encounter(
+        &mut self,
+        patient_id: PatientId,
+        mode: CaptureMode,
+    ) -> AppResult<EncounterId> {
         let encounter_id = Uuid::now_v7();
         // if encounter already active started throw error
         if self.active_encounter.is_some() {
-            return Err(AppError::Audio("encounter already in progress.".to_string()));
+            return Err(AppError::Audio(
+                "encounter already in progress.".to_string(),
+            ));
         }
 
         self.audio.start(patient_id, encounter_id, mode.clone())?;
 
-        self.bus.publish(NoteEvent::audio_started(patient_id, encounter_id, mode), &self.store)?;
+        self.bus.publish(
+            NoteEvent::audio_started(patient_id, encounter_id, mode),
+            &self.store,
+        )?;
 
-        self.active_encounter = Some(ActiveEncounter { patient_id, encounter_id });
+        self.active_encounter = Some(ActiveEncounter {
+            patient_id,
+            encounter_id,
+        });
 
         Ok(encounter_id)
     }
 
     ///TO DO: Implement stop_encounter()
-    /// Purpose: 
-    /// Stop recording, 
-    /// Run speech-to-text on the captured audio, 
+    /// Purpose:
+    /// Stop recording,
+    /// Run speech-to-text on the captured audio,
     /// Publish both 'AudioStopped' and TranscriptReady events
-    /// 
-    /// Note: 
+    ///
+    /// Note:
     /// AudioStopped should publish BEFORE transcription
     /// Transcription takes time - Whisper will take seconds,
     /// The state machine should transition to 'Idle' the moment the clinician stops talking, not after transcription finishes
-    /// (This is triggered on the UI by a 'stop-tap' or a 'direct switch', meaning a voice activated command switch or tapping a different patients button. 
-    ///   e.g, the doctor switches through  voice) 
+    /// (This is triggered on the UI by a 'stop-tap' or a 'direct switch', meaning a voice activated command switch or tapping a different patients button.
+    ///   e.g, the doctor switches through  voice)
     pub fn stop_encounter(&mut self) -> AppResult<EncounterId> {
-        let active = self.active_encounter.take().ok_or_else(|| {
-            AppError::Audio("no encounter in progress".to_string())
-        })?;
-        
+        let active = self
+            .active_encounter
+            .take()
+            .ok_or_else(|| AppError::Audio("no encounter in progress".to_string()))?;
+
         let pcm_bytes = self.audio.stop()?;
-        
-        self.bus.publish(NoteEvent::audio_stopped(active.patient_id, active.encounter_id), &self.store)?;
+
+        self.bus.publish(
+            NoteEvent::audio_stopped(active.patient_id, active.encounter_id),
+            &self.store,
+        )?;
 
         let transcript_result = self.transcriber.transcribe(&pcm_bytes)?;
 
-        self.bus.publish(NoteEvent::transcript_ready(
-            active.patient_id,
-            active.encounter_id, 
-            transcript_result.text,
-            Utc::now(),
-        ), &self.store)?;
+        self.bus.publish(
+            NoteEvent::transcript_ready(
+                active.patient_id,
+                active.encounter_id,
+                transcript_result.text,
+                Utc::now(),
+            ),
+            &self.store,
+        )?;
 
         Ok(active.encounter_id)
     }
 
-
     /// This will be used for Active patient context + 'switch_patient`
     /// When the clinician taps the Apple Watch/Iphone to switch patients
     /// the system needs to:
-    /// - stop the current encounter, 
+    /// - stop the current encounter,
     /// - flush its audio/transcript, and start a new encounter for the new patient
     ///  -- all atomically from the clinician's perspective.
-    pub fn switch_patient(&mut self, new_patient_id: PatientId, mode: CaptureMode) -> AppResult<EncounterId> {
+    pub fn switch_patient(
+        &mut self,
+        new_patient_id: PatientId,
+        mode: CaptureMode,
+    ) -> AppResult<EncounterId> {
         if self.active_encounter.is_some() {
             self.stop_encounter()?;
         }
@@ -106,30 +127,18 @@ impl<A: AudioCapture, T: Transcriber>EncounterDriver<A, T> {
         self.active_encounter.is_some()
     }
 
-pub fn active_patient_id(&self) -> Option<PatientId> {
+    pub fn active_patient_id(&self) -> Option<PatientId> {
         self.active_encounter.as_ref().map(|e| e.patient_id)
     }
-
-
-
-    
-
-
-
-
-
-
-
-
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::infrastructure::audio::MockAudioCapture;
+    use crate::application::load;
     use crate::domain::NoteEvent;
     use crate::domain::NotePhase;
-    use crate::application::load;
+    use crate::infrastructure::audio::MockAudioCapture;
     use crate::infrastructure::stt::MockTranscriber;
 
     fn test_driver() -> (
@@ -140,12 +149,8 @@ mod tests {
         let bus = Arc::new(EventBus::new(16, None));
         let receiver = bus.subscribe();
         let store = load::new_store();
-        let driver = EncounterDriver::new(
-            MockAudioCapture::new(),
-            MockTranscriber,
-            bus,
-            store.clone(),
-        );
+        let driver =
+            EncounterDriver::new(MockAudioCapture::new(), MockTranscriber, bus, store.clone());
 
         (driver, receiver, store)
     }
@@ -308,7 +313,3 @@ mod tests {
         assert_eq!(note_b.encounter_count, 1);
     }
 }
-
-
-
-

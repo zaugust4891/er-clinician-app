@@ -1,7 +1,9 @@
 pub mod audit;
+pub mod diagnosis;
 pub mod disposition;
 pub mod encounter;
 pub mod events;
+pub mod medication;
 pub mod note;
 pub mod patient;
 pub mod replay;
@@ -14,6 +16,7 @@ pub use audit::{AuditAction, AuditEntry};
 pub use disposition::Disposition;
 pub use encounter::{CaptureMode, Encounter, EncounterId};
 pub use events::NoteEvent;
+pub use medication::{Medication, MedicationKind};
 pub use note::{NotePhase, NoteSections, PatientNote};
 pub use patient::{PatientId, PatientRecord};
 pub use result::{ClinicalResult, LabResult, ResultSource, ResultType};

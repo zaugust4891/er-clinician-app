@@ -1,8 +1,8 @@
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
-use crate::error::{AppError, AppResult};
 use crate::domain::NoteSections;
+use crate::error::{AppError, AppResult};
 use crate::infrastructure::ai::summarizer::Summarizer;
 
 // Request and response structs for Claude API.
@@ -31,7 +31,7 @@ struct ContentBlock {
 }
 
 /// ClaudeSummarizer is the API client for note summarization.
-/// 
+///
 ///   Why these fields:
 /// - client: Client — reuse a single reqwest client across calls (connection
 /// pooling)
@@ -48,10 +48,8 @@ pub struct ClaudeSummarizer {
 impl ClaudeSummarizer {
     pub fn new() -> AppResult<Self> {
         let api_key = std::env::var("ANTHROPIC_KEY")
-            .map_err(|_| AppError::Summarization(
-                "ANTHROPIC_KEY not set in env file.".into(),
-            ))?;
-    
+            .map_err(|_| AppError::Summarization("ANTHROPIC_KEY not set in env file.".into()))?;
+
         Ok(Self {
             client: Client::new(),
             api_key,
@@ -69,10 +67,11 @@ impl ClaudeSummarizer {
             messages: vec![Message {
                 role: "user".into(),
                 content: user_message.into(),
-            }]
+            }],
         };
 
-        let response = self.client
+        let response = self
+            .client
             .post("https://api.anthropic.com/v1/messages")
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01")
@@ -85,13 +84,14 @@ impl ClaudeSummarizer {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            return Err(AppError::Summarization(
-                format!("Claude API {status}: {body}")
-            ));
+            return Err(AppError::Summarization(format!(
+                "Claude API {status}: {body}"
+            )));
         }
 
         let body: MessagesResponse = response.json().await.map_err(AppError::Api)?;
-        let text = body.content
+        let text = body
+            .content
             .first()
             .and_then(|block| block.text.clone())
             .ok_or_else(|| AppError::Summarization("empty response from Claude".into()))?;
@@ -140,8 +140,7 @@ Rules:
 - If this is encounter 2+, MERGE new findings into prior sections — don't replace, augment
 - Omit sections with no data (return null for that field)"#;
 
-        let prior_json = serde_json::to_string(prior_sections)
-            .unwrap_or_else(|_| "{}".into());
+        let prior_json = serde_json::to_string(prior_sections).unwrap_or_else(|_| "{}".into());
 
         let user_message = format!(
             "Encounter #{encounter_number} transcript: transcript:\n\
@@ -156,8 +155,11 @@ Rules:
         let response_text = self.call_claude(&system, &user_message).await?;
 
         // Parse the JSON response into NoteSections
-        serde_json::from_str::<NoteSections>(&response_text)
-            .map_err(|e| AppError::Summarization(format!("Failed to parse Claude response as NoteSections: {e}\nRaw: {response_text}")))
+        serde_json::from_str::<NoteSections>(&response_text).map_err(|e| {
+            AppError::Summarization(format!(
+                "Failed to parse Claude response as NoteSections: {e}\nRaw: {response_text}"
+            ))
+        })
     }
 
     async fn generate_mdm(
@@ -182,8 +184,7 @@ Rules:
 
         Output ONLY the MDM text - no JSON wrapper, no section headers, just the prose."#;
 
-        let sections_json = serde_json::to_string(sections)
-            .unwrap_or_else(|_| "{}".into());
+        let sections_json = serde_json::to_string(sections).unwrap_or_else(|_| "{}".into());
 
         let user_message = format!(
             "Note sections so far:\n{sections_json}\n\n\
@@ -197,7 +198,7 @@ Rules:
 }
 
 /*
-Why the 2021 E/M guidelines reference? 
+Why the 2021 E/M guidelines reference?
 MDM complexity level (straightforward/ low / moderate / high) directly determines billing code (99281-99285).
 Claude knowing this framework produces MDM that maps to billing levels
 correctly. This is a major pain point for ED docs — MDM that doesn't support

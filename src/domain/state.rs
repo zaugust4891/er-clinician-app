@@ -1,10 +1,10 @@
 use chrono::Utc;
 
-use crate::error::{AppError, AppResult};
+use crate::domain::PatientNote;
 use crate::domain::audit::{AuditAction, AuditEntry};
 use crate::domain::note::NotePhase;
 use crate::domain::result::ClinicalResult;
-use crate::domain::PatientNote;
+use crate::error::{AppError, AppResult};
 // ---------------------------------------------------------------------------
 // NoteState trait — the core of the state pattern
 // ---------------------------------------------------------------------------

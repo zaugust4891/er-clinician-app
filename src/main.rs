@@ -1,30 +1,28 @@
-use er_note_app::infrastructure::audio::MockAudioCapture;
-use er_note_app::infrastructure::ai::claude::ClaudeSummarizer;
-use er_note_app::interface::cli::{Commands, handle_command};
-use er_note_app::infrastructure::persistence::db;
-use er_note_app::application::encounter_driver::EncounterDriver;
-use er_note_app::error::{AppError, AppResult};
-use er_note_app::application::EventBus;
-use er_note_app::domain::{PatientId, PatientNote, PatientRecord, Shift};
-use er_note_app::infrastructure::persistence::repository::{Repository, SqliteRepository};
-use er_note_app::application::shift_manager::ShiftManager;
-use er_note_app::application::load::{self, PatientNoteStore, load_patient_note};
-use er_note_app::infrastructure::stt::MockTranscriber;
-use er_note_app::application::shift_snapshot::ShiftSnapshot;
 use dotenvy::dotenv;
+use er_note_app::application::EventBus;
+use er_note_app::application::encounter_driver::EncounterDriver;
+use er_note_app::application::load::{self, PatientNoteStore, load_patient_note};
+use er_note_app::application::shift_manager::ShiftManager;
+use er_note_app::application::shift_snapshot::ShiftSnapshot;
+use er_note_app::domain::{PatientId, PatientNote, PatientRecord, Shift};
+use er_note_app::error::{AppError, AppResult};
+use er_note_app::infrastructure::ai::claude::ClaudeSummarizer;
 use er_note_app::infrastructure::ai::summarizer::{AppSummarizer, MockSummarizer};
+use er_note_app::infrastructure::audio::MockAudioCapture;
+use er_note_app::infrastructure::persistence::db;
+use er_note_app::infrastructure::persistence::repository::{Repository, SqliteRepository};
+use er_note_app::infrastructure::stt::MockTranscriber;
+use er_note_app::interface::cli::{Commands, handle_command};
+use serde::Serialize;
+use serde::de::DeserializeOwned;
+use std::collections::HashMap;
 use std::env;
 use std::fs::File;
 use std::io::{self, BufReader};
 use std::path::Path;
 use std::sync::Arc;
-use serde::Serialize;
-use serde::de::DeserializeOwned;
-use std::collections::HashMap;
 
-
-
-// Helper with context to handle Ok or error for steps that return AppResult 
+// Helper with context to handle Ok or error for steps that return AppResult
 fn bail<T>(context: &str, r: AppResult<T>) -> T {
     match r {
         Ok(v) => v,
@@ -54,17 +52,19 @@ fn count_tables(conn: &rusqlite::Connection) -> usize {
         .unwrap_or(0)
 }
 
-
 fn main() -> AppResult<()> {
     tracing_subscriber::fmt::init();
 
     tracing::info!("ED Note App starting");
-    
+
     dotenv().ok();
     let threaded_rt = Arc::new(tokio::runtime::Runtime::new()?);
-    
+
     let summarizer = if env::var("ANTHROPIC_KEY").is_ok() {
-        AppSummarizer::Claude(bail("Failed to create ClaudeSummarizer", ClaudeSummarizer::new()))
+        AppSummarizer::Claude(bail(
+            "Failed to create ClaudeSummarizer",
+            ClaudeSummarizer::new(),
+        ))
     } else {
         AppSummarizer::Mock(MockSummarizer::new())
     };
@@ -78,27 +78,36 @@ fn main() -> AppResult<()> {
 
     let event_bus = Arc::new(EventBus::new(1024, Some(sql_lite_repo.clone())));
     let store: PatientNoteStore = load::new_store();
-    
+
     let audio = MockAudioCapture::new();
     let transcriber = MockTranscriber;
 
-    let encounter_driver = EncounterDriver::new(audio, transcriber, event_bus.clone(), store.clone());
+    let encounter_driver =
+        EncounterDriver::new(audio, transcriber, event_bus.clone(), store.clone());
 
-    let (snapshot, shift_was_resumed): (ShiftSnapshot, bool) = match deserialize_shift_json_file("./shift.json") {
-        Ok(s) => (s, true),
-        Err(AppError::Io(e)) if e.kind() == io::ErrorKind::NotFound => {
-            tracing::info!("no prior shift, starting fresh");
-            (ShiftSnapshot { shift: Shift::new(), patients: Vec::new() }, false)
-        }
-        Err(e) => bail("loading shift.json", Err(e)),
-    };
+    let (snapshot, shift_was_resumed): (ShiftSnapshot, bool) =
+        match deserialize_shift_json_file("./shift.json") {
+            Ok(s) => (s, true),
+            Err(AppError::Io(e)) if e.kind() == io::ErrorKind::NotFound => {
+                tracing::info!("no prior shift, starting fresh");
+                (
+                    ShiftSnapshot {
+                        shift: Shift::new(),
+                        patients: Vec::new(),
+                    },
+                    false,
+                )
+            }
+            Err(e) => bail("loading shift.json", Err(e)),
+        };
     let ShiftSnapshot { shift, patients } = snapshot;
-    let patients: HashMap<PatientId, PatientRecord> = patients.into_iter().map(|p| (p.id, p)).collect();
+    let patients: HashMap<PatientId, PatientRecord> =
+        patients.into_iter().map(|p| (p.id, p)).collect();
 
     let mut notes_reloaded_count = 0;
     for (id, _) in &patients {
         match load_patient_note(&*sql_lite_repo, *id) {
-            Ok(Some(note)) => { 
+            Ok(Some(note)) => {
                 store.insert(*id, note);
                 notes_reloaded_count += 1;
             }
@@ -125,16 +134,27 @@ fn main() -> AppResult<()> {
     );
     let patient_record_count = manager.list_patients().len();
 
-// Welcome banner 
+    // Welcome banner
     println!("======== WELCOME to Gegonos CLI ========");
     println!();
-    println!("The purpose of this CLI is for developers to test current and new backend Rust features and their functionality.");
-    println!("To ensure smooth, efficient and robust development ALL NEW FEATURES and UPDATED FUNCTIONALITY should be tested using their corresponding command BEFORE being wired to the front end to ensure they work as intended.");
+    println!(
+        "The purpose of this CLI is for developers to test current and new backend Rust features and their functionality."
+    );
+    println!(
+        "To ensure smooth, efficient and robust development ALL NEW FEATURES and UPDATED FUNCTIONALITY should be tested using their corresponding command BEFORE being wired to the front end to ensure they work as intended."
+    );
     println!();
     println!("Version: {}", env!("CARGO_PKG_VERSION"));
     println!("Database: {}", sql_lite_db_path);
     println!("Shift file: ./shift.json");
-    println!("Status: {}", if shift_was_resumed { "Resumed shift" } else { "Fresh shift" });
+    println!(
+        "Status: {}",
+        if shift_was_resumed {
+            "Resumed shift"
+        } else {
+            "Fresh shift"
+        }
+    );
     println!("Patient records loaded: {}", patient_record_count);
     println!("Notes reloaded from DB: {}", notes_reloaded_count);
     println!();
@@ -160,17 +180,14 @@ fn main() -> AppResult<()> {
                     continue;
                 }
 
-                let args: Vec<String> = input
-                    .split_whitespace()
-                    .map(|s| s.to_string())
-                    .collect();
+                let args: Vec<String> = input.split_whitespace().map(|s| s.to_string()).collect();
 
                 match Commands::new(&args) {
                     Ok(command_wrapper) => {
                         match handle_command(&mut manager, command_wrapper) {
-                            Ok(true) => {} // continue
+                            Ok(true) => {}      // continue
                             Ok(false) => break, // Quit command
-                            Err(e) => eprintln!("Error: {}", e),     
+                            Err(e) => eprintln!("Error: {}", e),
                         }
                     }
                     Err(e) => {
@@ -185,7 +202,6 @@ fn main() -> AppResult<()> {
                 continue;
             }
         }
-        
     }
 
     if let Err(e) = manager.stop_active_encounter_for_shutdown() {
@@ -199,5 +215,4 @@ fn main() -> AppResult<()> {
     drop(manager);
 
     Ok(())
-
 }

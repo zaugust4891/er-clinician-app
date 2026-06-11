@@ -1,37 +1,48 @@
-
 use std::io::Write;
 
 use uuid::Uuid;
 
-use crate::infrastructure::audio::AudioCapture;
 use crate::application::conversions::disposition::{format_disposition_for_cli, parse_disposition};
-use crate::error::AppError::NoActivePatient;
-use crate::domain::{CaptureMode, ClinicalResult, Disposition, LabResult};
-use crate::error::{AppResult, AppError};
+use crate::application::conversions::labs::parse_string_to_f64;
 use crate::application::shift_manager::ShiftManager;
-use crate::infrastructure::stt::Transcriber;
+use crate::domain::{CaptureMode, ClinicalResult, Disposition, LabResult};
+use crate::error::AppError::NoActivePatient;
+use crate::error::{AppError, AppResult};
 use crate::infrastructure::ai::summarizer::Summarizer;
-use crate::application::conversions::labs::{parse_string_to_f64};
+use crate::infrastructure::audio::AudioCapture;
+use crate::infrastructure::stt::Transcriber;
 
 use chrono::Utc;
 pub enum Command {
-    New { chief_complaint: String },        // register a new patient on the shift
-    List,                                    // list patients on the shift
-    Switch { index: usize },                 // set active patient by list index
-    Start { mode: CaptureMode },             // start_encounter on active patient
-    Stop,                                    // stop_encounter
-    Lab { name: String, value: String, unit: String },
-    Dispo { disposition: Disposition },
+    New {
+        chief_complaint: String,
+    }, // register a new patient on the shift
+    List, // list patients on the shift
+    Switch {
+        index: usize,
+    }, // set active patient by list index
+    Start {
+        mode: CaptureMode,
+    }, // start_encounter on active patient
+    Stop, // stop_encounter
+    Lab {
+        name: String,
+        value: String,
+        unit: String,
+    },
+    Dispo {
+        disposition: Disposition,
+    },
     Mdm,
     Review,
     Sign,
-    Note,                                    // print formatted note
+    Note, // print formatted note
     Export,
-    Reload,                                  // rehydrate from repository
+    Reload, // rehydrate from repository
     Status,
     Help,
     Quit,
-    Unknown(String),                         // raw line for error reporting
+    Unknown(String), // raw line for error reporting
 }
 
 pub struct Commands {
@@ -41,7 +52,8 @@ pub struct Commands {
 impl Commands {
     pub fn new(args: &[String]) -> AppResult<Commands> {
         if args.is_empty() {
-            return Err(AppError::CliError("Not enough arguments. Please enter one of the following arguments".to_string()
+            return Err(AppError::CliError(
+                "Not enough arguments. Please enter one of the following arguments".to_string(),
             ));
         }
 
@@ -50,32 +62,29 @@ impl Commands {
             "new" => {
                 if args.len() < 2 {
                     return Err(AppError::CliError(
-                        "Usage: new <chief_complaint>".to_string()
+                        "Usage: new <chief_complaint>".to_string(),
                     ));
                 }
                 Command::New {
                     chief_complaint: args[1..].join(" "), // everything after "new" is the complaint
                 }
-
             }
 
             "list" => Command::List,
 
             "switch" => {
                 if args.len() < 2 {
-                    return Err(AppError::CliError("Usage: switch <index>".to_string()
-                    ));
+                    return Err(AppError::CliError("Usage: switch <index>".to_string()));
                 }
-                let index: usize = args[1].parse().map_err(|_| {
-                    AppError::CliError("Index must be a number".to_string())
-                })?;
+                let index: usize = args[1]
+                    .parse()
+                    .map_err(|_| AppError::CliError("Index must be a number".to_string()))?;
                 Command::Switch { index }
             }
 
             "start" => {
                 if args.len() < 2 {
-                    return Err(AppError::CliError("Usage: start <mode>".to_string()
-                    ));
+                    return Err(AppError::CliError("Usage: start <mode>".to_string()));
                 }
                 let mode = match args[1].to_lowercase().as_str() {
                     "ambient" => CaptureMode::Ambient,
@@ -91,7 +100,8 @@ impl Commands {
 
             "lab" => {
                 if args.len() < 4 {
-                    return Err(AppError::CliError("Usage: lab <name> <value> <unit>".to_string()
+                    return Err(AppError::CliError(
+                        "Usage: lab <name> <value> <unit>".to_string(),
                     ));
                 }
                 Command::Lab {
@@ -116,11 +126,9 @@ impl Commands {
             "quit" | "exit" => Command::Quit,
 
             _ => Command::Unknown(args.join(" ")),
-
         };
 
         Ok(Commands { commands: query })
-
     }
 
     pub fn print_prompt() {
@@ -167,8 +175,7 @@ where
             let patient_id = manager.register_patient(&chief_complaint);
             println!(
                 "Registered patient {} with chief complaint '{}'",
-                patient_id,
-                chief_complaint
+                patient_id, chief_complaint
             );
             println!("Tip: type 'list' to see patient indices, then 'switch <index>'.");
             Ok(true)
@@ -242,32 +249,29 @@ where
         Command::Lab { name, value, unit } => {
             let patient_id = manager
                 .active_patient_id()
-                .ok_or(NoActivePatient(
-                    "No active patient found".into(),
-                ))?;
+                .ok_or(NoActivePatient("No active patient found".into()))?;
 
             let value: f64 = parse_string_to_f64(value)?;
-            
+
             let result = ClinicalResult {
                 id: Uuid::now_v7(),
                 patient_id,
                 source: crate::domain::ResultSource::Manual,
                 timestamp: Utc::now(),
-                result_type: crate::domain::ResultType::Lab(LabResult{
+                result_type: crate::domain::ResultType::Lab(LabResult {
                     fhir_id: None,
                     loinc_code: None,
                     display_name: name.clone(),
                     value,
                     unit: unit.clone(),
                     reference_range: None,
-                    is_abnormal: false
+                    is_abnormal: false,
                 }),
             };
 
-
             manager.add_lab(result, Utc::now())?;
             println!("Added lab: {name} = {value} {unit}");
-            
+
             Ok(true)
         }
 
@@ -300,7 +304,7 @@ where
             let patient_id = manager
                 .active_patient_id()
                 .ok_or(NoActivePatient("No active patient found".into()))?;
-            
+
             let note = manager
                 .get_note(patient_id)
                 .ok_or(AppError::NoteError("No note found".into()))?;
@@ -367,14 +371,14 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
 
-    use crate::infrastructure::audio::MockAudioCapture;
-    use crate::application::encounter_driver::EncounterDriver;
     use crate::application::EventBus;
-    use crate::domain::{PatientId, PatientRecord, Shift};
-    use crate::infrastructure::persistence::repository::{Repository, SqliteRepository};
+    use crate::application::encounter_driver::EncounterDriver;
     use crate::application::load;
-    use crate::infrastructure::stt::MockTranscriber;
+    use crate::domain::{PatientId, PatientRecord, Shift};
     use crate::infrastructure::ai::summarizer::MockSummarizer;
+    use crate::infrastructure::audio::MockAudioCapture;
+    use crate::infrastructure::persistence::repository::{Repository, SqliteRepository};
+    use crate::infrastructure::stt::MockTranscriber;
 
     fn test_manager() -> ShiftManager<MockAudioCapture, MockTranscriber, MockSummarizer> {
         let conn = crate::infrastructure::persistence::db::open_memory_db().unwrap();

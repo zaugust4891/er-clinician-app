@@ -1,17 +1,16 @@
-use er_note_app::infrastructure::ai::claude::ClaudeSummarizer;
-use er_note_app::interface::export::format_note;
 use er_note_app::domain::{Disposition, NoteSections, PatientRecord};
+use er_note_app::infrastructure::ai::claude::ClaudeSummarizer;
 use er_note_app::infrastructure::ai::summarizer::Summarizer;
+use er_note_app::interface::export::format_note;
 
 #[tokio::main]
 async fn main() {
     dotenvy::dotenv().ok(); // load .env before reading any env vars
     tracing_subscriber::fmt::init();
 
-    let summarizer = ClaudeSummarizer::new().expect(
-        "ANTHROPIC_KEY not found — add it to .env or export it in your shell"
-    );
-    
+    let summarizer = ClaudeSummarizer::new()
+        .expect("ANTHROPIC_KEY not found — add it to .env or export it in your shell");
+
     // --- Transcript 1: Classic chest pain ---
     let transcript_1 = r#"
         So tell me what's going on today.
@@ -30,7 +29,10 @@ async fn main() {
     let prior = NoteSections::default();
 
     tracing::info!("=== ENCOUNTER 1: Chest Pain ===");
-    match summarizer.summarize_encounter(transcript_1, &prior, 1).await {
+    match summarizer
+        .summarize_encounter(transcript_1, &prior, 1)
+        .await
+    {
         Ok(sections) => {
             tracing::info!("HPI: {:?}", sections.hpi);
             tracing::info!("ROS: {:?}", sections.ros);
@@ -46,7 +48,10 @@ async fn main() {
             "#;
 
             tracing::info!("\n=== ENCOUNTER 2: Re-evaluation ===");
-            match summarizer.summarize_encounter(transcript_2, &sections, 2).await {
+            match summarizer
+                .summarize_encounter(transcript_2, &sections, 2)
+                .await
+            {
                 Ok(updated) => {
                     tracing::info!("Updated HPI: {:?}", updated.hpi);
                     tracing::info!("Updated Exam: {:?}", updated.exam);
@@ -56,7 +61,10 @@ async fn main() {
                     let results = "Troponin I: <0.01 (normal). \
                                     EKG: NSR, no ST changes. \
                                     CTA Chest: No PE, no aortic pathology.";
-                    match summarizer.generate_mdm(&updated, results, "Discharge").await {
+                    match summarizer
+                        .generate_mdm(&updated, results, "Discharge")
+                        .await
+                    {
                         Ok(mdm) => {
                             tracing::info!("MDM generated successfully");
 
@@ -83,7 +91,6 @@ async fn main() {
                         }
                         Err(e) => tracing::error!("MDM failed: {e}"),
                     }
-                    
                 }
 
                 Err(e) => tracing::error!("Encounter 2 failed: {e}"),

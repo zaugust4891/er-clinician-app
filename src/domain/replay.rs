@@ -40,7 +40,6 @@ pub fn apply_event(note: &mut PatientNote, event: &NoteEvent) {
                 transcript: None,
                 encounter_number: note.encounter_count,
             });
-
         }
 
         NoteEvent::AudioStopped {
@@ -50,7 +49,7 @@ pub fn apply_event(note: &mut PatientNote, event: &NoteEvent) {
         } => {
             note.handle_audio_stopped();
             if let Some(enc) = note.encounters.iter_mut().find(|e| e.id == *encounter_id) {
-                    enc.ended_at = Some(*clinical_occurred_at);
+                enc.ended_at = Some(*clinical_occurred_at);
             }
             // If no matching encounter: silently ignore. Replay tolerates
             // events referencing missing encounters (should never happen
@@ -58,9 +57,7 @@ pub fn apply_event(note: &mut PatientNote, event: &NoteEvent) {
         }
 
         NoteEvent::TranscriptReady {
-            encounter_id,
-            text,
-            ..
+            encounter_id, text, ..
         } => {
             if let Some(enc) = note.encounters.iter_mut().find(|e| e.id == *encounter_id) {
                 enc.transcript = Some(text.clone());
@@ -76,7 +73,8 @@ pub fn apply_event(note: &mut PatientNote, event: &NoteEvent) {
             note.record_section_versions(sections, source_encounter_ids);
             note.version += 1;
             note.updated_at = Utc::now();
-            note.audit_log.push(AuditEntry::new(AuditAction::NoteSectionGenerated, ""));
+            note.audit_log
+                .push(AuditEntry::new(AuditAction::NoteSectionGenerated, ""));
         }
 
         NoteEvent::MdmGenerated {
@@ -86,23 +84,23 @@ pub fn apply_event(note: &mut PatientNote, event: &NoteEvent) {
         } => {
             note.note_sections.mdm = Some(mdm_text.clone());
             note.section_history.push(NoteSectionVersion {
-                section: "mdm".into(), content: mdm_text.clone(),
+                section: "mdm".into(),
+                content: mdm_text.clone(),
                 version: note.version + 1,
                 generated_at: Utc::now(),
                 source_encounter_ids: source_encounter_ids.clone(),
             });
             note.version += 1;
             note.updated_at = Utc::now();
-            note.audit_log.push(AuditEntry::new(AuditAction::MdmGenerated, ""));
+            note.audit_log
+                .push(AuditEntry::new(AuditAction::MdmGenerated, ""));
         }
 
-        NoteEvent::DispositionSet {
-            disposition,
-            ..
-        } => {
+        NoteEvent::DispositionSet { disposition, .. } => {
             // Mirror ingest_result's immutability guard:
             //    - Signed notes reject mutation.
-            let can_mutate = note.state
+            let can_mutate = note
+                .state
                 .as_ref()
                 .map(|s| s.can_ingest_results())
                 .unwrap_or(false);
@@ -110,22 +108,19 @@ pub fn apply_event(note: &mut PatientNote, event: &NoteEvent) {
                 note.disposition = Some(disposition.clone());
                 note.version += 1;
                 note.updated_at = Utc::now();
-                note.audit_log.push(AuditEntry::new(AuditAction::DispositionSet, ""));
+                note.audit_log
+                    .push(AuditEntry::new(AuditAction::DispositionSet, ""));
             }
-
         }
 
-        NoteEvent::ResultReceived {
-            result,
-            ..
-        } => {
+        NoteEvent::ResultReceived { result, .. } => {
             let _ = ingest_result(note, result.clone());
         }
 
         NoteEvent::TriggerMDM { .. } => note.handle_trigger_mdm(),
         NoteEvent::ReviewReady { .. } => note.handle_review_ready(),
         NoteEvent::Sign { .. } => note.handle_sign(),
-     }
+    }
 }
 
 /// Fold an EncounterSummarized delta into the note's sections.
@@ -153,9 +148,9 @@ fn merge_sections(dest: &mut NoteSections, source: &NoteSections) {
 mod tests {
     use uuid::Uuid;
 
+    use crate::domain::CaptureMode;
     use crate::domain::note::NotePhase;
     use crate::domain::result::ClinicalResult;
-    use crate::domain::CaptureMode;
     use crate::domain::{LabResult, ResultSource, ResultType};
 
     use super::*;
@@ -182,11 +177,7 @@ mod tests {
     fn apply_event_audio_started_creates_encounter() {
         let mut note = PatientNote::new(Uuid::now_v7());
         let encounter_id = Uuid::now_v7();
-        let event = NoteEvent::audio_started(
-            note.patient_id,
-            encounter_id,
-            CaptureMode::Ambient,
-        );
+        let event = NoteEvent::audio_started(note.patient_id, encounter_id, CaptureMode::Ambient);
 
         apply_event(&mut note, &event);
 
@@ -201,8 +192,14 @@ mod tests {
         let mut note = PatientNote::new(Uuid::now_v7());
         let patient_id = note.patient_id;
         let encounter_id = Uuid::now_v7();
-        apply_event(&mut note, &NoteEvent::audio_started(patient_id, encounter_id, CaptureMode::Ambient));
-        apply_event(&mut note, &NoteEvent::audio_stopped(patient_id, encounter_id));
+        apply_event(
+            &mut note,
+            &NoteEvent::audio_started(patient_id, encounter_id, CaptureMode::Ambient),
+        );
+        apply_event(
+            &mut note,
+            &NoteEvent::audio_stopped(patient_id, encounter_id),
+        );
 
         assert_eq!(note.phase, NotePhase::Idle);
         assert!(note.encounters[0].ended_at.is_some());
@@ -213,13 +210,14 @@ mod tests {
         let mut note = PatientNote::new(Uuid::now_v7());
         let patient_id = note.patient_id;
         let encounter_id = Uuid::now_v7();
-        apply_event(&mut note, &NoteEvent::audio_started(patient_id, encounter_id, CaptureMode::Ambient));
-        apply_event(&mut note, &NoteEvent::transcript_ready(
-            patient_id,
-            encounter_id,
-            "chest pain".into(),
-            Utc::now(),
-        ));
+        apply_event(
+            &mut note,
+            &NoteEvent::audio_started(patient_id, encounter_id, CaptureMode::Ambient),
+        );
+        apply_event(
+            &mut note,
+            &NoteEvent::transcript_ready(patient_id, encounter_id, "chest pain".into(), Utc::now()),
+        );
 
         assert_eq!(note.encounters[0].transcript.as_deref(), Some("chest pain"));
     }
@@ -286,11 +284,8 @@ mod tests {
         let mut note = replay(patient_id, &events);
         let initial_results_len = note.results.len();
 
-        let late_result = NoteEvent::result_received(
-            patient_id,
-            build_test_lab_result(patient_id),
-            Utc::now(),
-        );
+        let late_result =
+            NoteEvent::result_received(patient_id, build_test_lab_result(patient_id), Utc::now());
         apply_event(&mut note, &late_result);
 
         // Signed state rejects ingestion — results are unchanged.

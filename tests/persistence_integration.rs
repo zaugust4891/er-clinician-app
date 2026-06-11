@@ -16,11 +16,22 @@ fn publish_persists_projects_snapshots_and_loads() {
     let patient_id = Uuid::now_v7();
     let encounter_id = Uuid::now_v7();
 
-    bus.publish(NoteEvent::audio_started(patient_id, encounter_id, CaptureMode::Ambient), &store).unwrap();
-    bus.publish(NoteEvent::transcript_ready(patient_id, encounter_id, "cp".into(), Utc::now()), &store).unwrap();
-    bus.publish(NoteEvent::audio_stopped(patient_id, encounter_id), &store).unwrap();
-    bus.publish(NoteEvent::trigger_mdm(patient_id), &store).unwrap();
-    bus.publish(NoteEvent::review_ready(patient_id), &store).unwrap();
+    bus.publish(
+        NoteEvent::audio_started(patient_id, encounter_id, CaptureMode::Ambient),
+        &store,
+    )
+    .unwrap();
+    bus.publish(
+        NoteEvent::transcript_ready(patient_id, encounter_id, "cp".into(), Utc::now()),
+        &store,
+    )
+    .unwrap();
+    bus.publish(NoteEvent::audio_stopped(patient_id, encounter_id), &store)
+        .unwrap();
+    bus.publish(NoteEvent::trigger_mdm(patient_id), &store)
+        .unwrap();
+    bus.publish(NoteEvent::review_ready(patient_id), &store)
+        .unwrap();
     bus.publish(NoteEvent::sign(patient_id), &store).unwrap();
 
     // In-memory store is current.
@@ -62,11 +73,17 @@ fn load_uses_snapshot_delta_path() {
     let patient_id = Uuid::now_v7();
     let encounter_id = Uuid::now_v7();
 
-    bus.publish(NoteEvent::audio_started(patient_id, encounter_id, CaptureMode::Ambient), &store).unwrap();
-    bus.publish(NoteEvent::audio_stopped(patient_id, encounter_id), &store).unwrap();
+    bus.publish(
+        NoteEvent::audio_started(patient_id, encounter_id, CaptureMode::Ambient),
+        &store,
+    )
+    .unwrap();
+    bus.publish(NoteEvent::audio_stopped(patient_id, encounter_id), &store)
+        .unwrap();
     // Snapshot at Idle.
 
-    bus.publish(NoteEvent::trigger_mdm(patient_id), &store).unwrap();
+    bus.publish(NoteEvent::trigger_mdm(patient_id), &store)
+        .unwrap();
     // Not yet snapshotted in the Finalizing case — a snapshot IS written on Finalizing.
 
     let loaded = er_note_app::application::load::load_patient_note(repo.as_ref(), patient_id)
@@ -86,8 +103,13 @@ fn corrupted_checksum_falls_back_to_full_replay() {
     let patient_id = Uuid::now_v7();
     let encounter_id = Uuid::now_v7();
 
-    bus.publish(NoteEvent::audio_started(patient_id, encounter_id, CaptureMode::Ambient), &store).unwrap();
-    bus.publish(NoteEvent::audio_stopped(patient_id, encounter_id), &store).unwrap();
+    bus.publish(
+        NoteEvent::audio_started(patient_id, encounter_id, CaptureMode::Ambient),
+        &store,
+    )
+    .unwrap();
+    bus.publish(NoteEvent::audio_stopped(patient_id, encounter_id), &store)
+        .unwrap();
     // Snapshot written at Idle.
 
     // Corrupt the checksum.
@@ -118,11 +140,22 @@ fn store_and_sqlite_stay_consistent() {
     let patient_id = Uuid::now_v7();
     let encounter_id = Uuid::now_v7();
 
-    bus.publish(NoteEvent::audio_started(patient_id, encounter_id, CaptureMode::Ambient), &store).unwrap();
-    bus.publish(NoteEvent::transcript_ready(patient_id, encounter_id, "sob".into(), Utc::now()), &store).unwrap();
-    bus.publish(NoteEvent::audio_stopped(patient_id, encounter_id), &store).unwrap();
-    bus.publish(NoteEvent::trigger_mdm(patient_id), &store).unwrap();
-    bus.publish(NoteEvent::review_ready(patient_id), &store).unwrap();
+    bus.publish(
+        NoteEvent::audio_started(patient_id, encounter_id, CaptureMode::Ambient),
+        &store,
+    )
+    .unwrap();
+    bus.publish(
+        NoteEvent::transcript_ready(patient_id, encounter_id, "sob".into(), Utc::now()),
+        &store,
+    )
+    .unwrap();
+    bus.publish(NoteEvent::audio_stopped(patient_id, encounter_id), &store)
+        .unwrap();
+    bus.publish(NoteEvent::trigger_mdm(patient_id), &store)
+        .unwrap();
+    bus.publish(NoteEvent::review_ready(patient_id), &store)
+        .unwrap();
     bus.publish(NoteEvent::sign(patient_id), &store).unwrap();
 
     let from_store = store.get(&patient_id).unwrap().clone();
@@ -150,10 +183,17 @@ fn disposition_set_after_sign_is_noop() {
     let patient_id = Uuid::now_v7();
     let encounter_id = Uuid::now_v7();
 
-    bus.publish(NoteEvent::audio_started(patient_id, encounter_id, CaptureMode::Ambient), &store).unwrap();
-    bus.publish(NoteEvent::audio_stopped(patient_id, encounter_id), &store).unwrap();
-    bus.publish(NoteEvent::trigger_mdm(patient_id), &store).unwrap();
-    bus.publish(NoteEvent::review_ready(patient_id), &store).unwrap();
+    bus.publish(
+        NoteEvent::audio_started(patient_id, encounter_id, CaptureMode::Ambient),
+        &store,
+    )
+    .unwrap();
+    bus.publish(NoteEvent::audio_stopped(patient_id, encounter_id), &store)
+        .unwrap();
+    bus.publish(NoteEvent::trigger_mdm(patient_id), &store)
+        .unwrap();
+    bus.publish(NoteEvent::review_ready(patient_id), &store)
+        .unwrap();
     bus.publish(NoteEvent::sign(patient_id), &store).unwrap();
     bus.publish(
         NoteEvent::disposition_set(

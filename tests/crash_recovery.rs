@@ -2,13 +2,13 @@ use std::sync::Arc;
 
 use uuid::Uuid;
 
-use er_note_app::infrastructure::audio::MockAudioCapture;
-use er_note_app::application::encounter_driver::EncounterDriver;
 use er_note_app::application::EventBus;
-use er_note_app::domain::NoteEvent;
-use er_note_app::domain::{CaptureMode, PatientId, NotePhase};
-use er_note_app::infrastructure::persistence::repository::{Repository, SqliteRepository};
+use er_note_app::application::encounter_driver::EncounterDriver;
 use er_note_app::application::load::{self as load, PatientNoteStore};
+use er_note_app::domain::NoteEvent;
+use er_note_app::domain::{CaptureMode, NotePhase, PatientId};
+use er_note_app::infrastructure::audio::MockAudioCapture;
+use er_note_app::infrastructure::persistence::repository::{Repository, SqliteRepository};
 use er_note_app::infrastructure::stt::MockTranscriber;
 
 struct CrashRecoverySetup {
@@ -56,7 +56,6 @@ fn crash_recovery_setup_stack_compiles() {
     let loaded = load::load_patient_note(setup.repo.as_ref(), setup.patient_id).unwrap();
     assert!(loaded.is_none());
 }
-
 
 #[test]
 fn full_lifecycle_survives_simulated_crash() {
