@@ -19,7 +19,25 @@ pub struct Medication {
     pub frequency: String, // "2x per day"
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+impl Medication {
+    /// A compact, clinically readable one-line summary for notes/export,
+    /// e.g. `Aspirin 324mg PO (administered in ED)` or `Lisinopril (home medication)`.
+    pub fn summary_line(&self) -> String {
+        let mut line = self.name.clone();
+        if !self.dose.is_empty() {
+            line.push(' ');
+            line.push_str(&self.dose);
+        }
+        if let Some(route) = &self.route {
+            line.push(' ');
+            line.push_str(route);
+        }
+        line.push_str(&format!(" ({})", self.kind));
+        line
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum MedicationKind {
     Home,
     AdministeredInEd,

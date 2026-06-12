@@ -92,13 +92,14 @@ impl NoteSectionVersion {
         section: impl Into<String>,
         content: impl Into<String>,
         version: u64,
+        generated_at: DateTime<Utc>,
         source_encounter_ids: Vec<EncounterId>,
     ) -> Self {
         Self {
             section: section.into(),
             content: content.into(),
             version,
-            generated_at: Utc::now(),
+            generated_at,
             source_encounter_ids,
         }
     }
@@ -207,24 +208,23 @@ impl fmt::Display for PatientNote {
             write_section(f, "Review of Systems", Some("See HPI"))?;
         }
 
-        let meds: String = self
-            .medication
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join(", ");
-
-        let meds_option: Option<&str> = (!self.medication.is_empty()).then_some(meds.as_str());
-
-        write_section(f, "Medication: {}", meds_option)?;
-
         write_section(f, "Physical Exam", self.note_sections.exam.as_deref())?;
         write_results(f, &self.results)?;
+
+        let med_lines: Vec<String> =
+            self.medication.iter().map(Medication::summary_line).collect();
+        write_lines(f, "Medications", &med_lines)?;
+
+        write_lines(f, "Data Reviewed", &self.data_reviewed)?;
+
         write_section(
             f,
             "Medical Decision Making",
             self.note_sections.mdm.as_deref(),
         )?;
+
+        let dx_lines: Vec<String> = self.diagnoses.iter().map(Diagnosis::summary_line).collect();
+        write_lines(f, "Diagnoses", &dx_lines)?;
 
         if let Some(disposition) = &self.disposition {
             writeln!(f, "Disposition: {}", format_disposition(disposition))?;
@@ -253,6 +253,20 @@ fn write_section(f: &mut fmt::Formatter<'_>, title: &str, content: Option<&str>)
     }
 
     Ok(())
+}
+
+/// Write a titled section listing one item per line, skipping the section
+/// entirely when there is nothing to show.
+fn write_lines(f: &mut fmt::Formatter<'_>, title: &str, lines: &[String]) -> fmt::Result {
+    if lines.is_empty() {
+        return Ok(());
+    }
+
+    writeln!(f, "{title}:")?;
+    for line in lines {
+        writeln!(f, "{line}")?;
+    }
+    writeln!(f)
 }
 
 fn write_results(f: &mut fmt::Formatter<'_>, results: &[ClinicalResult]) -> fmt::Result {
@@ -360,7 +374,8 @@ impl PatientNote {
     pub fn record_section_versions(
         &mut self,
         sections: &NoteSections,
-        source_encounter_ids: &[EncounterId]
+        source_encounter_ids: &[EncounterId],
+        occurred_at: DateTime<Utc>,
     ) {
         let version = self.version + 1;
 
@@ -369,6 +384,7 @@ impl PatientNote {
                 "hpi",
                 hpi.clone(),
                 version,
+                occurred_at,
                 source_encounter_ids.to_vec(),
             ));
         }
@@ -378,6 +394,7 @@ impl PatientNote {
                 "ros",
                 ros.clone(),
                 version,
+                occurred_at,
                 source_encounter_ids.to_vec(),
             ));
         }
@@ -387,22 +404,24 @@ impl PatientNote {
                 "exam",
                 exam.clone(),
                 version,
+                occurred_at,
                 source_encounter_ids.to_vec(),
             ));
         }
-    
+
     }
 
     /// Apply a state transition: take the state out, call the method,
     /// put the new state back, and sync the phase enum.
     fn apply_transition(
         &mut self,
+        occurred_at: DateTime<Utc>,
         transition: impl FnOnce(Box<dyn NoteState>, &mut PatientNote) -> Box<dyn NoteState>,
     ) {
         if let Some(current) = self.state.take() {
-            let old_phase = current.to_phase(); 
-            let new_state = transition(current, self); 
-            let new_phase = new_state.to_phase(); 
+            let old_phase = current.to_phase();
+            let new_state = transition(current, self);
+            let new_phase = new_state.to_phase();
 
             self.phase = new_phase.clone();
             self.state = Some(new_state);
@@ -410,36 +429,37 @@ impl PatientNote {
             // Only log + bump version if the phase actually changed.
             if old_phase != new_phase {
                 self.version += 1;
-                self.updated_at = Utc::now();
-                self.audit_log.push(AuditEntry::new(
+                self.updated_at = occurred_at;
+                self.audit_log.push(AuditEntry::with_timestamp(
                     AuditAction::PhaseTransition {
                         from: format!("{:?}", old_phase),
                         to: format!("{:?}", new_phase),
                     },
                     "",
+                    occurred_at,
                 ));
             }
         }
     }
 
-    pub fn handle_audio_started(&mut self) {
-        self.apply_transition(|state, note| state.on_audio_started(note));
+    pub fn handle_audio_started(&mut self, occurred_at: DateTime<Utc>) {
+        self.apply_transition(occurred_at, |state, note| state.on_audio_started(note));
     }
 
-    pub fn handle_audio_stopped(&mut self) {
-        self.apply_transition(|state, note| state.on_audio_stopped(note));
+    pub fn handle_audio_stopped(&mut self, occurred_at: DateTime<Utc>) {
+        self.apply_transition(occurred_at, |state, note| state.on_audio_stopped(note));
     }
 
-    pub fn handle_trigger_mdm(&mut self) {
-        self.apply_transition(|state, note| state.on_trigger_mdm(note));
+    pub fn handle_trigger_mdm(&mut self, occurred_at: DateTime<Utc>) {
+        self.apply_transition(occurred_at, |state, note| state.on_trigger_mdm(note));
     }
 
-    pub fn handle_review_ready(&mut self) {
-        self.apply_transition(|state, note| state.on_review_ready(note));
+    pub fn handle_review_ready(&mut self, occurred_at: DateTime<Utc>) {
+        self.apply_transition(occurred_at, |state, note| state.on_review_ready(note));
     }
 
-    pub fn handle_sign(&mut self) {
-        self.apply_transition(|state, note| state.on_sign(note));
+    pub fn handle_sign(&mut self, occurred_at: DateTime<Utc>) {
+        self.apply_transition(occurred_at, |state, note| state.on_sign(note));
     }
 }
 

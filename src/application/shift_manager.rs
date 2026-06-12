@@ -6,8 +6,8 @@ use crate::domain::NoteEvent;
 use crate::domain::NoteSections;
 use crate::domain::replay::{apply_event, replay};
 use crate::domain::{
-    CaptureMode, ClinicalResult, Disposition, EncounterId, NotePhase, PatientId, PatientNote,
-    PatientRecord, Shift, ShiftId,
+    CaptureMode, ClinicalResult, Diagnosis, Disposition, EncounterId, Medication, MedicationKind,
+    NotePhase, PatientId, PatientNote, PatientRecord, Shift, ShiftId,
 };
 use crate::error::{AppError, AppResult};
 use crate::infrastructure::ai::deidentify::Deidentifier;
@@ -21,6 +21,7 @@ use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
+use uuid::Uuid;
 
 pub struct ShiftManager<A, T, S>
 where
@@ -155,6 +156,66 @@ where
         Ok(())
     }
 
+    pub fn record_medication(
+        &mut self,
+        name: String,
+        dose: String,
+        route: Option<String>,
+        kind: MedicationKind,
+    ) -> AppResult<()> {
+        let patient_id = self.check_active_patient_id()?;
+
+        let medication = Medication {
+            id: Uuid::now_v7(),
+            patient_id,
+            name,
+            dose,
+            route,
+            rxnorm_code: None,
+            kind,
+            administered_at: Utc::now(),
+            frequency: String::new(),
+        };
+
+        self.bus.publish(
+            NoteEvent::medication_recorded(patient_id, medication),
+            &self.store,
+        )?;
+        Ok(())
+    }
+
+    pub fn assign_diagnosis(
+        &mut self,
+        text: String,
+        icd10_code: Option<String>,
+        is_primary: bool,
+    ) -> AppResult<()> {
+        let patient_id = self.check_active_patient_id()?;
+
+        let diagnosis = Diagnosis {
+            id: Uuid::now_v7(),
+            patient_id,
+            text,
+            icd10_code,
+            is_primary,
+        };
+
+        self.bus.publish(
+            NoteEvent::diagnosis_assigned(patient_id, diagnosis),
+            &self.store,
+        )?;
+        Ok(())
+    }
+
+    pub fn record_data_reviewed(&mut self, physician_review: String) -> AppResult<()> {
+        let patient_id = self.check_active_patient_id()?;
+        self.bus.publish(
+            NoteEvent::data_reviewed(patient_id, physician_review),
+            &self.store,
+        )?;
+        Ok(())
+    }
+
     pub fn trigger_mdm(&mut self) -> AppResult<()> {
         self.ensure_no_active_encounter("trigger MDM")?;
         self.ensure_active_phase(NotePhase::Idle, "TriggerMDM")?;
@@ -217,6 +278,9 @@ where
             &sections,
             note.disposition.as_ref(),
             results_text.as_deref(),
+            &note.medication,
+            &note.diagnoses,
+            &note.data_reviewed,
         ))
     }
 

@@ -1,5 +1,7 @@
 use crate::domain::{
-    CaptureMode, ClinicalResult, Disposition, EncounterId, NoteSections, PatientId,
+    CaptureMode, ClinicalResult, 
+    Disposition, EncounterId, NoteSections,
+    PatientId, Medication, Diagnosis,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -36,12 +38,30 @@ pub enum NoteEvent {
         source_encounter_ids: Vec<EncounterId>,
         clinical_occurred_at: DateTime<Utc>,
     },
+    MedicationRecorded { 
+        patient_id: PatientId, 
+        medication: Medication, 
+        clinical_occurred_at: DateTime<Utc>,
+    },
     /// A clinical result was ingested (manual or FHIR).
     ResultReceived {
         patient_id: PatientId,
         result: ClinicalResult,
         clinical_occurred_at: DateTime<Utc>,
     },
+
+    DiagnosisAssigned  { 
+        patient_id: PatientId,
+        diagnosis: Diagnosis,   
+        clinical_occurred_at: DateTime<Utc>, 
+    },
+    
+    DataReviewed { 
+        patient_id: PatientId, 
+        physician_review: String,           
+        clinical_occurred_at: DateTime<Utc>,
+    },
+
     /// Clinician triggered MDM generation.
     TriggerMDM {
         patient_id: PatientId,
@@ -70,6 +90,7 @@ pub enum NoteEvent {
         patient_id: PatientId,
         clinical_occurred_at: DateTime<Utc>,
     },
+
 }
 
 impl NoteEvent {
@@ -79,7 +100,10 @@ impl NoteEvent {
             NoteEvent::AudioStopped { patient_id, .. } => *patient_id,
             NoteEvent::TranscriptReady { patient_id, .. } => *patient_id,
             NoteEvent::EncounterSummarized { patient_id, .. } => *patient_id,
+            NoteEvent::MedicationRecorded { patient_id, .. } => *patient_id,
             NoteEvent::ResultReceived { patient_id, .. } => *patient_id,
+            NoteEvent::DiagnosisAssigned { patient_id, .. } => *patient_id,
+            NoteEvent::DataReviewed { patient_id, .. } => *patient_id,
             NoteEvent::TriggerMDM { patient_id, .. } => *patient_id,
             NoteEvent::MdmGenerated { patient_id, .. } => *patient_id,
             NoteEvent::ReviewReady { patient_id, .. } => *patient_id,
@@ -94,7 +118,10 @@ impl NoteEvent {
             NoteEvent::AudioStopped { .. } => "AudioStopped",
             NoteEvent::TranscriptReady { .. } => "TranscriptReady",
             NoteEvent::EncounterSummarized { .. } => "EncounterSummarized",
+            NoteEvent::MedicationRecorded { .. } => "MedicationRecorded",
             NoteEvent::ResultReceived { .. } => "ResultReceived",
+            NoteEvent::DiagnosisAssigned { .. } => "DiagnosisAssigned",
+            NoteEvent::DataReviewed { .. } => "DataReviewed",
             NoteEvent::TriggerMDM { .. } => "TriggerMDM",
             NoteEvent::MdmGenerated { .. } => "MdmGenerated",
             NoteEvent::ReviewReady { .. } => "ReviewReady",
@@ -196,6 +223,30 @@ impl NoteEvent {
         NoteEvent::DispositionSet {
             patient_id,
             disposition,
+            clinical_occurred_at: Utc::now(),
+        }
+    }
+
+    pub fn medication_recorded(patient_id: PatientId, medication: Medication) -> Self {
+        NoteEvent::MedicationRecorded {
+            patient_id,
+            medication,
+            clinical_occurred_at: Utc::now(),
+        }
+    }
+
+    pub fn diagnosis_assigned(patient_id: PatientId, diagnosis: Diagnosis) -> Self {
+        NoteEvent::DiagnosisAssigned {
+            patient_id,
+            diagnosis,
+            clinical_occurred_at: Utc::now(),
+        }
+    }
+
+    pub fn data_reviewed(patient_id: PatientId, physician_review: String) -> Self {
+        NoteEvent::DataReviewed {
+            patient_id,
+            physician_review,
             clinical_occurred_at: Utc::now(),
         }
     }

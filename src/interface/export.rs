@@ -1,4 +1,4 @@
-use crate::domain::{Disposition, NoteSections, PatientRecord};
+use crate::domain::{Diagnosis, Disposition, Medication, NoteSections, PatientRecord};
 
 /// Format a patient note for export (copy to clipboard → paste into Epic).
 /// Plain text only — no markdown, no HTML. Epic note fields accept plain text.
@@ -7,6 +7,9 @@ pub fn format_note(
     sections: &NoteSections,
     disposition: Option<&Disposition>,
     results_text: Option<&str>,
+    medications: &[Medication],
+    diagnoses: &[Diagnosis],
+    data_reviewed: &[String],
 ) -> String {
     let mut out = String::with_capacity(2048);
 
@@ -32,9 +35,14 @@ pub fn format_note(
         out.push_str(&format!("Results Reviewed:\n{results}\n\n"));
     }
 
+    push_lines(&mut out, "Medications", &lines(medications, Medication::summary_line));
+    push_lines(&mut out, "Data Reviewed", data_reviewed);
+
     if let Some(mdm) = &sections.mdm {
         out.push_str(&format!("Medical Decision Making:\n{mdm}\n\n"));
     }
+
+    push_lines(&mut out, "Diagnoses", &lines(diagnoses, Diagnosis::summary_line));
 
     if let Some(dispo) = disposition {
         out.push_str(&format!("Disposition: {}\n", format_disposition(dispo)));
@@ -43,6 +51,23 @@ pub fn format_note(
     out.push_str("\n---\nNote assisted by AI documentation tool. All content reviewed and approved by signing provider.\n");
 
     out
+}
+
+/// Map a slice of items to their one-line summaries.
+fn lines<T>(items: &[T], summary: impl Fn(&T) -> String) -> Vec<String> {
+    items.iter().map(summary).collect()
+}
+
+/// Append a titled section listing one item per line; skip if empty.
+fn push_lines(out: &mut String, title: &str, lines: &[String]) {
+    if lines.is_empty() {
+        return;
+    }
+    out.push_str(&format!("{title}:\n"));
+    for line in lines {
+        out.push_str(&format!("{line}\n"));
+    }
+    out.push('\n');
 }
 
 fn format_disposition(dispo: &Disposition) -> String {
@@ -98,7 +123,7 @@ mod tests {
             follow_up: Some("PCP in 2 days".into()),
         };
 
-        let output = format_note(&patient, &sections, Some(&dispo), None);
+        let output = format_note(&patient, &sections, Some(&dispo), None, &[], &[], &[]);
 
         assert!(output.contains("ED PROVIDER NOTE"));
         assert!(output.contains("chest pain"));
@@ -106,5 +131,55 @@ mod tests {
         assert!(output.contains("Low risk chest pain"));
         assert!(output.contains("Discharge"));
         assert!(output.contains("signing provider"));
+    }
+
+    #[test]
+    fn renders_medications_diagnoses_and_data_reviewed() {
+        use crate::domain::{Medication, MedicationKind};
+        use chrono::Utc;
+        use uuid::Uuid;
+
+        let patient = PatientRecord::new("chest pain");
+        let patient_id = Uuid::now_v7();
+        let sections = NoteSections {
+            hpi: Some("44yo M with chest pain.".into()),
+            ros: None,
+            exam: None,
+            mdm: None,
+            disposition_text: None,
+        };
+        let medications = vec![Medication {
+            id: Uuid::now_v7(),
+            patient_id,
+            name: "Aspirin".into(),
+            dose: "324mg".into(),
+            route: Some("PO".into()),
+            rxnorm_code: None,
+            kind: MedicationKind::AdministeredInEd,
+            administered_at: Utc::now(),
+            frequency: String::new(),
+        }];
+        let diagnoses = vec![Diagnosis {
+            id: Uuid::now_v7(),
+            patient_id,
+            text: "Acute PE".into(),
+            icd10_code: Some("I26.99".into()),
+            is_primary: true,
+        }];
+        let data_reviewed = vec!["CTA chest: PE in RLL".to_string()];
+
+        let output = format_note(
+            &patient,
+            &sections,
+            None,
+            None,
+            &medications,
+            &diagnoses,
+            &data_reviewed,
+        );
+
+        assert!(output.contains("Medications:\nAspirin 324mg PO (administered in ED)"));
+        assert!(output.contains("Diagnoses:\nAcute PE (primary) [I26.99]"));
+        assert!(output.contains("Data Reviewed:\nCTA chest: PE in RLL"));
     }
 }

@@ -1,5 +1,3 @@
-use chrono::Utc;
-
 use crate::domain::audit::{AuditAction, AuditEntry};
 use crate::domain::events::NoteEvent;
 use crate::domain::note::NoteSectionVersion;
@@ -29,7 +27,7 @@ pub fn apply_event(note: &mut PatientNote, event: &NoteEvent) {
             // Drive the state machine first so the encounter_count bumps
             // handle_audio_started calls self.apply_transition()
             // which takes the state out, appl
-            note.handle_audio_started();
+            note.handle_audio_started(*clinical_occurred_at);
 
             note.encounters.push(Encounter {
                 id: *encounter_id,
@@ -47,7 +45,7 @@ pub fn apply_event(note: &mut PatientNote, event: &NoteEvent) {
             clinical_occurred_at,
             ..
         } => {
-            note.handle_audio_stopped();
+            note.handle_audio_stopped(*clinical_occurred_at);
             if let Some(enc) = note.encounters.iter_mut().find(|e| e.id == *encounter_id) {
                 enc.ended_at = Some(*clinical_occurred_at);
             }
@@ -67,19 +65,93 @@ pub fn apply_event(note: &mut PatientNote, event: &NoteEvent) {
         NoteEvent::EncounterSummarized {
             sections,
             source_encounter_ids,
+            clinical_occurred_at,
             ..
         } => {
             merge_sections(&mut note.note_sections, sections);
-            note.record_section_versions(sections, source_encounter_ids);
+            note.record_section_versions(sections, source_encounter_ids, *clinical_occurred_at);
             note.version += 1;
-            note.updated_at = Utc::now();
-            note.audit_log
-                .push(AuditEntry::new(AuditAction::NoteSectionGenerated, ""));
+            note.updated_at = *clinical_occurred_at;
+            note.audit_log.push(AuditEntry::with_timestamp(
+                AuditAction::NoteSectionGenerated,
+                "",
+                *clinical_occurred_at,
+            ));
         }
+
+        NoteEvent::MedicationRecorded {
+            medication,
+            clinical_occurred_at,
+            ..
+        } => {
+            let can_mutate = note
+                .state
+                .as_ref()
+                .map(|s| s.can_ingest_results())
+                .unwrap_or(false);
+            if can_mutate {
+                note.medication.push(medication.clone());
+                note.version += 1;
+                note.updated_at = *clinical_occurred_at;
+                note.audit_log.push(AuditEntry::with_timestamp(
+                    AuditAction::MedicationRecorded,
+                    "",
+                    *clinical_occurred_at,
+                ));
+            }
+        }
+
+        NoteEvent::DataReviewed {
+            physician_review,
+            clinical_occurred_at,
+            ..
+        } => {
+            let can_mutate = note
+                .state
+                .as_ref()
+                .map(|s| s.can_ingest_results())
+                .unwrap_or(false);
+
+            if can_mutate {
+                note.data_reviewed.push(physician_review.clone());
+                note.version += 1;
+                note.updated_at = *clinical_occurred_at;
+                note.audit_log.push(AuditEntry::with_timestamp(
+                    AuditAction::DataReviewed,
+                    "",
+                    *clinical_occurred_at,
+                ));
+            }
+        }
+
+        NoteEvent::DiagnosisAssigned {
+            diagnosis,
+            clinical_occurred_at,
+            ..
+        } => {
+            let can_mutate = note
+                .state
+                .as_ref()
+                .map(|s| s.can_ingest_results())
+                .unwrap_or(false);
+
+            if can_mutate {
+                note.diagnoses.push(diagnosis.clone());
+                note.version += 1;
+                note.updated_at = *clinical_occurred_at;
+                note.audit_log.push(AuditEntry::with_timestamp(
+                    AuditAction::DiagnosisAssigned,
+                    "",
+                    *clinical_occurred_at,
+                ));
+            }
+        }
+        
 
         NoteEvent::MdmGenerated {
             mdm_text,
             source_encounter_ids,
+            clinical_occurred_at,
             ..
         } => {
             note.note_sections.mdm = Some(mdm_text.clone());
@@ -87,16 +159,23 @@ pub fn apply_event(note: &mut PatientNote, event: &NoteEvent) {
                 section: "mdm".into(),
                 content: mdm_text.clone(),
                 version: note.version + 1,
-                generated_at: Utc::now(),
+                generated_at: *clinical_occurred_at,
                 source_encounter_ids: source_encounter_ids.clone(),
             });
             note.version += 1;
-            note.updated_at = Utc::now();
-            note.audit_log
-                .push(AuditEntry::new(AuditAction::MdmGenerated, ""));
+            note.updated_at = *clinical_occurred_at;
+            note.audit_log.push(AuditEntry::with_timestamp(
+                AuditAction::MdmGenerated,
+                "",
+                *clinical_occurred_at,
+            ));
         }
 
-        NoteEvent::DispositionSet { disposition, .. } => {
+        NoteEvent::DispositionSet {
+            disposition,
+            clinical_occurred_at,
+            ..
+        } => {
             // Mirror ingest_result's immutability guard:
             //    - Signed notes reject mutation.
             let can_mutate = note
@@ -107,19 +186,35 @@ pub fn apply_event(note: &mut PatientNote, event: &NoteEvent) {
             if can_mutate {
                 note.disposition = Some(disposition.clone());
                 note.version += 1;
-                note.updated_at = Utc::now();
-                note.audit_log
-                    .push(AuditEntry::new(AuditAction::DispositionSet, ""));
+                note.updated_at = *clinical_occurred_at;
+                note.audit_log.push(AuditEntry::with_timestamp(
+                    AuditAction::DispositionSet,
+                    "",
+                    *clinical_occurred_at,
+                ));
             }
         }
 
-        NoteEvent::ResultReceived { result, .. } => {
-            let _ = ingest_result(note, result.clone());
+        NoteEvent::ResultReceived {
+            result,
+            clinical_occurred_at,
+            ..
+        } => {
+            let _ = ingest_result(note, result.clone(), *clinical_occurred_at);
         }
 
-        NoteEvent::TriggerMDM { .. } => note.handle_trigger_mdm(),
-        NoteEvent::ReviewReady { .. } => note.handle_review_ready(),
-        NoteEvent::Sign { .. } => note.handle_sign(),
+        NoteEvent::TriggerMDM {
+            clinical_occurred_at,
+            ..
+        } => note.handle_trigger_mdm(*clinical_occurred_at),
+        NoteEvent::ReviewReady {
+            clinical_occurred_at,
+            ..
+        } => note.handle_review_ready(*clinical_occurred_at),
+        NoteEvent::Sign {
+            clinical_occurred_at,
+            ..
+        } => note.handle_sign(*clinical_occurred_at),
     }
 }
 
@@ -146,6 +241,7 @@ fn merge_sections(dest: &mut NoteSections, source: &NoteSections) {
 
 #[cfg(test)]
 mod tests {
+    use chrono::Utc;
     use uuid::Uuid;
 
     use crate::domain::CaptureMode;

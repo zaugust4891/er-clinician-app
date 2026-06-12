@@ -1,4 +1,4 @@
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 
 use crate::domain::PatientNote;
 use crate::domain::audit::{AuditAction, AuditEntry};
@@ -195,7 +195,11 @@ pub fn state_from_phase(phase: &NotePhase) -> Box<dyn NoteState> {
 
 /// Ingest a clinical result into a note.
 /// Delegates to the current state's `can_ingest_results()` method.
-pub fn ingest_result(note: &mut PatientNote, result: ClinicalResult) -> AppResult<()> {
+pub fn ingest_result(
+    note: &mut PatientNote,
+    result: ClinicalResult,
+    occurred_at: DateTime<Utc>,
+) -> AppResult<()> {
     let can_ingest = note
         .state
         .as_ref()
@@ -208,9 +212,9 @@ pub fn ingest_result(note: &mut PatientNote, result: ClinicalResult) -> AppResul
 
     note.results.push(result);
     note.version += 1;
-    note.updated_at = Utc::now();
+    note.updated_at = occurred_at;
     note.audit_log
-        .push(AuditEntry::new(AuditAction::ResultIngested, ""));
+        .push(AuditEntry::with_timestamp(AuditAction::ResultIngested, "", occurred_at));
     Ok(())
 }
 
@@ -228,7 +232,7 @@ mod tests {
         assert_eq!(note.phase, NotePhase::Registered);
         assert_eq!(note.encounter_count, 0);
 
-        note.handle_audio_started();
+        note.handle_audio_started(Utc::now());
 
         assert_eq!(note.phase, NotePhase::Encountering);
         assert_eq!(note.encounter_count, 1);
@@ -237,8 +241,8 @@ mod tests {
     #[test]
     fn encountering_to_idle_on_audio_stop() {
         let mut note = PatientNote::new(uuid::Uuid::now_v7());
-        note.handle_audio_started();
-        note.handle_audio_stopped();
+        note.handle_audio_started(Utc::now());
+        note.handle_audio_stopped(Utc::now());
 
         assert_eq!(note.phase, NotePhase::Idle);
     }
@@ -248,57 +252,57 @@ mod tests {
         let mut note = PatientNote::new(uuid::Uuid::now_v7());
 
         // First encounter
-        note.handle_audio_started();
-        note.handle_audio_stopped();
+        note.handle_audio_started(Utc::now());
+        note.handle_audio_stopped(Utc::now());
         assert_eq!(note.phase, NotePhase::Idle);
         assert_eq!(note.encounter_count, 1);
 
         // Second encounter — the critical cycle
-        note.handle_audio_started();
+        note.handle_audio_started(Utc::now());
         assert_eq!(note.phase, NotePhase::Encountering);
         assert_eq!(note.encounter_count, 2);
 
-        note.handle_audio_stopped();
+        note.handle_audio_stopped(Utc::now());
         assert_eq!(note.phase, NotePhase::Idle);
     }
 
     #[test]
     fn idle_to_finalizing_to_signed() {
         let mut note = PatientNote::new(uuid::Uuid::now_v7());
-        note.handle_audio_started();
-        note.handle_audio_stopped();
+        note.handle_audio_started(Utc::now());
+        note.handle_audio_stopped(Utc::now());
 
-        note.handle_trigger_mdm();
+        note.handle_trigger_mdm(Utc::now());
         assert_eq!(note.phase, NotePhase::Finalizing);
 
-        note.handle_review_ready();
+        note.handle_review_ready(Utc::now());
         assert_eq!(note.phase, NotePhase::PendingSignOff);
 
-        note.handle_sign();
+        note.handle_sign(Utc::now());
         assert_eq!(note.phase, NotePhase::Signed);
     }
 
     #[test]
     fn finalizing_can_return_to_encountering() {
         let mut note = PatientNote::new(uuid::Uuid::now_v7());
-        note.handle_audio_started();
-        note.handle_audio_stopped();
-        note.handle_trigger_mdm();
+        note.handle_audio_started(Utc::now());
+        note.handle_audio_stopped(Utc::now());
+        note.handle_trigger_mdm(Utc::now());
         assert_eq!(note.phase, NotePhase::Finalizing);
 
         // Clinician re-enters room
-        note.handle_audio_started();
+        note.handle_audio_started(Utc::now());
         assert_eq!(note.phase, NotePhase::Encountering);
     }
 
     #[test]
     fn signed_rejects_results() {
         let mut note = PatientNote::new(uuid::Uuid::now_v7());
-        note.handle_audio_started();
-        note.handle_audio_stopped();
-        note.handle_trigger_mdm();
-        note.handle_review_ready();
-        note.handle_sign();
+        note.handle_audio_started(Utc::now());
+        note.handle_audio_stopped(Utc::now());
+        note.handle_trigger_mdm(Utc::now());
+        note.handle_review_ready(Utc::now());
+        note.handle_sign(Utc::now());
 
         let result = ClinicalResult {
             id: uuid::Uuid::now_v7(),
@@ -316,7 +320,7 @@ mod tests {
             }),
         };
 
-        let err = ingest_result(&mut note, result);
+        let err = ingest_result(&mut note, result, Utc::now());
         assert!(err.is_err());
     }
 
@@ -324,15 +328,15 @@ mod tests {
     fn invalid_transition_is_noop() {
         let mut note = PatientNote::new(uuid::Uuid::now_v7());
         // Registered → TriggerMDM is invalid — should stay Registered
-        note.handle_trigger_mdm();
+        note.handle_trigger_mdm(Utc::now());
         assert_eq!(note.phase, NotePhase::Registered);
     }
 
     #[test]
     fn clone_preserves_state() {
         let mut note = PatientNote::new(uuid::Uuid::now_v7());
-        note.handle_audio_started();
-        note.handle_audio_stopped();
+        note.handle_audio_started(Utc::now());
+        note.handle_audio_stopped(Utc::now());
         assert_eq!(note.phase, NotePhase::Idle);
 
         let cloned = note.clone();
@@ -351,8 +355,8 @@ mod tests {
     #[test]
     fn hydrate_reconstructs_state() {
         let mut note = PatientNote::new(uuid::Uuid::now_v7());
-        note.handle_audio_started();
-        note.handle_audio_stopped();
+        note.handle_audio_started(Utc::now());
+        note.handle_audio_stopped(Utc::now());
 
         // Simulate deserialization (state gets dropped).
         let json = serde_json::to_string(&note).unwrap();
@@ -367,7 +371,7 @@ mod tests {
         assert_eq!(deserialized.state.as_ref().unwrap().phase_name(), "Idle");
 
         // And it works — can transition.
-        deserialized.handle_audio_started();
+        deserialized.handle_audio_started(Utc::now());
         assert_eq!(deserialized.phase, NotePhase::Encountering);
     }
 }

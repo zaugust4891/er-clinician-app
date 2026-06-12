@@ -83,6 +83,9 @@ async fn main() {
                                 &final_sections,
                                 Some(&disposition),
                                 Some(results),
+                                &[],
+                                &[],
+                                &[],
                             );
 
                             println!("\n{}", "=".repeat(60));

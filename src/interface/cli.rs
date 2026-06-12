@@ -2,10 +2,12 @@ use std::io::Write;
 
 use uuid::Uuid;
 
+use crate::application::conversions::diagnosis::parse_diagnosis;
 use crate::application::conversions::disposition::{format_disposition_for_cli, parse_disposition};
 use crate::application::conversions::labs::parse_string_to_f64;
+use crate::application::conversions::medication::parse_medication;
 use crate::application::shift_manager::ShiftManager;
-use crate::domain::{CaptureMode, ClinicalResult, Disposition, LabResult};
+use crate::domain::{CaptureMode, ClinicalResult, Disposition, LabResult, MedicationKind};
 use crate::error::AppError::NoActivePatient;
 use crate::error::{AppError, AppResult};
 use crate::infrastructure::ai::summarizer::Summarizer;
@@ -32,6 +34,20 @@ pub enum Command {
     },
     Dispo {
         disposition: Disposition,
+    },
+    Med {
+        kind: MedicationKind,
+        name: String,
+        dose: String,
+        route: Option<String>,
+    },
+    Dx {
+        text: String,
+        icd10_code: Option<String>,
+        is_primary: bool,
+    },
+    Data {
+        physician_review: String,
     },
     Mdm,
     Review,
@@ -115,6 +131,33 @@ impl Commands {
                 disposition: parse_disposition(args)?,
             },
 
+            "med" => {
+                let (kind, name, dose, route) = parse_medication(args)?;
+                Command::Med {
+                    kind,
+                    name,
+                    dose,
+                    route,
+                }
+            }
+
+            "dx" => {
+                let (text, icd10_code, is_primary) = parse_diagnosis(args)?;
+                Command::Dx {
+                    text,
+                    icd10_code,
+                    is_primary,
+                }
+            }
+
+            "data" => {
+                let physician_review = args[1..].join(" ").trim_matches('"').to_string();
+                if physician_review.is_empty() {
+                    return Err(AppError::CliError("Usage: data <free text>".to_string()));
+                }
+                Command::Data { physician_review }
+            }
+
             "mdm" => Command::Mdm,
             "review" => Command::Review,
             "sign" => Command::Sign,
@@ -149,6 +192,10 @@ impl Commands {
         println!("  dispo transfer <destination> [<reason>]");
         println!("  dispo ama");
         println!("  dispo lwbs");
+        println!("  med home <name> [dose] [route]");
+        println!("  med given <name> [dose] [route]");
+        println!("  dx <text> [--primary] [icd10]");
+        println!("  data <free text>");
         println!("  mdm");
         println!("  review");
         println!("  sign");
@@ -279,6 +326,45 @@ where
             let label = format_disposition_for_cli(&disposition);
             manager.set_disposition(disposition)?;
             println!("Disposition set: {label}");
+            Ok(true)
+        }
+
+        Command::Med {
+            kind,
+            name,
+            dose,
+            route,
+        } => {
+            let kind_label = match kind {
+                MedicationKind::Home => "home",
+                MedicationKind::AdministeredInEd => "given",
+            };
+            manager.record_medication(name.clone(), dose.clone(), route.clone(), kind)?;
+            let dose_label = if dose.is_empty() {
+                String::new()
+            } else {
+                format!(" {dose}")
+            };
+            let route_label = route.map(|r| format!(" {r}")).unwrap_or_default();
+            println!("Recorded medication [{kind_label}]: {name}{dose_label}{route_label}");
+            Ok(true)
+        }
+
+        Command::Dx {
+            text,
+            icd10_code,
+            is_primary,
+        } => {
+            manager.assign_diagnosis(text.clone(), icd10_code.clone(), is_primary)?;
+            let primary_label = if is_primary { " (primary)" } else { "" };
+            let code_label = icd10_code.map(|c| format!(" [{c}]")).unwrap_or_default();
+            println!("Diagnosis assigned: {text}{primary_label}{code_label}");
+            Ok(true)
+        }
+
+        Command::Data { physician_review } => {
+            manager.record_data_reviewed(physician_review.clone())?;
+            println!("Data reviewed recorded: {physician_review}");
             Ok(true)
         }
 
@@ -432,5 +518,39 @@ mod tests {
                 follow_up: Some("Cardiology 1wk".to_string()),
             })
         );
+    }
+
+    fn run(manager: &mut ShiftManager<MockAudioCapture, MockTranscriber, MockSummarizer>, parts: &[&str]) {
+        let args: Vec<String> = parts.iter().map(|p| p.to_string()).collect();
+        let command = Commands::new(&args).unwrap();
+        assert!(handle_command(manager, command).unwrap());
+    }
+
+    #[test]
+    fn med_dx_data_commands_persist_onto_note() {
+        let mut manager = test_manager();
+        let patient_id = manager.register_patient("chest pain");
+        manager.set_active_patient(patient_id).unwrap();
+
+        run(&mut manager, &["med", "given", "Aspirin", "324mg", "PO"]);
+        run(&mut manager, &["dx", "\"Acute", "PE\"", "--primary", "I26.99"]);
+        run(&mut manager, &["data", "\"CTA", "chest:", "PE", "in", "RLL\""]);
+
+        let note = manager.get_note(patient_id).unwrap();
+
+        assert_eq!(note.medication.len(), 1);
+        let med = &note.medication[0];
+        assert_eq!(med.name, "Aspirin");
+        assert_eq!(med.dose, "324mg");
+        assert_eq!(med.route, Some("PO".to_string()));
+        assert_eq!(med.kind, MedicationKind::AdministeredInEd);
+
+        assert_eq!(note.diagnoses.len(), 1);
+        let dx = &note.diagnoses[0];
+        assert_eq!(dx.text, "Acute PE");
+        assert_eq!(dx.icd10_code, Some("I26.99".to_string()));
+        assert!(dx.is_primary);
+
+        assert_eq!(note.data_reviewed, vec!["CTA chest: PE in RLL".to_string()]);
     }
 }

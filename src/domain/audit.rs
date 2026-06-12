@@ -24,6 +24,9 @@ pub enum AuditAction {
     MdmTriggered,
     MdmGenerated,
     DispositionSet,
+    DiagnosisAssigned,
+    DataReviewed,
+    MedicationRecorded,
     NoteReviewed,
     NoteSigned,
     NoteExported,
@@ -32,9 +35,20 @@ pub enum AuditAction {
 
 impl AuditEntry {
     pub fn new(action: AuditAction, details: impl Into<String>) -> Self {
+        Self::with_timestamp(action, details, Utc::now())
+    }
+
+    /// Build an entry stamped with an explicit time. Used on the replay/projection
+    /// path so the audit trail reflects when the event actually occurred
+    /// (`clinical_occurred_at`) rather than when it was replayed.
+    pub fn with_timestamp(
+        action: AuditAction,
+        details: impl Into<String>,
+        timestamp: DateTime<Utc>,
+    ) -> Self {
         Self {
             id: Uuid::now_v7(),
-            timestamp: Utc::now(),
+            timestamp,
             action,
             details: details.into(),
         }

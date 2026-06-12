@@ -12,3 +12,17 @@ pub struct Diagnosis {
     pub icd10_code: Option<String>,
     pub is_primary: bool,
 }
+
+impl Diagnosis {
+    /// A one-line summary for notes/export, e.g. `Acute PE (primary) [I26.99]`.
+    pub fn summary_line(&self) -> String {
+        let mut line = self.text.clone();
+        if self.is_primary {
+            line.push_str(" (primary)");
+        }
+        if let Some(code) = &self.icd10_code {
+            line.push_str(&format!(" [{code}]"));
+        }
+        line
+    }
+}
