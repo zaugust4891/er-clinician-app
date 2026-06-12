@@ -9,6 +9,7 @@ use crate::domain::{
     CaptureMode, ClinicalResult, Diagnosis, Disposition, EncounterId, Medication, MedicationKind,
     NotePhase, PatientId, PatientNote, PatientRecord, Shift, ShiftId,
 };
+use crate::error::AppError::PatientNotFound;
 use crate::error::{AppError, AppResult};
 use crate::infrastructure::ai::deidentify::Deidentifier;
 use crate::infrastructure::ai::summarizer::Summarizer;
@@ -94,8 +95,77 @@ where
     }
 
     pub fn stop_encounter(&mut self) -> AppResult<EncounterId> {
-        self.driver.stop_encounter()
+        // 1. Driver publishes AudioStopped + TranscriptReady 
+        // (state  Idle, snapshot).
+        let encounter_id = self.driver.stop_encounter()?;
+        
+        // 2. Summarize and persist. 
+        //      Best-effort: a summarization failure must NOT lose the encounter
+        //          — the transcript is already durably persisted.
+        let _ = self.summarize_encounter_deidentify_persist(encounter_id)
+            .inspect_err(|e| tracing::warn!(error = %e, %encounter_id,
+            "summarization failed; transcript retained."
+        ));
+
+        Ok(encounter_id)
     }
+
+    /// Called by stop_encounter - preserves re-eval if network or claude api error
+    /// Deidentifies patient BEFORE sending over Network to AWS - name becomes 'Patient_A', 'Patient_B' etc.
+    /// Calls async summarize_encounter AFTER Deidentifying. 
+    fn summarize_encounter_deidentify_persist(&mut self, encounter_id: EncounterId) -> AppResult<()> {
+        let patient_id = self.check_active_patient_id()?;
+
+         // Read fresh transcript + prior sections + encounter number from the store.
+        let (transcript, prior, encounter_number) = {
+            let note = self
+                .store
+                .get(&patient_id)
+                .ok_or_else(|| AppError::NoteError(
+                    format!("No note found in PatientNoteStore for patient: {patient_id}"
+                )))?;
+            let enc = note
+                .encounters
+                .iter()
+                .find(|e| e.id == encounter_id);
+            
+            let transcript = enc
+                .and_then(
+                    |e| e.transcript
+                        .clone()
+                ).unwrap_or_default();
+
+            (transcript, note.note_sections.clone(), note.encounter_count)
+        };
+
+        // handle nothing to summarize
+        if transcript.trim().is_empty() {
+            return Ok(());
+        };
+
+        // De-identify before the network call (F4 / HIPPA)
+        let patient = self.patients
+            .get(&patient_id)
+            .cloned()
+            .ok_or(PatientNotFound(patient_id))?;
+        let safe_transcript = self.deidentifier.deidentify(&transcript, &patient);
+
+        // Bridge sync -> async
+        let sections = self.runtime.block_on(
+            self.summarizer.summarize_encounter(&safe_transcript, &prior, encounter_number)
+        )?;
+
+        // Persist 
+        self.bus.publish(NoteEvent::encounter_summarized(
+            patient_id, 
+            encounter_id, 
+            sections, 
+            vec![encounter_id]),
+            &self.store, 
+        )?;
+        Ok(())
+    }
+
 
     pub fn stop_active_encounter_for_shutdown(&mut self) -> AppResult<Option<EncounterId>> {
         if self.driver.has_active_encounter() {
@@ -398,6 +468,7 @@ where
 
         Ok(())
     }
+
 }
 
 fn sections_are_empty(sections: &NoteSections) -> bool {
