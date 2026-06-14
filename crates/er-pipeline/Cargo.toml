@@ -1,0 +1,10 @@
+[package]
+name = "er-pipeline"
+edition.workspace = true
+version.workspace = true
+
+# Audio capture + speech-to-text traits and mocks. Kept nearly dep-free so the
+# future on-device build never pulls in cloud machinery.
+[dependencies]
+er-domain.workspace = true
+thiserror.workspace = true

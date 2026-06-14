@@ -221,23 +221,86 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 
 [[package]]
-name = "er-note-app"
+name = "er-ai"
+version = "0.1.0"
+dependencies = [
+ "er-domain",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
+name = "er-app"
 version = "0.1.0"
 dependencies = [
  "chrono",
  "dashmap",
+ "er-ai",
+ "er-domain",
+ "er-pipeline",
+ "er-store",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "er-cli"
+version = "0.1.0"
+dependencies = [
+ "chrono",
  "dotenvy",
- "regex",
- "reqwest",
+ "er-ai",
+ "er-app",
+ "er-domain",
+ "er-pipeline",
+ "er-store",
  "rusqlite",
  "serde",
  "serde_json",
- "sha2",
- "thiserror",
  "tokio",
  "tracing",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "er-domain"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "uuid",
+]
+
+[[package]]
+name = "er-pipeline"
+version = "0.1.0"
+dependencies = [
+ "er-domain",
+ "thiserror",
+]
+
+[[package]]
+name = "er-store"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "er-domain",
+ "rusqlite",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "tracing",
 ]
 
 [[package]]

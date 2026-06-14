@@ -1,0 +1,20 @@
+[package]
+name = "er-app"
+edition.workspace = true
+version.workspace = true
+
+# Application/orchestration: EventBus, ShiftManager, EncounterDriver, load,
+# conversions, note export. Composes the inner layers.
+[dependencies]
+er-domain.workspace = true
+er-store.workspace = true
+er-ai.workspace = true
+er-pipeline.workspace = true
+dashmap.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+thiserror.workspace = true

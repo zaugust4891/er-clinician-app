@@ -1,0 +1,35 @@
+[package]
+name = "er-cli"
+edition.workspace = true
+version.workspace = true
+default-run = "er-cli"
+
+# Interactive developer CLI + standalone bins. The top-level delivery crate;
+# depends on every inner crate it constructs concrete types from.
+[dependencies]
+er-domain.workspace = true
+er-store.workspace = true
+er-ai.workspace = true
+er-pipeline.workspace = true
+er-app.workspace = true
+dotenvy.workspace = true
+rusqlite.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+
+[[bin]]
+name = "er-cli"
+path = "src/main.rs"
+
+[[bin]]
+name = "mdm_standalone"
+path = "src/bin/mdm_standalone.rs"
+
+[[bin]]
+name = "spike_summarizer"
+path = "src/bin/spike_summarizer.rs"

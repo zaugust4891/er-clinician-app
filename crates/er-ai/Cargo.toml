@@ -1,0 +1,16 @@
+[package]
+name = "er-ai"
+edition.workspace = true
+version.workspace = true
+
+# AI layer: Summarizer trait, ClaudeSummarizer, AppSummarizer, Deidentifier.
+[dependencies]
+er-domain.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+regex.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

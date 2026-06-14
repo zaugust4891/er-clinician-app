@@ -1,0 +1,14 @@
+[package]
+name = "er-domain"
+edition.workspace = true
+version.workspace = true
+
+# Pure domain core (future er-domain crate). The dependency rule: this crate
+# imports nothing from the other layers and performs no I/O — no rusqlite,
+# reqwest, tokio, dashmap, or regex (enforced now by the compiler).
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
