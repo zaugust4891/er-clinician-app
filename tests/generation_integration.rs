@@ -10,11 +10,17 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use chrono::Utc;
+use uuid::Uuid;
+
 use er_note_app::application::EventBus;
 use er_note_app::application::encounter_driver::EncounterDriver;
 use er_note_app::application::load::{self as load};
 use er_note_app::application::shift_manager::ShiftManager;
-use er_note_app::domain::{CaptureMode, NotePhase, PatientId, PatientRecord, Shift};
+use er_note_app::domain::{
+    CaptureMode, ClinicalResult, Disposition, LabResult, NotePhase, PatientId, PatientRecord,
+    ResultSource, ResultType, Shift,
+};
 use er_note_app::infrastructure::ai::summarizer::MockSummarizer;
 use er_note_app::infrastructure::audio::MockAudioCapture;
 use er_note_app::infrastructure::persistence::repository::{Repository, SqliteRepository};
@@ -23,6 +29,27 @@ use er_note_app::infrastructure::stt::MockTranscriber;
 /// The exact strings MockSummarizer::summarize_encounter returns.
 const MOCK_HPI: &str = "[mock HPI from encounter transcript]";
 const MOCK_EXAM: &str = "[mock exam findings]";
+/// The exact string MockSummarizer::generate_mdm returns.
+const MOCK_MDM: &str = "[mock MDM: moderate complexity, 2 diagnoses considered]";
+
+/// Build a manual lab result for the given patient.
+fn lab_result(patient_id: PatientId, name: &str, value: f64, unit: &str) -> ClinicalResult {
+    ClinicalResult {
+        id: Uuid::now_v7(),
+        patient_id,
+        source: ResultSource::Manual,
+        timestamp: Utc::now(),
+        result_type: ResultType::Lab(LabResult {
+            fhir_id: None,
+            loinc_code: None,
+            display_name: name.into(),
+            value,
+            unit: unit.into(),
+            reference_range: None,
+            is_abnormal: false,
+        }),
+    }
+}
 
 struct GenerationSetup {
     manager: ShiftManager<MockAudioCapture, MockTranscriber, MockSummarizer>,
@@ -165,4 +192,204 @@ fn second_encounter_keeps_hpi_and_survives_reload() {
     assert_eq!(loaded.phase, expected.phase);
     assert_eq!(loaded.encounter_count, expected.encounter_count);
     assert_eq!(loaded.version, expected.version);
+}
+
+// ---------------------------------------------------------------------------
+// Step 6a — one-button MDM generation
+// ---------------------------------------------------------------------------
+
+/// Drive a patient up to Idle with a generated HPI (one encounter), a lab,
+/// a medication, a diagnosis, a data-reviewed note, and a disposition — i.e.
+/// the full objective picture trigger_mdm assembles from.
+fn seed_note_ready_for_mdm(
+    manager: &mut ShiftManager<MockAudioCapture, MockTranscriber, MockSummarizer>,
+) -> PatientId {
+    let patient_id = manager.register_patient("chest pain");
+    manager.set_active_patient(patient_id).unwrap();
+
+    // One encounter -> HPI/Exam populated, note lands in Idle.
+    manager.start_encounter(CaptureMode::Ambient).unwrap();
+    manager.stop_encounter().unwrap();
+
+    // Objective data feeding the MDM (exercises every assemble_objective_data branch).
+    manager
+        .add_lab(lab_result(patient_id, "Troponin", 0.04, "ng/mL"), Utc::now())
+        .unwrap();
+    manager
+        .record_medication(
+            "Aspirin".into(),
+            "324mg".into(),
+            Some("PO".into()),
+            er_note_app::domain::MedicationKind::AdministeredInEd,
+        )
+        .unwrap();
+    manager
+        .assign_diagnosis("Acute PE".into(), Some("I26.99".into()), true)
+        .unwrap();
+    manager
+        .record_data_reviewed("CTA chest: PE in RLL".into())
+        .unwrap();
+    manager
+        .set_disposition(Disposition::Admit {
+            service: "Hospitalist".into(),
+            bed: None,
+        })
+        .unwrap();
+
+    patient_id
+}
+
+/// trigger_mdm must generate the MDM via the summarizer, persist it onto the
+/// note, and advance the phase Idle -> Finalizing.
+#[test]
+fn trigger_mdm_generates_persists_and_advances_phase() {
+    let mut setup = setup_generation_stack();
+    let patient_id = seed_note_ready_for_mdm(&mut setup.manager);
+
+    // Sanity: pre-conditions for trigger_mdm hold.
+    let before = setup.manager.get_note(patient_id).unwrap();
+    assert_eq!(before.phase, NotePhase::Idle);
+    assert_eq!(before.note_sections.mdm, None);
+    let version_before = before.version;
+    drop(before);
+
+    setup.manager.trigger_mdm().unwrap();
+
+    let note = setup.manager.get_note(patient_id).unwrap();
+
+    // The headline: MDM text reached the note, phase advanced.
+    assert_eq!(note.note_sections.mdm.as_deref(), Some(MOCK_MDM));
+    assert_eq!(note.phase, NotePhase::Finalizing);
+
+    // MdmGenerated + TriggerMDM each bump the version (2 mutations).
+    assert_eq!(note.version, version_before + 2);
+
+    // HPI from the earlier encounter is untouched by MDM generation.
+    assert_eq!(note.note_sections.hpi.as_deref(), Some(MOCK_HPI));
+
+    // The MDM was recorded in the section-history audit trail.
+    let mdm_versions = note
+        .section_history
+        .iter()
+        .filter(|v| v.section == "mdm")
+        .count();
+    assert_eq!(mdm_versions, 1);
+
+    // source_encounter_ids on the MDM points at the single encounter.
+    assert_eq!(note.encounters.len(), 1);
+}
+
+/// The generated MDM and the Finalizing phase must survive a simulated crash
+/// (drop the in-memory DashMap) and reload from SQLite (acceptance crit. 7).
+#[test]
+fn generated_mdm_survives_reload() {
+    let mut setup = setup_generation_stack();
+    let patient_id = seed_note_ready_for_mdm(&mut setup.manager);
+    setup.manager.trigger_mdm().unwrap();
+
+    let expected = setup.manager.get_note(patient_id).unwrap();
+    assert_eq!(expected.note_sections.mdm.as_deref(), Some(MOCK_MDM));
+    assert_eq!(expected.phase, NotePhase::Finalizing);
+
+    // Simulated crash: drop the manager (DashMap, bus, driver, runtime all go).
+    let GenerationSetup { manager, repo } = setup;
+    drop(manager);
+
+    let loaded = load::load_patient_note(repo.as_ref(), patient_id)
+        .unwrap()
+        .expect("note with generated MDM should reload from SQLite");
+
+    assert_eq!(loaded.note_sections.mdm.as_deref(), Some(MOCK_MDM));
+    assert_eq!(loaded.phase, NotePhase::Finalizing);
+    assert_eq!(loaded.note_sections.hpi.as_deref(), Some(MOCK_HPI));
+    assert_eq!(loaded.version, expected.version);
+    assert_eq!(loaded.disposition, expected.disposition);
+}
+
+/// trigger_mdm must be rejected when the note is not in Idle — e.g. a fresh
+/// Registered note with no encounter. Guards against generating from nothing
+/// and from clobbering a note in the wrong phase.
+#[test]
+fn trigger_mdm_rejected_when_not_idle() {
+    let mut setup = setup_generation_stack();
+    let patient_id = setup.manager.register_patient("chest pain");
+    setup.manager.set_active_patient(patient_id).unwrap();
+
+    // Phase is Registered (no encounter yet) -> trigger_mdm must error.
+    let result = setup.manager.trigger_mdm();
+    assert!(result.is_err());
+
+    let note = setup.manager.get_note(patient_id).unwrap();
+    assert_eq!(note.phase, NotePhase::Registered);
+    assert_eq!(note.note_sections.mdm, None);
+}
+
+// ---------------------------------------------------------------------------
+// Step 6 guard — refuse to generate an MDM from an empty note
+// ---------------------------------------------------------------------------
+
+/// A transcriber that yields no text — simulates a started/stopped recording
+/// with nothing said, so no HPI is ever summarized.
+struct EmptyTranscriber;
+
+impl er_note_app::infrastructure::stt::Transcriber for EmptyTranscriber {
+    fn transcribe(
+        &self,
+        _audio_pcm: &[u8],
+    ) -> er_note_app::error::AppResult<er_note_app::infrastructure::stt::TranscriptResult> {
+        Ok(er_note_app::infrastructure::stt::TranscriptResult {
+            text: String::new(),
+            confidence: None,
+            audio_duration_secs: 0.0,
+            processing_duration_secs: 0.0,
+        })
+    }
+}
+
+/// An Idle note with no HPI, no objective data, and no disposition must be
+/// refused by trigger_mdm's guard — before any (mock) generation runs.
+#[test]
+fn trigger_mdm_rejected_when_note_is_empty() {
+    let conn = er_note_app::infrastructure::persistence::db::open_memory_db().unwrap();
+    let repo: Arc<dyn Repository> = Arc::new(SqliteRepository::new(conn));
+    let bus = Arc::new(EventBus::new(32, Some(repo.clone())));
+    let store = load::new_store();
+    let driver = EncounterDriver::new(
+        MockAudioCapture::new(),
+        EmptyTranscriber,
+        bus.clone(),
+        store.clone(),
+    );
+    let runtime = Arc::new(tokio::runtime::Runtime::new().unwrap());
+    let mut manager = ShiftManager::new(
+        Shift::new(),
+        HashMap::<PatientId, PatientRecord>::new(),
+        driver,
+        bus,
+        store,
+        repo,
+        MockSummarizer::new(),
+        runtime,
+    );
+
+    let patient_id = manager.register_patient("chest pain");
+    manager.set_active_patient(patient_id).unwrap();
+
+    // Encounter with an empty transcript -> reaches Idle, but no HPI summarized.
+    manager.start_encounter(CaptureMode::Ambient).unwrap();
+    manager.stop_encounter().unwrap();
+
+    let before = manager.get_note(patient_id).unwrap();
+    assert_eq!(before.phase, NotePhase::Idle);
+    assert_eq!(before.note_sections.hpi, None);
+    drop(before);
+
+    // The guard fires: nothing to reason from.
+    let result = manager.trigger_mdm();
+    assert!(result.is_err());
+
+    // Note is untouched — no MDM, still Idle (no wasted state transition).
+    let note = manager.get_note(patient_id).unwrap();
+    assert_eq!(note.note_sections.mdm, None);
+    assert_eq!(note.phase, NotePhase::Idle);
 }

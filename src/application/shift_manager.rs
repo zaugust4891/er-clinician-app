@@ -1,4 +1,5 @@
 use crate::application::EventBus;
+use crate::application::conversions::disposition;
 use crate::application::encounter_driver::EncounterDriver;
 use crate::application::load::PatientNoteStore;
 use crate::application::shift_snapshot::ShiftSnapshot;
@@ -17,6 +18,8 @@ use crate::infrastructure::audio::AudioCapture;
 use crate::infrastructure::persistence::repository::Repository;
 use crate::infrastructure::stt::Transcriber;
 use crate::interface::export::format_note;
+use crate::domain::note::format_result_line;
+use crate::application::shift_manager::disposition::format_disposition_for_mdm;
 
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
@@ -287,13 +290,56 @@ where
     }
 
     pub fn trigger_mdm(&mut self) -> AppResult<()> {
+        let patient_id = self.check_active_patient_id()?;
         self.ensure_no_active_encounter("trigger MDM")?;
         self.ensure_active_phase(NotePhase::Idle, "TriggerMDM")?;
-        let patient_id = self.check_active_patient_id()?;
+        // 1. Snapshot the note's current clinical picture.
+        // Tuple destructuring matches purely by position, not name — so the compiler won't warn you if the order is off. 
+        // Just confirm the four values come out in the order you expect: (sections, objective_data, disposition_str, source_ids).
+        let (sections, objective_data, disposition_str, source_ids) = {
+            let note = self.get_note(patient_id).ok_or_else(|| AppError::NoteError(format!("No Note found for this patient.")))?;
+            let sections = note.note_sections.clone();
+            let objective_data = assemble_objective_data(&note);
 
-        let trigger_mdm_event = NoteEvent::trigger_mdm(patient_id);
+            // Guard: refuse to call the model with nothing. If there's no HPI,
+            // no objective data, and no disposition, there is nothing to reason
+            // from — bail before a wasted API call and a hallucinated MDM.
+            let has_hpi = sections
+                .hpi
+                .as_deref()
+                .is_some_and(|hpi| !hpi.trim().is_empty());
+            if !has_hpi && objective_data.trim().is_empty() && note.disposition.is_none() {
+                return Err(AppError::NoteError(
+                    "Nothing to generate an MDM from yet — record an encounter or add results first."
+                        .to_string(),
+                ));
+            }
 
-        self.bus.publish(trigger_mdm_event, &self.store)?;
+            let disposition_str = note.disposition.as_ref()
+                .map(format_disposition_for_mdm)
+                .unwrap_or_else(|| "Disposition not yet determined".to_string());
+            let source_ids = note.encounters.iter().map(|en| en.id).collect::<Vec<_>>();
+            (sections, objective_data, disposition_str, source_ids)
+        };
+
+
+         // 2. De-identify the objective-data blob 
+         //   (sections already de-identified at summarize time).
+        let patient = self.patients.get(&patient_id).cloned().ok_or_else(|| PatientNotFound(patient_id.clone()))?;
+        let safe_objective_data = self.deidentifier.deidentify(&objective_data, &patient);
+
+        // 3. Generate (sync → async bridge).
+        let mdm = self.runtime.block_on(
+            self.summarizer.generate_mdm(&sections, &safe_objective_data, &disposition_str,)
+        )?;
+        
+
+        // 4. Persist the MDM, THEN drive the state transition.
+        self.bus.publish(
+            NoteEvent::mdm_generated(patient_id, mdm, source_ids), &self.store)?; 
+
+        self.bus.publish(NoteEvent::trigger_mdm(patient_id), &self.store)?;
+        // Idle -> Finalizing
 
         Ok(())
     }
@@ -506,6 +552,48 @@ fn results_text(note: &PatientNote) -> Option<String> {
     )
 }
 
+/// Render the note's structured facts into the plain-text "data reviewed"
+/// blob that generate_mdm() consumes as `results_summary`
+fn assemble_objective_data(note: &PatientNote) -> String {
+    let mut out = String::new();
+    if !note.results.is_empty() {
+        out.push_str("Results:\n");
+        for r in &note.results {
+            out.push_str(&format!("- {}\n", format_result_line(r)
+        )); 
+        
+        } 
+    }
+    if !note.medication.is_empty() {
+        out.push_str("Medications:\n");
+        for m in &note.medication {
+            out.push_str(&format!(
+                "- {}\n", m.summary_line()
+            ));
+        }
+
+    }
+
+    if !note.diagnoses.is_empty() {
+        out.push_str("Diagnoses:\n");
+        for d in &note.diagnoses {
+            out.push_str(&format!("- {}{}\n", d.text, if d.is_primary {
+                " (primary)"
+            } else { "" }
+            ));
+        }
+    }
+
+    if !note.data_reviewed.is_empty() {
+        out.push_str("Other data reviewed (orders/consults):\n");
+        for s in &note.data_reviewed {
+            out.push_str(&format!("- {s}\n"));
+        }
+    }
+    out    
+}
+
+
 /// Phase 3 Step 0a test
 /// The test should construct a ShiftManager with MockSummarizer,
 /// use its runtime to block_on a summarize_encounter call,
@@ -562,5 +650,48 @@ mod tests {
             Some("[mock HPI from encounter transcript]")
         );
         assert_eq!(sections.exam.as_deref(), Some("[mock exam findings]"));
+    }
+
+    #[test]
+    fn assemble_objective_data_renders_all_sections() {
+        let mut note = PatientNote::new(Uuid::now_v7());
+        let patient_id = note.patient_id;
+
+        note.diagnoses.push(Diagnosis {
+            id: Uuid::now_v7(),
+            patient_id,
+            text: "Acute PE".into(),
+            icd10_code: Some("I26.99".into()),
+            is_primary: true,
+        });
+        note.diagnoses.push(Diagnosis {
+            id: Uuid::now_v7(),
+            patient_id,
+            text: "Hypoxia".into(),
+            icd10_code: None,
+            is_primary: false,
+        });
+        note.data_reviewed.push("CTA chest: PE in RLL".into());
+
+        let blob = assemble_objective_data(&note);
+
+        // Primary diagnosis gets a space before "(primary)"; non-primary gets nothing.
+        assert!(
+            blob.contains("- Acute PE (primary)"),
+            "primary dx should read 'Acute PE (primary)', got:\n{blob}"
+        );
+        assert!(
+            blob.contains("- Hypoxia\n"),
+            "non-primary dx should have no suffix, got:\n{blob}"
+        );
+        assert!(blob.contains("Diagnoses:"));
+        assert!(blob.contains("Other data reviewed (orders/consults):"));
+        assert!(blob.contains("- CTA chest: PE in RLL"));
+    }
+
+    #[test]
+    fn assemble_objective_data_is_empty_for_blank_note() {
+        let note = PatientNote::new(Uuid::now_v7());
+        assert_eq!(assemble_objective_data(&note), "");
     }
 }

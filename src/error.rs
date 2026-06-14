@@ -27,6 +27,9 @@ pub enum AppError {
     #[error("lab error: {0}")]
     LabResultError(String),
 
+    #[error("disposition error: {0}")]
+    DispositionError(String),
+
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 

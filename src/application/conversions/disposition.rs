@@ -53,6 +53,38 @@ pub fn parse_disposition(args: &[String]) -> AppResult<Disposition> {
     }
 }
 
+/// Render a disposition as a compact clinical phrase for the MDM prompt,
+/// e.g. "Discharged with instructions: ...; follow-up: ..." — one line,
+/// no newlines (it's fed to generate_mdm() as the `disposition` arg).
+pub fn format_disposition_for_mdm(disposition: &Disposition) -> String {
+    match disposition {
+        Disposition::Discharge { instructions, follow_up } => {
+            let mut s = format!("Discharged with instructions: {instructions}");
+            if let Some(follow_up) = follow_up {
+                s.push_str(&format!("; follow-up: {follow_up}"));
+            }
+            s
+        }
+        Disposition::Admit { service, bed } => {
+            let mut s = format!("Admitted to {service}");
+            if let Some(bed) = bed {
+                s.push_str(&format!(" (bed {bed})"));
+            }
+            s
+        }
+        Disposition::Transfer { destination, reason } => {
+            let mut s = format!("Transferred to {destination}");
+            if let Some(reason) = reason {
+                s.push_str(&format!(" for {reason}"));
+            }
+            s
+        }
+        Disposition::AMA => "Left against medical advice (AMA)".to_string(),
+        Disposition::LWBS => "Left without being seen (LWBS)".to_string(),
+    }
+}
+
+
 pub fn format_disposition_for_cli(disposition: &Disposition) -> String {
     match disposition {
         Disposition::Discharge {

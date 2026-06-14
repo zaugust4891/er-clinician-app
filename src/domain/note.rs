@@ -269,36 +269,44 @@ fn write_lines(f: &mut fmt::Formatter<'_>, title: &str, lines: &[String]) -> fmt
     writeln!(f)
 }
 
-fn write_results(f: &mut fmt::Formatter<'_>, results: &[ClinicalResult]) -> fmt::Result {
+pub fn write_results(f: &mut fmt::Formatter<'_>, results: &[ClinicalResult]) -> fmt::Result {
     if results.is_empty() {
         return Ok(());
     }
 
     writeln!(f, "Results Reviewed:")?;
     for result in results {
-        match &result.result_type {
-            ResultType::Lab(lab) => {
-                let abnormal_marker = if lab.is_abnormal { " abnormal" } else { "" };
-                writeln!(
-                    f,
-                    "{}: {} {}{}",
-                    lab.display_name, lab.value, lab.unit, abnormal_marker
-                )?;
-            }
-            ResultType::Imaging(imaging) => {
-                let critical_marker = if imaging.is_critical { " critical" } else { "" };
-                writeln!(
-                    f,
-                    "{} {}: {}{}",
-                    imaging.modality, imaging.body_part, imaging.impression, critical_marker
-                )?;
-            }
-            ResultType::Vital(vital) => {
-                writeln!(f, "{:?}: {} {}", vital.vital_type, vital.value, vital.unit)?;
-            }
-        }
+        writeln!(f, "{}", format_result_line(result))?;
     }
     writeln!(f)
+}
+
+/// Render a single clinical result as one readable line (no trailing newline).
+/// Shared by `write_results` (note Display) and `assemble_objective_data`
+/// (the MDM prompt blob) so both render results identically.
+pub fn format_result_line(r: &ClinicalResult) -> String {
+   let result = match &r.result_type {
+        ResultType::Lab(lab) => {
+            let abnormal_marker = if lab.is_abnormal { " abnormal" } else { "" };
+            format!(
+                "{}: {} {}{}",
+                lab.display_name, lab.value, lab.unit, abnormal_marker
+            )
+        }
+        ResultType::Imaging(imaging) => {
+            let critical_marker = if imaging.is_critical { " critical" } else { "" };
+            format!(
+                "{} {}: {}{}",
+                imaging.modality, imaging.body_part, imaging.impression, critical_marker
+            )
+        }
+        ResultType::Vital(vital) => {
+            format!("{:?}: {} {}", vital.vital_type, vital.value, vital.unit)
+        }
+    };
+    result
+
+    
 }
 
 fn format_disposition(disposition: &Disposition) -> String {

@@ -370,7 +370,18 @@ where
 
         Command::Mdm => {
             manager.trigger_mdm()?;
-            println!("MDM triggered.");
+
+            println!("MDM generated and note moved to Finalizing.");
+            println!("── MDM ──────────────────────────────────────");
+            if let Some(patient_id) = manager.active_patient_id() {
+                if let Some(note) = manager.get_note(patient_id) {
+                    match note.note_sections.mdm.as_deref() {
+                        Some(mdm) => println!("{}", mdm_preview(mdm)),
+                        None => println!("<no MDM text generated>"),
+                    }
+                }
+            }
+            println!("(run 'note' or 'export' to see the full note)");
             Ok(true)
         }
 
@@ -449,6 +460,18 @@ where
 fn short_id(id: uuid::Uuid) -> String {
     let id = id.to_string();
     id[id.len() - 8..].to_string()
+}
+
+/// First ~400 characters of the MDM, with an ellipsis if truncated.
+/// Char-based (not byte) so it never splits a multi-byte UTF-8 sequence.
+fn mdm_preview(mdm: &str) -> String {
+    const MAX_CHARS: usize = 400;
+    if mdm.chars().count() <= MAX_CHARS {
+        mdm.to_string()
+    } else {
+        let truncated: String = mdm.chars().take(MAX_CHARS).collect();
+        format!("{truncated}…")
+    }
 }
 
 #[cfg(test)]
@@ -552,5 +575,51 @@ mod tests {
         assert!(dx.is_primary);
 
         assert_eq!(note.data_reviewed, vec!["CTA chest: PE in RLL".to_string()]);
+    }
+
+    #[test]
+    fn mdm_command_generates_mdm_and_returns_ok() {
+        let mut manager = test_manager();
+        let patient_id = manager.register_patient("chest pain");
+        manager.set_active_patient(patient_id).unwrap();
+
+        // Reach Idle with a generated HPI so trigger_mdm's preconditions hold.
+        run(&mut manager, &["start", "ambient"]);
+        run(&mut manager, &["stop"]);
+
+        // The mdm command itself: must succeed and persist the MDM.
+        run(&mut manager, &["mdm"]);
+
+        let note = manager.get_note(patient_id).unwrap();
+        assert_eq!(
+            note.note_sections.mdm.as_deref(),
+            Some("[mock MDM: moderate complexity, 2 diagnoses considered]")
+        );
+    }
+
+    #[test]
+    fn mdm_preview_returns_short_text_unchanged() {
+        let short = "Moderate complexity MDM. 2 diagnoses considered.";
+        assert_eq!(mdm_preview(short), short);
+    }
+
+    #[test]
+    fn mdm_preview_truncates_long_text_with_ellipsis() {
+        let long = "x".repeat(500);
+        let preview = mdm_preview(&long);
+
+        // 400 kept chars + the single-char ellipsis.
+        assert_eq!(preview.chars().count(), 401);
+        assert!(preview.ends_with('…'));
+        assert!(preview.starts_with("xxxx"));
+    }
+
+    #[test]
+    fn mdm_preview_handles_multibyte_boundary() {
+        // 401 multi-byte chars: truncating by bytes would panic; by chars is safe.
+        let multibyte = "é".repeat(401);
+        let preview = mdm_preview(&multibyte);
+        assert_eq!(preview.chars().count(), 401); // 400 'é' + '…'
+        assert!(preview.ends_with('…'));
     }
 }
