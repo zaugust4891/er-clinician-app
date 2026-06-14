@@ -299,11 +299,21 @@ fn generated_mdm_survives_reload() {
         .unwrap()
         .expect("note with generated MDM should reload from SQLite");
 
+    // Full clinical picture survives replay/snapshot: prose, MDM, disposition,
+    // AND the structured objective data (meds, diagnoses, reviewed-data, labs).
     assert_eq!(loaded.note_sections.mdm.as_deref(), Some(MOCK_MDM));
     assert_eq!(loaded.phase, NotePhase::Finalizing);
     assert_eq!(loaded.note_sections.hpi.as_deref(), Some(MOCK_HPI));
     assert_eq!(loaded.version, expected.version);
     assert_eq!(loaded.disposition, expected.disposition);
+
+    assert_eq!(loaded.results.len(), 1);
+    assert_eq!(loaded.medication.len(), 1);
+    assert_eq!(loaded.medication[0].name, "Aspirin");
+    assert_eq!(loaded.diagnoses.len(), 1);
+    assert_eq!(loaded.diagnoses[0].text, "Acute PE");
+    assert!(loaded.diagnoses[0].is_primary);
+    assert_eq!(loaded.data_reviewed, vec!["CTA chest: PE in RLL".to_string()]);
 }
 
 /// trigger_mdm must be rejected when the note is not in Idle — e.g. a fresh

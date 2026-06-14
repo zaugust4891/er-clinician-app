@@ -92,3 +92,39 @@ impl Summarizer for MockSummarizer {
         Ok("[mock MDM: moderate complexity, 2 diagnoses considered]".into())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The AppSummarizer::Claude arm delegates to ClaudeSummarizer, which needs
+    // a live API key — exercised manually (6b/7a). These tests prove the enum's
+    // Summarizer impl correctly dispatches through to the Mock arm.
+
+    #[tokio::test]
+    async fn app_summarizer_mock_dispatches_summarize_encounter() {
+        let summarizer = AppSummarizer::Mock(MockSummarizer::new());
+
+        let sections = summarizer
+            .summarize_encounter("transcript", &NoteSections::default(), 1)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            sections.hpi.as_deref(),
+            Some("[mock HPI from encounter transcript]")
+        );
+    }
+
+    #[tokio::test]
+    async fn app_summarizer_mock_dispatches_generate_mdm() {
+        let summarizer = AppSummarizer::Mock(MockSummarizer::new());
+
+        let mdm = summarizer
+            .generate_mdm(&NoteSections::default(), "Troponin negative", "discharge")
+            .await
+            .unwrap();
+
+        assert_eq!(mdm, "[mock MDM: moderate complexity, 2 diagnoses considered]");
+    }
+}

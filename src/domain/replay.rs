@@ -245,11 +245,51 @@ mod tests {
     use uuid::Uuid;
 
     use crate::domain::CaptureMode;
-    use crate::domain::note::NotePhase;
+    use crate::domain::note::{NotePhase, NoteSections};
     use crate::domain::result::ClinicalResult;
-    use crate::domain::{LabResult, ResultSource, ResultType};
+    use crate::domain::{
+        Diagnosis, Disposition, LabResult, Medication, MedicationKind, ResultSource, ResultType,
+    };
 
     use super::*;
+
+    fn build_test_medication(patient_id: PatientId) -> Medication {
+        Medication {
+            id: Uuid::now_v7(),
+            patient_id,
+            name: "Aspirin".into(),
+            dose: "324mg".into(),
+            route: Some("PO".into()),
+            rxnorm_code: None,
+            kind: MedicationKind::AdministeredInEd,
+            administered_at: Utc::now(),
+            frequency: String::new(),
+        }
+    }
+
+    fn build_test_diagnosis(patient_id: PatientId) -> Diagnosis {
+        Diagnosis {
+            id: Uuid::now_v7(),
+            patient_id,
+            text: "Acute PE".into(),
+            icd10_code: Some("I26.99".into()),
+            is_primary: true,
+        }
+    }
+
+    /// Drive a note to Signed so immutability guards can be exercised.
+    fn signed_note(patient_id: PatientId, encounter_id: Uuid) -> PatientNote {
+        replay(
+            patient_id,
+            &[
+                NoteEvent::audio_started(patient_id, encounter_id, CaptureMode::Ambient),
+                NoteEvent::audio_stopped(patient_id, encounter_id),
+                NoteEvent::trigger_mdm(patient_id),
+                NoteEvent::review_ready(patient_id),
+                NoteEvent::sign(patient_id),
+            ],
+        )
+    }
 
     fn build_test_lab_result(patient_id: PatientId) -> ClinicalResult {
         ClinicalResult {
@@ -386,6 +426,206 @@ mod tests {
 
         // Signed state rejects ingestion — results are unchanged.
         assert_eq!(note.results.len(), initial_results_len);
+        assert_eq!(note.phase, NotePhase::Signed);
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 3 — apply_event arms for the five generation/objective-data events
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn apply_event_encounter_summarized_merges_hpi_and_exam() {
+        let patient_id = Uuid::now_v7();
+        let encounter_id = Uuid::now_v7();
+        let mut note = replay(
+            patient_id,
+            &[
+                NoteEvent::audio_started(patient_id, encounter_id, CaptureMode::Ambient),
+                NoteEvent::audio_stopped(patient_id, encounter_id),
+            ],
+        );
+
+        let sections = NoteSections {
+            hpi: Some("44yo M with chest pain".into()),
+            ros: None,
+            exam: Some("RRR, lungs clear".into()),
+            mdm: None,
+            disposition_text: None,
+        };
+        apply_event(
+            &mut note,
+            &NoteEvent::encounter_summarized(patient_id, encounter_id, sections, vec![encounter_id]),
+        );
+
+        assert_eq!(note.note_sections.hpi.as_deref(), Some("44yo M with chest pain"));
+        assert_eq!(note.note_sections.exam.as_deref(), Some("RRR, lungs clear"));
+    }
+
+    #[test]
+    fn apply_event_encounter_summarized_preserves_prior_mdm() {
+        // Regression (Step 1): a summarize delta with mdm:None must NOT wipe an
+        // MDM that MdmGenerated already set — field-wise merge, not assignment.
+        let patient_id = Uuid::now_v7();
+        let encounter_id = Uuid::now_v7();
+        let mut note = replay(
+            patient_id,
+            &[
+                NoteEvent::audio_started(patient_id, encounter_id, CaptureMode::Ambient),
+                NoteEvent::audio_stopped(patient_id, encounter_id),
+            ],
+        );
+        note.note_sections.mdm = Some("existing MDM text".into());
+
+        let delta = NoteSections {
+            hpi: Some("updated HPI".into()),
+            ros: None,
+            exam: None,
+            mdm: None, // the summarizer always returns null MDM
+            disposition_text: None,
+        };
+        apply_event(
+            &mut note,
+            &NoteEvent::encounter_summarized(patient_id, encounter_id, delta, vec![encounter_id]),
+        );
+
+        assert_eq!(note.note_sections.hpi.as_deref(), Some("updated HPI"));
+        assert_eq!(
+            note.note_sections.mdm.as_deref(),
+            Some("existing MDM text"),
+            "EncounterSummarized must never clobber a prior MDM"
+        );
+    }
+
+    #[test]
+    fn apply_event_mdm_generated_sets_mdm() {
+        let patient_id = Uuid::now_v7();
+        let mut note = PatientNote::new(patient_id);
+
+        apply_event(
+            &mut note,
+            &NoteEvent::mdm_generated(patient_id, "the MDM".into(), vec![]),
+        );
+
+        assert_eq!(note.note_sections.mdm.as_deref(), Some("the MDM"));
+        let mdm_versions = note
+            .section_history
+            .iter()
+            .filter(|v| v.section == "mdm")
+            .count();
+        assert_eq!(mdm_versions, 1);
+    }
+
+    #[test]
+    fn apply_event_disposition_set_records_disposition() {
+        let patient_id = Uuid::now_v7();
+        let mut note = PatientNote::new(patient_id);
+
+        let disposition = Disposition::Admit {
+            service: "Hospitalist".into(),
+            bed: None,
+        };
+        apply_event(
+            &mut note,
+            &NoteEvent::disposition_set(patient_id, disposition.clone()),
+        );
+
+        assert_eq!(note.disposition, Some(disposition));
+    }
+
+    #[test]
+    fn apply_event_medication_recorded_pushes_med() {
+        let patient_id = Uuid::now_v7();
+        let mut note = PatientNote::new(patient_id);
+
+        apply_event(
+            &mut note,
+            &NoteEvent::medication_recorded(patient_id, build_test_medication(patient_id)),
+        );
+
+        assert_eq!(note.medication.len(), 1);
+        assert_eq!(note.medication[0].name, "Aspirin");
+    }
+
+    #[test]
+    fn apply_event_diagnosis_assigned_pushes_dx() {
+        let patient_id = Uuid::now_v7();
+        let mut note = PatientNote::new(patient_id);
+
+        apply_event(
+            &mut note,
+            &NoteEvent::diagnosis_assigned(patient_id, build_test_diagnosis(patient_id)),
+        );
+
+        assert_eq!(note.diagnoses.len(), 1);
+        assert_eq!(note.diagnoses[0].text, "Acute PE");
+        assert!(note.diagnoses[0].is_primary);
+    }
+
+    #[test]
+    fn apply_event_data_reviewed_pushes_note() {
+        let patient_id = Uuid::now_v7();
+        let mut note = PatientNote::new(patient_id);
+
+        apply_event(
+            &mut note,
+            &NoteEvent::data_reviewed(patient_id, "CTA chest ordered".into()),
+        );
+
+        assert_eq!(note.data_reviewed, vec!["CTA chest ordered".to_string()]);
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 3 — immutability: mutations after Sign are no-ops
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn apply_event_medication_recorded_after_sign_is_noop() {
+        let patient_id = Uuid::now_v7();
+        let encounter_id = Uuid::now_v7();
+        let mut note = signed_note(patient_id, encounter_id);
+
+        apply_event(
+            &mut note,
+            &NoteEvent::medication_recorded(patient_id, build_test_medication(patient_id)),
+        );
+
+        assert!(note.medication.is_empty(), "signed note must reject meds");
+        assert_eq!(note.phase, NotePhase::Signed);
+    }
+
+    #[test]
+    fn apply_event_diagnosis_assigned_after_sign_is_noop() {
+        let patient_id = Uuid::now_v7();
+        let encounter_id = Uuid::now_v7();
+        let mut note = signed_note(patient_id, encounter_id);
+
+        apply_event(
+            &mut note,
+            &NoteEvent::diagnosis_assigned(patient_id, build_test_diagnosis(patient_id)),
+        );
+
+        assert!(note.diagnoses.is_empty(), "signed note must reject diagnoses");
+        assert_eq!(note.phase, NotePhase::Signed);
+    }
+
+    #[test]
+    fn apply_event_disposition_set_after_sign_is_noop() {
+        let patient_id = Uuid::now_v7();
+        let encounter_id = Uuid::now_v7();
+        let mut note = signed_note(patient_id, encounter_id);
+
+        apply_event(
+            &mut note,
+            &NoteEvent::disposition_set(
+                patient_id,
+                Disposition::Admit {
+                    service: "ICU".into(),
+                    bed: None,
+                },
+            ),
+        );
+
+        assert_eq!(note.disposition, None, "signed note must reject disposition");
         assert_eq!(note.phase, NotePhase::Signed);
     }
 }

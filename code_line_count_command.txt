@@ -1,0 +1,1 @@
+git ls-files '*.rs' '*.toml' '*.sql' | xargs wc -l
