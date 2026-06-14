@@ -25,6 +25,10 @@ Key differentiator: **multi-encounter merging** — captures every interaction a
 - `ShiftManager` — multi-patient shift orchestration, active-patient switching, guarded MDM/review/sign/reload operations, stable patient listing
 - Interactive developer CLI in `src/main.rs` with shift resume via `shift.json` and SQLite-backed note reload
 - Crash-recovery integration tests for full lifecycle reload and mid-encounter patient switching
+- **AI note generation wired into the live pipeline (Phase 3):** `stop_encounter` auto-summarizes the transcript into HPI/Exam (de-identified first); `trigger_mdm` is a one-button MDM generator that assembles results + meds + diagnoses + disposition and persists a billing-aware MDM
+- **Async bridge:** `ShiftManager<A, T, S>` carries a `tokio::Runtime` and `block_on`s the async `Summarizer` at exactly two points (summarize on stop, generate MDM on trigger); CLI stays synchronous
+- **Objective-data capture:** disposition, medications, diagnoses, and free-text "data reviewed" are event-sourced onto the note and feed the MDM
+- **Standalone `mdm_standalone` bin:** paste note + chart data on stdin → generated MDM, no audio/event-sourcing/FHIR (Dr. Joey's F10 demo path)
 
 ## What's Stubbed
 
@@ -32,8 +36,7 @@ Key differentiator: **multi-encounter merging** — captures every interaction a
 - No EMR/FHIR integration
 - Real speech-to-text is not wired into the pipeline yet; Phase 2 uses `MockTranscriber`
 - Real microphone capture is not wired into the pipeline yet; Phase 2 uses `MockAudioCapture`
-- CLI `lab` and `note` handlers are still placeholders even though lower-level result/note pieces exist
-- Summarization is not triggered by the encounter pipeline yet; Claude summarization exists as a separate component/spike
+- Transcript compaction / ephemeral mode (G7) and structured exam templates (G8) are deferred to later phases
 
 ## Completed: Phase 2 Audio Pipeline Wiring
 
@@ -57,10 +60,17 @@ Supported working commands include:
 - `list`
 - `switch <index>`
 - `start <ambient|dictation>`
-- `stop`
-- `mdm`
+- `stop` (auto-summarizes the encounter into HPI/Exam)
+- `lab <name> <value> <unit>`
+- `dispo <discharge|admit|transfer|ama|lwbs> ...`
+- `med <home|given> <name> [dose] [route]`
+- `dx <text> [--primary] [icd10]`
+- `data <free text>`
+- `mdm` (one-button MDM generation → Finalizing)
 - `review`
 - `sign`
+- `note` (print the formatted note)
+- `export` (plain-text note for clipboard/Epic)
 - `reload`
 - `status`
 - `help`
@@ -74,6 +84,38 @@ The CLI persists event data to `./er_notes.db` and stores non-event-sourced shif
 
 - multi-encounter lifecycle survives dropping the in-memory DashMap and reloading from SQLite
 - `switch_patient` closes the old patient's encounter, starts the new patient's encounter, and both patients reload correctly after simulated crash
+
+## Completed: Phase 3 AI Note Generation + One-Button MDM
+
+Phase 3 connects the AI layer to the event-sourced core so the note drafts its own prose, and delivers the headline one-button MDM. Implemented per `docs/planning/phase3.md` (Steps 0–8; Step 9 = these docs).
+
+```
+stop_encounter ─▶ TranscriptReady ─▶ [de-identify] ─▶ summarize_encounter ─▶ EncounterSummarized ─▶ note.hpi/exam
+lab/med/dx/data/dispo ─▶ Result/Medication/Diagnosis/DataReviewed/Disposition events ─▶ note.{results,medication,diagnoses,data_reviewed,disposition}
+mdm ─▶ assemble objective data ─▶ [de-identify] ─▶ generate_mdm ─▶ MdmGenerated ─▶ note.mdm ─▶ TriggerMDM (Idle→Finalizing)
+```
+
+### Key design points
+
+- **Generic summarizer, not a trait object.** `Summarizer` is an async (RPITIT) trait, not `dyn`-compatible, so `ShiftManager<A, T, S: Summarizer>` threads it as a generic (mirroring `A`/`T`). `AppSummarizer` enum (`Claude`/`Mock`) lets `main` pick Claude when `ANTHROPIC_KEY` is set, else fall back to mock for offline runs.
+- **Sync↔async bridge.** `ShiftManager` owns an `Arc<Runtime>` and `block_on`s only at the two AI call sites; the REPL stays synchronous.
+- **De-identify before every Claude call.** `Deidentifier` strips PHI from the transcript (on `stop`) and the objective-data blob (on `mdm`) before any network call.
+- **Best-effort summarization.** A summarization failure on `stop` is logged, not propagated — the transcript is already durably persisted, so the encounter is never lost and patient-switching stays robust.
+- **Field-wise section merge.** `merge_sections` copies only HPI/ROS/Exam (and only when `Some`), so a re-eval encounter summarized *after* the MDM was generated can never clobber the MDM. Preserves the non-negotiable multi-encounter re-eval flow.
+- **Persist content before advancing state.** `mdm` publishes `MdmGenerated` (while still `Idle`, snapshotted) *before* `TriggerMDM`, so a crash can't leave a `Finalizing` note with no MDM.
+- **Guards.** `trigger_mdm` requires no active encounter + `Idle` phase, and refuses to call the model when HPI, objective data, and disposition are all empty.
+
+### New events (folded in `apply_event`)
+
+`EncounterSummarized`, `MdmGenerated`, `DispositionSet`, `MedicationRecorded`, `DiagnosisAssigned`, `DataReviewed`. All carry `clinical_occurred_at`, which `apply_event` uses for `updated_at`/audit/section-version timestamps so replay is deterministic.
+
+### Standalone path
+
+`cargo run --bin mdm_standalone` reads `<note> ---DATA--- <objective data> ---DISPO--- <disposition>` on stdin and prints a generated MDM — no audio, event sourcing, or FHIR (Dr. Joey F10).
+
+### Test coverage
+
+All automated tests use `MockSummarizer` (no network, deterministic). `tests/generation_integration.rs` covers stop→HPI, multi-encounter merge, one-button MDM → Finalizing, the empty-note guard, and full crash-recovery (HPI/MDM/disposition/meds/diagnoses survive reload). Unit tests cover all five new `apply_event` arms, the MDM-preservation merge regression, post-Sign immutability, `AppSummarizer` dispatch, and `mdm_standalone`'s input split. Real-Claude runs (6b/7a) are manual.
 
 ## Completed: EventBus Persistence Wiring + Snapshots
 
@@ -138,19 +180,22 @@ Each layer folder maps 1:1 to a future workspace crate (Option 2, planned after 
 src/
 ├── domain/          # pure core (future er-domain)
 │   ├── note.rs encounter.rs patient.rs shift.rs result.rs disposition.rs audit.rs
+│   ├── medication.rs diagnosis.rs   # Phase 3 objective-data models
 │   ├── events.rs    # NoteEvent enum + constructors (no EventBus here)
 │   ├── state.rs     # NoteState trait, phase structs, ingest_result
 │   └── replay.rs    # apply_event, replay
 ├── application/     # orchestration (future er-app)
 │   ├── event_bus.rs # persist-first publish, projection, snapshot trigger
 │   ├── load.rs      # PatientNoteStore, load_patient_note
-│   ├── shift_manager.rs encounter_driver.rs shift_snapshot.rs conversions/
+│   ├── shift_manager.rs encounter_driver.rs shift_snapshot.rs
+│   ├── conversions/ # disposition.rs labs.rs medication.rs diagnosis.rs (CLI arg parsing)
 ├── infrastructure/  # outside world (future er-store / er-ai / er-pipeline)
 │   ├── persistence/ # repository.rs, db.rs
-│   ├── ai/          # claude.rs, summarizer.rs, deidentify.rs
+│   ├── ai/          # claude.rs, summarizer.rs (+ AppSummarizer), deidentify.rs
 │   ├── audio.rs stt.rs
 ├── interface/       # delivery (future er-cli)
 │   ├── cli.rs export.rs
+├── bin/             # spike_summarizer.rs, mdm_standalone.rs
 ├── error.rs main.rs
 tests/               # integration tests — compile against the public API only
 docs/                # architecture / product / planning documents
@@ -164,6 +209,8 @@ docs/                # architecture / product / planning documents
 | `src/domain/state.rs` | State pattern, NoteState trait, ingest_result |
 | `src/domain/events.rs` | NoteEvent enum + constructors |
 | `src/domain/replay.rs` | apply_event, replay (pure event application) |
+| `src/domain/medication.rs` | Medication + MedicationKind, `summary_line()` |
+| `src/domain/diagnosis.rs` | Diagnosis, `summary_line()` |
 | `src/application/event_bus.rs` | EventBus (persist-first publish, projection, snapshots) |
 | `src/application/load.rs` | PatientNoteStore, load_patient_note (snapshot fast-path) |
 | `src/application/shift_manager.rs` | Multi-patient shift orchestration and CLI-facing manager API |
@@ -172,12 +219,16 @@ docs/                # architecture / product / planning documents
 | `src/infrastructure/persistence/repository.rs` | Repository trait, SqliteRepository (events + snapshots + checksum) |
 | `src/infrastructure/persistence/db.rs` | SQLite schema, open_db/open_memory_db |
 | `src/infrastructure/ai/claude.rs` | Real Claude API client for HPI/ROS/Exam/MDM |
+| `src/infrastructure/ai/summarizer.rs` | `Summarizer` trait, `MockSummarizer`, `AppSummarizer` enum |
 | `src/infrastructure/ai/deidentify.rs` | PHI stripping before API calls |
+| `src/application/conversions/` | CLI arg → domain parsing (disposition, labs, medication, diagnosis) |
 | `src/interface/cli.rs` | CLI command parsing and dispatch |
 | `src/interface/export.rs` | Plain text note formatting |
 | `src/main.rs` | Interactive developer CLI startup, command loop, shift save/resume |
 | `src/bin/spike_summarizer.rs` | End-to-end Claude test (chest pain case) |
+| `src/bin/mdm_standalone.rs` | Standalone MDM-from-text (stdin → MDM), Phase 3 Step 7 |
 | `tests/persistence_integration.rs` | Integration tests: round-trip, snapshot, checksum, consistency |
 | `tests/crash_recovery.rs` | Phase 2 crash-recovery integration tests |
+| `tests/generation_integration.rs` | Phase 3 generation tests: HPI summarization, one-button MDM, reload |
 | `docs/product/doctor-feedback-responses.md` | Responses to ED doctor's questions |
 | `docs/product/product-summary.md` | Product pitch document |

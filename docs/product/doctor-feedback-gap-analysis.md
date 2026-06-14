@@ -6,6 +6,17 @@
 
 **Non-negotiables honored throughout:** the re-evaluation flow (multi-encounter merging) and patient-switching functionality **stay**. Nothing below proposes removing or deprecating any existing feature. Where Dr. Joey is lukewarm on re-eval, the response is to *reduce the product's dependence* on it, not to remove it.
 
+---
+
+> ## ⏩ Phase 3 status update (2026-06-14)
+>
+> **Phase 3 (`docs/planning/phase3.md`) is complete (Steps 0–9) and closes the central finding in §1.** The AI generation layer is now wired into the live event-sourced pipeline:
+> - **F3 / F8 / F9 → ✅ built (backend):** `stop_encounter` auto-summarizes HPI/Exam; `trigger_mdm` is a real one-button MDM generator that assembles results + meds + diagnoses + disposition, calls `generate_mdm`, persists `MdmGenerated`, and advances `Idle→Finalizing`. *(EMR/FHIR integration in F9/F10 remains 📋 Phases 6–8.)*
+> - **G1–G6 → ✅ built:** section-persistence events (G1), one-button MDM (G2), medications + diagnoses + free-text data-reviewed (G3, scoped per Q4), disposition capture (G4), standalone `mdm_standalone` bin (G5), and unstubbed `lab`/`note`/`export` (G6).
+> - **G7 (transcript compaction) and G8 (structured exam templates) remain ❌/📋 deferred** to later phases, as planned.
+>
+> The per-item Status cells below reflect the *original* analysis (2026-06-08); treat this banner as the authoritative current state. Evidence line numbers below predate the layered restructure (`src/models/…`, `src/cli.rs:NNN`) — see `CLAUDE.md` "Key Files" for current paths (`src/domain/`, `src/application/`, `src/interface/`).
+
 ### Sources read
 - **Feedback:** `doctor-feedback-responses.md` (Round 1, the two original questions + our answers) and Dr. Joey's **Round 2** feedback supplied in the task brief (HPI+MDM workflow, re-eval skepticism, "MDM from chart data" as the game-changer, deep EMR integration). *Round 2 is not yet captured in any repo file — see Action 0.*
 - **Product framing:** `product-summary.md`
@@ -47,14 +58,14 @@
 |---|---|---|---|
 | **F1** | Workflow uses a dot-phrase with **smart links pulling structured chart data** — *"past medical history, surgical history, medications… ED workup, test results, medications administered, disposition and other objective data."* HPI and MDM are the most time-consuming parts. | ❌/🟡 | Structured results exist for **labs/imaging/vitals only** (`src/models/result.rs:31-36`). **No** PMH, PSH, medications, orders, or disposition-as-input modeled. `Disposition` type exists (`src/models/disposition.rs`) but is never set. |
 | **F2** | Current real workflow: **Doximity AI Scribe → HPI**, then **copy note into ChatGPT → MDM**, AI filling narrative around existing chart data (dx, meds administered, labs/imaging, consults, dispo, follow-up). | (context, not a feature) | Motivates F3/F8/F9. |
-| **F3** | Ideal = **single workflow**: scribe listens → HPI; then **auto-ingest objective chart data → complete MDM** (workup, treatments, results, consultations, diagnosis, disposition). Eliminate copy-paste. | 🟡 **Partial** | Both halves exist as isolated library calls (`summarize_encounter`, `generate_mdm` in `src/claude_summarizer.rs`) but **neither is wired into the live app** (see §1). The "single workflow" does not exist end-to-end. |
+| **F3** | Ideal = **single workflow**: scribe listens → HPI; then **auto-ingest objective chart data → complete MDM** (workup, treatments, results, consultations, diagnosis, disposition). Eliminate copy-paste. | ✅ **Built (Phase 3)** | ~~🟡 Partial~~ Now wired end-to-end: `stop_encounter` summarizes HPI/Exam and `trigger_mdm` generates the MDM from objective data. The "single workflow" exists in the backend (see Phase 3 banner). Originally: both halves existed as isolated library calls (`summarize_encounter`, `generate_mdm`) but neither was wired. |
 | **F4** | Abridge's **narrative is saved and discoverable** — a medico-legal concern (the "turkey sandwich" anecdote: not everything said belongs in a permanent record). | 🟡 **Partial** / 📋 | De-id before API calls exists (`src/deidentify.rs`), but raw `TranscriptReady` payloads are stored **indefinitely** in the events table — the discoverability problem, *worsened* by event-sourcing. Flagged + fix designed (`TranscriptCompacted` tombstone) in `creative-improvements.md:193-216`, **not built**. |
 | **F5** | **Re-eval skepticism:** *"most people would have a hard time using it consistently… you're getting pulled in a million directions… tough to remember to record every interaction."* | ✅ feature exists; concern **open** | The re-eval/merge feature is implemented (R1 + `summarize_encounter` merge). The *concern* is adoption friction. **Non-negotiable: keep it.** Response = make the product valuable even when re-eval is used sparingly (prioritize F8). |
 | **F6** | Most **re-evaluations don't add much new information**; sometimes useful for documentation, often not. | (prioritization signal) | Reinforces F5. Don't make headline value depend on disciplined re-eval capture. |
 | **F7** | To capture **physical exam findings you must verbalize them — not natural.** | ❌ built / 📋 designed | No structured/normal-exam capture in code. Tap-to-expand "normal templates" for exam is designed in `ARCHITECTURE.md:765-769` but unbuilt. |
-| **F8** | **The game-changer: AI generates the MDM from the note already in the system** + objective data, meds, results, disposition — *"the biggest documentation pain point, and I don't think many people are doing it well."* Make it seamless. | 🟡/❌ **Primary gap** | `generate_mdm(sections, results_summary, disposition)` exists (`src/claude_summarizer.rs:163-196`) and is billing-aware (2021 E/M, `:169-204`). But: not wired (§1), output not persisted (no event), and inputs incomplete (no meds; disposition unwired; lab entry stubbed `src/cli.rs:223-226`). |
-| **F9** | Reiterated ideal: scribe → HPI, EMR-integrated; doc does normal care (orders, results, diagnoses, disposition); then **click a button in the MDM section → AI generates MDM** from documentation/orders/results/diagnoses/disposition. | ❌ end-to-end / 📋 EMR | Same as F8 plus EMR integration (📋 Phases 6-8). The "button" (`mdm` command) exists but only transitions state (`src/cli.rs:228-232`, `phase2.md:836-838`). Orders & diagnoses are **not modeled** anywhere. |
-| **F10** | Deep EMR integration is the **biggest challenge** (needs EHR-vendor buy-in). Open question: *"could it work as a standalone prototype… before full integration?"* Direction = fully integrated. | 📋 sequencing planned; **standalone framing is new** | Roadmap already sequences clipboard-MVP → FHIR read → FHIR write → deep Epic (`roadmap-and-next-phase-040826.md:103-224`). But Dr. Joey's specific *standalone MDM-from-pasted-chart-data* product framing is **not** in any doc — it's a product decision (open question Q5). |
+| **F8** | **The game-changer: AI generates the MDM from the note already in the system** + objective data, meds, results, disposition — *"the biggest documentation pain point, and I don't think many people are doing it well."* Make it seamless. | ✅ **Built (Phase 3)** | ~~🟡/❌ Primary gap~~ `generate_mdm` is now wired through `trigger_mdm`: assembles results + meds + diagnoses + data-reviewed + disposition, de-identifies, generates, and persists via `MdmGenerated` (then `TriggerMDM` → Finalizing). Billing-aware prompt unchanged (2021 E/M). Originally: existed but unwired, output not persisted, inputs incomplete. |
+| **F9** | Reiterated ideal: scribe → HPI, EMR-integrated; doc does normal care (orders, results, diagnoses, disposition); then **click a button in the MDM section → AI generates MDM** from documentation/orders/results/diagnoses/disposition. | ✅ **Built (Phase 3)**; EMR 📋 | ~~❌ end-to-end~~ The `mdm` button now generates from documentation + results + diagnoses + disposition (diagnoses modeled in Phase 3 G3). EMR integration remains 📋 Phases 6–8. Orders/consults captured as free-text `data_reviewed` (full FHIR modeling deferred). |
+| **F10** | Deep EMR integration is the **biggest challenge** (needs EHR-vendor buy-in). Open question: *"could it work as a standalone prototype… before full integration?"* Direction = fully integrated. | ✅ **Prototype built (Phase 3 G5)**; product decision 📋 | `mdm_standalone` bin (`src/bin/mdm_standalone.rs`) answers the "standalone prototype before integration?" question concretely: pipe `<note> ---DATA--- <data> ---DISPO--- <dispo>` on stdin → generated MDM, no FHIR. Whether to ship it as a *product* (Q5) is still an open product decision. |
 
 ---
 
@@ -78,14 +89,14 @@ These Dr. Joey items are **already covered by existing planning docs** — treat
 
 Ordered by leverage on Dr. Joey's stated priorities.
 
-- **G1 — Section-persistence events.** No `EncounterSummarized` / `MdmGenerated` / `DispositionSet` events; generated text can't reach the note. *Foundation for everything.* (Not planned; `phase2.md` deferred it.)
-- **G2 — One-button MDM, end-to-end.** Wire `trigger_mdm` to actually assemble inputs, call `generate_mdm`, persist via `MdmGenerated`, and transition to `Finalizing`. (The state transition is planned; the *generation* is not.)
-- **G3 — Objective-data inputs Dr. Joey named but that aren't modeled:** medications (home + administered), orders / ED workup, diagnoses (problem list / final dx), consultations. (Absent in code *and* roadmap.)
-- **G4 — Disposition capture wired** (event + command + `apply_event` + MDM/export feed). (Designed in `ARCHITECTURE.md`, no code.)
-- **G5 — Standalone "MDM-from-pasted-chart-data" path** (Dr. Joey's F10 prototype question). A non-FHIR way to validate the #1 thesis now. (Not planned.)
-- **G6 — Unstub `lab`, `note`, `export` CLI handlers** (manager methods already exist). *Quick wins, prerequisites for testing G2.* (Planned in `phase2.md`.)
-- **G7 — Discoverability / transcript-compaction controls** (F4). (Designed in `creative-improvements.md`, not built.)
-- **G8 — Structured/normal exam capture without verbalizing** (F7). (Designed in `ARCHITECTURE.md`, not built; lowest priority for a CLI backend.)
+- ✅ **G1 — Section-persistence events.** *(Built, Phase 3 Step 1.)* `EncounterSummarized` / `MdmGenerated` / `DispositionSet` (+ `MedicationRecorded` / `DiagnosisAssigned` / `DataReviewed`) added to `NoteEvent`, folded in `apply_event` (`src/domain/replay.rs`). Generated text now reaches the note.
+- ✅ **G2 — One-button MDM, end-to-end.** *(Built, Phase 3 Step 6.)* `ShiftManager::trigger_mdm` assembles inputs, de-identifies, calls `generate_mdm`, persists `MdmGenerated`, then `TriggerMDM` (→ `Finalizing`). Guards on empty input + phase.
+- ✅ **G3 — Objective-data inputs** *(Built, Phase 3 Step 4; scoped to meds + diagnoses per Q4.)* `Medication` (home/administered) and `Diagnosis` modeled (`src/domain/`); orders/consults captured as free-text `data_reviewed`. Full FHIR `ServiceRequest`/`Encounter` modeling deferred to Phase 6.
+- ✅ **G4 — Disposition capture wired** *(Built, Phase 3 Step 3.)* `DispositionSet` event + `dispo` CLI command + `apply_event` + MDM/export feed.
+- ✅ **G5 — Standalone "MDM-from-pasted-chart-data" path** *(Built, Phase 3 Step 7.)* `src/bin/mdm_standalone.rs`. Shipping it as a product is still open (Q5).
+- ✅ **G6 — Unstub `lab`, `note`, `export` CLI handlers** *(Built, Phase 3 Step 2.)*
+- ❌ **G7 — Discoverability / transcript-compaction controls** (F4). **Deferred** — designed in `creative-improvements.md`, not built.
+- ❌ **G8 — Structured/normal exam capture without verbalizing** (F7). **Deferred** — designed in `ARCHITECTURE.md`, lowest priority for a CLI backend.
 
 **Async-bridge prerequisite (cross-cutting):** the `Summarizer` trait is `async` via RPITIT (`impl Future`, `src/summarizer.rs:9-27`), which is **not `dyn`-compatible**, and `main.rs` is synchronous. Wiring any Claude call into the CLI requires bridging sync↔async (see Q1/Q2).
 
