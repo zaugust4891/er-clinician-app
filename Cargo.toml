@@ -36,3 +36,7 @@ path = "src/main.rs"
 [[bin]]
 name = "spike_summarizer"
 path = "src/bin/spike_summarizer.rs"
+
+[[bin]]
+name = "mdm_standalone"
+path = "src/bin/mdm_standalone.rs"
