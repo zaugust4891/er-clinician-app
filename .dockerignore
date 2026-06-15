@@ -1,0 +1,7 @@
+target/
+  .git/
+  .env
+  *.db
+  shift.json
+  src/$HOME/
+  **/*.db

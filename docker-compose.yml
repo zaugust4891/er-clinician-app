@@ -1,0 +1,13 @@
+services:
+  postgres:
+    image: postgres:16
+    environment: { POSTGRES_PASSWORD: dev, POSTGRES_DB: ernote }
+    ports: ["5432:5432"]
+  minio:                                # S3-compatible
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment: { MINIO_ROOT_USER: dev, MINIO_ROOT_PASSWORD: devdevdev }
+    ports: ["9000:9000", "9001:9001"]
+  elasticmq:                            # SQS-compatible
+    image: softwaremill/elasticmq-native
+    ports: ["9324:9324"]

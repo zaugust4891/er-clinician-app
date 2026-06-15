@@ -64,7 +64,7 @@ impl<A: AudioCapture, T: Transcriber> EncounterDriver<A, T> {
         Ok(encounter_id)
     }
 
-    ///TO DO: Implement stop_encounter()
+   
     /// Purpose:
     /// Stop recording,
     /// Run speech-to-text on the captured audio,
