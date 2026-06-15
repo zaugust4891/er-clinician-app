@@ -21,7 +21,6 @@ pub fn init_db(conn: &Connection) -> StoreResult<()> {
 
         CREATE TABLE IF NOT EXISTS snapshots (
             patient_id      TEXT PRIMARY KEY,
-            event_id        TEXT NOT NULL UNIQUE,
             sequence_id     INTEGER NOT NULL,
             snapshot        TEXT NOT NULL,
             checksum        TEXT NOT NULL, -- SHA-256 of snapshot text

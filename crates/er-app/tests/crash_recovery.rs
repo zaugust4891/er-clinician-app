@@ -11,6 +11,10 @@ use er_pipeline::audio::MockAudioCapture;
 use er_store::repository::{Repository, SqliteRepository};
 use er_pipeline::stt::MockTranscriber;
 
+// These tests drive EncounterDriver / EventBus / load_patient_note directly
+// (no ShiftManager), so nothing block_on's internally. They run as
+// #[tokio::test] and .await the now-async driver/bus/repo/load calls.
+
 struct CrashRecoverySetup {
     repo: Arc<dyn Repository>,
     bus: Arc<EventBus>,
@@ -19,6 +23,8 @@ struct CrashRecoverySetup {
     patient_id: PatientId,
 }
 
+// Pure construction — open_memory_db and EncounterDriver::new are both sync,
+// so this stays a plain fn.
 fn setup_crash_recovery_stack() -> CrashRecoverySetup {
     let conn = er_store::db::open_memory_db().unwrap();
     let repo: Arc<dyn Repository> = Arc::new(SqliteRepository::new(conn));
@@ -43,39 +49,43 @@ fn crash_recovery_test_module_is_registered() {
     assert!(true);
 }
 
-#[test]
-fn crash_recovery_setup_stack_compiles() {
+#[tokio::test]
+async fn crash_recovery_setup_stack_compiles() {
     let setup = setup_crash_recovery_stack();
 
-    assert_eq!(setup.repo.event_count().unwrap(), 0);
-    assert_eq!(setup.repo.snapshot_count().unwrap(), 0);
+    assert_eq!(setup.repo.event_count().await.unwrap(), 0);
+    assert_eq!(setup.repo.snapshot_count().await.unwrap(), 0);
     assert!(setup.store.is_empty());
     assert!(!setup.driver.has_active_encounter());
 
     let _receiver = setup.bus.subscribe();
-    let loaded = load::load_patient_note(setup.repo.as_ref(), setup.patient_id).unwrap();
+    let loaded = load::load_patient_note(setup.repo.as_ref(), setup.patient_id)
+        .await
+        .unwrap();
     assert!(loaded.is_none());
 }
 
-#[test]
-fn full_lifecycle_survives_simulated_crash() {
+#[tokio::test]
+async fn full_lifecycle_survives_simulated_crash() {
     let mut setup = setup_crash_recovery_stack();
 
     let first_encounter_id = setup
         .driver
         .start_encounter(setup.patient_id, CaptureMode::Ambient)
+        .await
         .unwrap();
 
-    let first_stopped_id = setup.driver.stop_encounter().unwrap();
+    let first_stopped_id = setup.driver.stop_encounter().await.unwrap();
 
     assert_eq!(first_stopped_id, first_encounter_id);
 
     let second_encounter_id = setup
         .driver
         .start_encounter(setup.patient_id, CaptureMode::Dictation)
+        .await
         .unwrap();
 
-    let second_stopped_id = setup.driver.stop_encounter().unwrap();
+    let second_stopped_id = setup.driver.stop_encounter().await.unwrap();
 
     assert_eq!(second_stopped_id, second_encounter_id);
 
@@ -99,10 +109,12 @@ fn full_lifecycle_survives_simulated_crash() {
     setup
         .bus
         .publish(NoteEvent::trigger_mdm(setup.patient_id), &setup.store)
+        .await
         .unwrap();
     setup
         .bus
         .publish(NoteEvent::review_ready(setup.patient_id), &setup.store)
+        .await
         .unwrap();
 
     let note = setup.store.get(&setup.patient_id).unwrap();
@@ -128,10 +140,11 @@ fn full_lifecycle_survives_simulated_crash() {
     assert_eq!(expected.patient_id, patient_id);
     assert_eq!(expected.phase, NotePhase::PendingSignOff);
     assert_eq!(expected.encounter_count, 2);
-    assert_eq!(repo.event_count().unwrap(), 8);
-    assert_eq!(repo.snapshot_count().unwrap(), 1);
+    assert_eq!(repo.event_count().await.unwrap(), 8);
+    assert_eq!(repo.snapshot_count().await.unwrap(), 1);
 
     let loaded = load::load_patient_note(repo.as_ref(), patient_id)
+        .await
         .unwrap()
         .expect("patient note should reload from SQLite after simulated crash");
 
@@ -153,8 +166,8 @@ fn full_lifecycle_survives_simulated_crash() {
     assert!(loaded.encounters[1].transcript.is_some());
 }
 
-#[test]
-fn switch_patient_mid_encounter_persists_both() {
+#[tokio::test]
+async fn switch_patient_mid_encounter_persists_both() {
     let mut setup = setup_crash_recovery_stack();
     let patient_a = Uuid::now_v7();
     let patient_b = Uuid::now_v7();
@@ -162,14 +175,16 @@ fn switch_patient_mid_encounter_persists_both() {
     setup
         .driver
         .start_encounter(patient_a, CaptureMode::Ambient)
+        .await
         .unwrap();
 
     setup
         .driver
         .switch_patient(patient_b, CaptureMode::Ambient)
+        .await
         .unwrap();
 
-    setup.driver.stop_encounter().unwrap();
+    setup.driver.stop_encounter().await.unwrap();
 
     let note_a = setup.store.get(&patient_a).unwrap();
     assert_eq!(note_a.phase, NotePhase::Idle);
@@ -203,13 +218,15 @@ fn switch_patient_mid_encounter_persists_both() {
     drop(store);
     drop(bus);
 
-    assert_eq!(repo.event_count().unwrap(), 6);
-    assert_eq!(repo.snapshot_count().unwrap(), 2);
+    assert_eq!(repo.event_count().await.unwrap(), 6);
+    assert_eq!(repo.snapshot_count().await.unwrap(), 2);
 
     let loaded_a = load::load_patient_note(repo.as_ref(), patient_a)
+        .await
         .unwrap()
         .expect("patient A should reload from SQLite after switch crash");
     let loaded_b = load::load_patient_note(repo.as_ref(), patient_b)
+        .await
         .unwrap()
         .expect("patient B should reload from SQLite after switch crash");
 

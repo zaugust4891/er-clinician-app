@@ -26,6 +26,17 @@ use er_pipeline::audio::MockAudioCapture;
 use er_store::repository::{Repository, SqliteRepository};
 use er_pipeline::stt::MockTranscriber;
 
+// These tests drive everything through ShiftManager, whose sync command
+// methods block_on an internal runtime. They must therefore run on ordinary
+// #[test] threads (never #[tokio::test], which would run them on a runtime
+// worker and panic: "Cannot start a runtime from within a runtime"). The only
+// directly-async calls are the post-crash `load_patient_note` lookups, made
+// after the manager (and its runtime) has been dropped — `block` runs those on
+// a throwaway runtime, which is safe because the test thread is not a worker.
+fn block<F: std::future::Future>(fut: F) -> F::Output {
+    tokio::runtime::Runtime::new().unwrap().block_on(fut)
+}
+
 /// The exact strings MockSummarizer::summarize_encounter returns.
 const MOCK_HPI: &str = "[mock HPI from encounter transcript]";
 const MOCK_EXAM: &str = "[mock exam findings]";
@@ -127,8 +138,9 @@ fn stop_encounter_populates_hpi_via_mock_summarizer() {
     assert_eq!(exam_versions, 1);
 
     // Four events persisted: AudioStarted, AudioStopped, TranscriptReady,
-    // EncounterSummarized.
-    assert_eq!(setup.repo.event_count().unwrap(), 4);
+    // EncounterSummarized. (manager.event_count() is the sync wrapper that
+    // block_on's the now-async repo call on the manager's own runtime.)
+    assert_eq!(setup.manager.event_count().unwrap(), 4);
 }
 
 /// A second start -> stop must keep the HPI populated (the merge path runs
@@ -170,7 +182,7 @@ fn second_encounter_keeps_hpi_and_survives_reload() {
     assert_eq!(hpi_versions, 2);
 
     // 2 encounters x 4 events each.
-    assert_eq!(setup.repo.event_count().unwrap(), 8);
+    assert_eq!(setup.manager.event_count().unwrap(), 8);
 
     let expected = note.clone();
     drop(note);
@@ -180,7 +192,7 @@ fn second_encounter_keeps_hpi_and_survives_reload() {
     let GenerationSetup { manager, repo } = setup;
     drop(manager);
 
-    let loaded = load::load_patient_note(repo.as_ref(), patient_id)
+    let loaded = block(load::load_patient_note(repo.as_ref(), patient_id))
         .unwrap()
         .expect("note with generated sections should reload from SQLite");
 
@@ -295,7 +307,7 @@ fn generated_mdm_survives_reload() {
     let GenerationSetup { manager, repo } = setup;
     drop(manager);
 
-    let loaded = load::load_patient_note(repo.as_ref(), patient_id)
+    let loaded = block(load::load_patient_note(repo.as_ref(), patient_id))
         .unwrap()
         .expect("note with generated MDM should reload from SQLite");
 

@@ -6,8 +6,12 @@ use er_domain::NoteEvent;
 use er_domain::{CaptureMode, Disposition, NotePhase};
 use er_store::repository::{Repository, SqliteRepository};
 
-#[test]
-fn publish_persists_projects_snapshots_and_loads() {
+// These tests drive EventBus / load_patient_note / the Repository trait
+// directly (no ShiftManager), so nothing calls block_on internally. They can
+// therefore run as #[tokio::test] and .await the now-async calls directly.
+
+#[tokio::test]
+async fn publish_persists_projects_snapshots_and_loads() {
     let conn = er_store::db::open_memory_db().unwrap();
     let repo = std::sync::Arc::new(SqliteRepository::new(conn));
     let store = er_app::load::new_store();
@@ -20,25 +24,33 @@ fn publish_persists_projects_snapshots_and_loads() {
         NoteEvent::audio_started(patient_id, encounter_id, CaptureMode::Ambient),
         &store,
     )
+    .await
     .unwrap();
     bus.publish(
         NoteEvent::transcript_ready(patient_id, encounter_id, "cp".into(), Utc::now()),
         &store,
     )
+    .await
     .unwrap();
     bus.publish(NoteEvent::audio_stopped(patient_id, encounter_id), &store)
+        .await
         .unwrap();
     bus.publish(NoteEvent::trigger_mdm(patient_id), &store)
+        .await
         .unwrap();
     bus.publish(NoteEvent::review_ready(patient_id), &store)
+        .await
         .unwrap();
-    bus.publish(NoteEvent::sign(patient_id), &store).unwrap();
+    bus.publish(NoteEvent::sign(patient_id), &store)
+        .await
+        .unwrap();
 
     // In-memory store is current.
     assert_eq!(store.get(&patient_id).unwrap().phase, NotePhase::Signed);
 
     // Load from repository round-trips the state.
     let loaded = er_app::load::load_patient_note(repo.as_ref(), patient_id)
+        .await
         .unwrap()
         .expect("note exists");
 
@@ -48,21 +60,23 @@ fn publish_persists_projects_snapshots_and_loads() {
     assert_eq!(loaded.encounters[0].transcript.as_deref(), Some("cp"));
 
     // A snapshot was written at Signed (or earlier).
-    let snap = repo.get_latest_snapshot(patient_id).unwrap();
+    let snap = repo.get_latest_snapshot(patient_id).await.unwrap();
     assert!(snap.is_some());
 }
 
-#[test]
-fn load_nonexistent_patient_returns_none() {
+#[tokio::test]
+async fn load_nonexistent_patient_returns_none() {
     let conn = er_store::db::open_memory_db().unwrap();
     let repo = SqliteRepository::new(conn);
 
-    let loaded = er_app::load::load_patient_note(&repo, Uuid::now_v7()).unwrap();
+    let loaded = er_app::load::load_patient_note(&repo, Uuid::now_v7())
+        .await
+        .unwrap();
     assert!(loaded.is_none());
 }
 
-#[test]
-fn load_uses_snapshot_delta_path() {
+#[tokio::test]
+async fn load_uses_snapshot_delta_path() {
     // Drive to Idle (first snapshot trigger), then publish one more event,
     // then reload. The reloaded note should reflect the post-Idle event.
     let conn = er_store::db::open_memory_db().unwrap();
@@ -77,24 +91,28 @@ fn load_uses_snapshot_delta_path() {
         NoteEvent::audio_started(patient_id, encounter_id, CaptureMode::Ambient),
         &store,
     )
+    .await
     .unwrap();
     bus.publish(NoteEvent::audio_stopped(patient_id, encounter_id), &store)
+        .await
         .unwrap();
     // Snapshot at Idle.
 
     bus.publish(NoteEvent::trigger_mdm(patient_id), &store)
+        .await
         .unwrap();
     // Not yet snapshotted in the Finalizing case — a snapshot IS written on Finalizing.
 
     let loaded = er_app::load::load_patient_note(repo.as_ref(), patient_id)
+        .await
         .unwrap()
         .unwrap();
     assert_eq!(loaded.phase, NotePhase::Finalizing);
     assert_eq!(loaded.encounter_count, 1);
 }
 
-#[test]
-fn corrupted_checksum_falls_back_to_full_replay() {
+#[tokio::test]
+async fn corrupted_checksum_falls_back_to_full_replay() {
     let conn = er_store::db::open_memory_db().unwrap();
     let repo = std::sync::Arc::new(SqliteRepository::new(conn));
     let store = er_app::load::new_store();
@@ -107,31 +125,34 @@ fn corrupted_checksum_falls_back_to_full_replay() {
         NoteEvent::audio_started(patient_id, encounter_id, CaptureMode::Ambient),
         &store,
     )
+    .await
     .unwrap();
     bus.publish(NoteEvent::audio_stopped(patient_id, encounter_id), &store)
+        .await
         .unwrap();
     // Snapshot written at Idle.
 
-    // Corrupt the checksum.
+    // Corrupt the checksum. (execute_raw is a sync test-support helper.)
     repo.execute_raw(
         "UPDATE snapshots SET checksum = 'bad' WHERE patient_id = ?1",
         &[&patient_id.to_string()],
     );
 
     // get_latest_snapshot returns None on checksum mismatch.
-    let snap = repo.get_latest_snapshot(patient_id).unwrap();
+    let snap = repo.get_latest_snapshot(patient_id).await.unwrap();
     assert!(snap.is_none(), "corrupted checksum should return None");
 
     // load_patient_note still works via full replay fallback.
     let loaded = er_app::load::load_patient_note(repo.as_ref(), patient_id)
+        .await
         .unwrap()
         .expect("full replay succeeds");
     assert_eq!(loaded.phase, NotePhase::Idle);
     assert_eq!(loaded.encounter_count, 1);
 }
 
-#[test]
-fn store_and_sqlite_stay_consistent() {
+#[tokio::test]
+async fn store_and_sqlite_stay_consistent() {
     let conn = er_store::db::open_memory_db().unwrap();
     let repo = std::sync::Arc::new(SqliteRepository::new(conn));
     let store = er_app::load::new_store();
@@ -144,22 +165,30 @@ fn store_and_sqlite_stay_consistent() {
         NoteEvent::audio_started(patient_id, encounter_id, CaptureMode::Ambient),
         &store,
     )
+    .await
     .unwrap();
     bus.publish(
         NoteEvent::transcript_ready(patient_id, encounter_id, "sob".into(), Utc::now()),
         &store,
     )
+    .await
     .unwrap();
     bus.publish(NoteEvent::audio_stopped(patient_id, encounter_id), &store)
+        .await
         .unwrap();
     bus.publish(NoteEvent::trigger_mdm(patient_id), &store)
+        .await
         .unwrap();
     bus.publish(NoteEvent::review_ready(patient_id), &store)
+        .await
         .unwrap();
-    bus.publish(NoteEvent::sign(patient_id), &store).unwrap();
+    bus.publish(NoteEvent::sign(patient_id), &store)
+        .await
+        .unwrap();
 
     let from_store = store.get(&patient_id).unwrap().clone();
     let from_db = er_app::load::load_patient_note(repo.as_ref(), patient_id)
+        .await
         .unwrap()
         .expect("note exists");
 
@@ -173,8 +202,8 @@ fn store_and_sqlite_stay_consistent() {
     );
 }
 
-#[test]
-fn disposition_set_after_sign_is_noop() {
+#[tokio::test]
+async fn disposition_set_after_sign_is_noop() {
     let conn = er_store::db::open_memory_db().unwrap();
     let repo = std::sync::Arc::new(SqliteRepository::new(conn));
     let store = er_app::load::new_store();
@@ -187,14 +216,20 @@ fn disposition_set_after_sign_is_noop() {
         NoteEvent::audio_started(patient_id, encounter_id, CaptureMode::Ambient),
         &store,
     )
+    .await
     .unwrap();
     bus.publish(NoteEvent::audio_stopped(patient_id, encounter_id), &store)
+        .await
         .unwrap();
     bus.publish(NoteEvent::trigger_mdm(patient_id), &store)
+        .await
         .unwrap();
     bus.publish(NoteEvent::review_ready(patient_id), &store)
+        .await
         .unwrap();
-    bus.publish(NoteEvent::sign(patient_id), &store).unwrap();
+    bus.publish(NoteEvent::sign(patient_id), &store)
+        .await
+        .unwrap();
     bus.publish(
         NoteEvent::disposition_set(
             patient_id,
@@ -205,6 +240,7 @@ fn disposition_set_after_sign_is_noop() {
         ),
         &store,
     )
+    .await
     .unwrap();
 
     let note = store.get(&patient_id).unwrap();

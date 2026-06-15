@@ -110,7 +110,7 @@ fn main() -> AppResult<()> {
 
     let mut notes_reloaded_count = 0;
     for (id, _) in &patients {
-        match load_patient_note(&*sql_lite_repo, *id) {
+        match threaded_rt.block_on(load_patient_note(&*sql_lite_repo, *id)) {
             Ok(Some(note)) => {
                 store.insert(*id, note);
                 notes_reloaded_count += 1;
