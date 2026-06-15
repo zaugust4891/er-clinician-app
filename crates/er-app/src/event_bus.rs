@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use tokio::sync::broadcast;
+use uuid::Uuid;
 
 use crate::load::PatientNoteStore;
 use er_domain::replay::apply_event;
@@ -24,12 +25,16 @@ impl EventBus {
         Self { sender, repository }
     }
 
-    pub fn publish(&self, event: NoteEvent, store: &PatientNoteStore) -> AppResult<u64> {
+    pub async fn publish(&self, event: NoteEvent, store: &PatientNoteStore) -> AppResult<u64> {
         let patient_id = event.extract_patient_id();
 
         // 1. Persist-first (durable before ephemeral).
+        //    This device IS the client (§3.4/§4.3), so mint the client-stamped
+        //    event_id here: UUIDv7 → globally unique + time-ordered. The sync API
+        //    (Step 5) will instead carry an id the remote client already stamped.
         let seq_id = if let Some(repo) = &self.repository {
-            repo.append_event(patient_id, event.clone())?
+            let event_id = Uuid::now_v7();
+            repo.append_event(patient_id, event_id, event.clone()).await?
         } else {
             0
         };
@@ -62,7 +67,7 @@ impl EventBus {
                     // which then drops the read lock before save_snapshot is called.
                     if let Some(snapshot) = store.get(&patient_id).map(|r| r.clone()) {
                         // Best-effort — a snapshot failure should not kill the publish path. Log it and move on.
-                        if let Err(e) = repo.save_snapshot(patient_id, seq_id, &snapshot) {
+                        if let Err(e) = repo.save_snapshot(patient_id, seq_id, &snapshot).await {
                             tracing::warn!(
                                 patient_id = %patient_id,
                                 sequence_id = %seq_id,

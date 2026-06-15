@@ -130,6 +130,29 @@ impl NoteEvent {
         }
     }
 
+    /// The clinical time this event represents — *when it happened to the
+    /// patient*, not when it was recorded to the store. Every variant carries
+    /// this field. Persistence stores it in the `clinical_occurred_at` column
+    /// (vs. the DB's own `recorded_at`), and replay uses it so reconstruction
+    /// is deterministic regardless of when events were synced.
+    pub fn clinical_occurred_at(&self) -> DateTime<Utc> {
+        match self {
+            NoteEvent::AudioStarted { clinical_occurred_at, .. } => *clinical_occurred_at,
+            NoteEvent::AudioStopped { clinical_occurred_at, .. } => *clinical_occurred_at,
+            NoteEvent::TranscriptReady { clinical_occurred_at, .. } => *clinical_occurred_at,
+            NoteEvent::EncounterSummarized { clinical_occurred_at, .. } => *clinical_occurred_at,
+            NoteEvent::MedicationRecorded { clinical_occurred_at, .. } => *clinical_occurred_at,
+            NoteEvent::ResultReceived { clinical_occurred_at, .. } => *clinical_occurred_at,
+            NoteEvent::DiagnosisAssigned { clinical_occurred_at, .. } => *clinical_occurred_at,
+            NoteEvent::DataReviewed { clinical_occurred_at, .. } => *clinical_occurred_at,
+            NoteEvent::TriggerMDM { clinical_occurred_at, .. } => *clinical_occurred_at,
+            NoteEvent::MdmGenerated { clinical_occurred_at, .. } => *clinical_occurred_at,
+            NoteEvent::ReviewReady { clinical_occurred_at, .. } => *clinical_occurred_at,
+            NoteEvent::DispositionSet { clinical_occurred_at, .. } => *clinical_occurred_at,
+            NoteEvent::Sign { clinical_occurred_at, .. } => *clinical_occurred_at,
+        }
+    }
+
     pub fn audio_started(
         patient_id: PatientId,
         encounter_id: EncounterId,
@@ -391,5 +414,26 @@ mod tests {
 
         println!("encounter_id: {:?}", encounter_id);
         assert_eq!(event.extract_encounter_id(), Some(encounter_id));
+    }
+
+    #[test]
+    fn clinical_occurred_at_returns_the_events_clinical_time() {
+        let patient_id = PatientId::now_v7();
+        let when = Utc::now();
+
+        // A variant whose constructor sets the time directly.
+        let stopped = NoteEvent::AudioStopped {
+            patient_id,
+            encounter_id: EncounterId::now_v7(),
+            clinical_occurred_at: when,
+        };
+        assert_eq!(stopped.clinical_occurred_at(), when);
+
+        // A variant that takes the time as a constructor argument.
+        let signed = NoteEvent::Sign {
+            patient_id,
+            clinical_occurred_at: when,
+        };
+        assert_eq!(signed.clinical_occurred_at(), when);
     }
 }

@@ -286,6 +286,10 @@ $ curl -s localhost:8080/healthz          # container also healthy
 
 ## Step 3 — Async `Repository` + `PostgresRepository` + `event_id`
 
+> 📖 **Deep dive:** `phase4-step3-deep-dive.md` explains every concept in this step from the ground
+> up (sync vs async I/O, `#[async_trait]`/dyn-compatibility, idempotency & UUIDv7, sqlx, generic test
+> suites) and maps each change to the exact file/line in this repo. Read it once before coding.
+
 **Objective:** make the persistence trait async (the load-bearing refactor of the whole phase), implement it on Postgres with sqlx, and introduce the client-stamped `event_id` that makes sync idempotent (plan D10).
 
 ### 3.1 Why async, and the exact ripple list

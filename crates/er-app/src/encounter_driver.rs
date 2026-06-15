@@ -36,7 +36,7 @@ impl<A: AudioCapture, T: Transcriber> EncounterDriver<A, T> {
     /// into the event-sourced pipeline.
     /// This will eventually be called by ShiftManager::set_active_patient()
     /// (set_active_patient will be called by the quick-switch functionality which will be wired up to the UI's one-tap button on the 'active' screen.
-    pub fn start_encounter(
+    pub async fn start_encounter(
         &mut self,
         patient_id: PatientId,
         mode: CaptureMode,
@@ -54,7 +54,7 @@ impl<A: AudioCapture, T: Transcriber> EncounterDriver<A, T> {
         self.bus.publish(
             NoteEvent::audio_started(patient_id, encounter_id, mode),
             &self.store,
-        )?;
+        ).await?;
 
         self.active_encounter = Some(ActiveEncounter {
             patient_id,
@@ -76,7 +76,7 @@ impl<A: AudioCapture, T: Transcriber> EncounterDriver<A, T> {
     /// The state machine should transition to 'Idle' the moment the clinician stops talking, not after transcription finishes
     /// (This is triggered on the UI by a 'stop-tap' or a 'direct switch', meaning a voice activated command switch or tapping a different patients button.
     ///   e.g, the doctor switches through  voice)
-    pub fn stop_encounter(&mut self) -> AppResult<EncounterId> {
+    pub async fn stop_encounter(&mut self) -> AppResult<EncounterId> {
         let active = self
             .active_encounter
             .take()
@@ -87,7 +87,7 @@ impl<A: AudioCapture, T: Transcriber> EncounterDriver<A, T> {
         self.bus.publish(
             NoteEvent::audio_stopped(active.patient_id, active.encounter_id),
             &self.store,
-        )?;
+        ).await?;
 
         let transcript_result = self.transcriber.transcribe(&pcm_bytes)?;
 
@@ -99,7 +99,7 @@ impl<A: AudioCapture, T: Transcriber> EncounterDriver<A, T> {
                 Utc::now(),
             ),
             &self.store,
-        )?;
+        ).await?;
 
         Ok(active.encounter_id)
     }
@@ -110,17 +110,16 @@ impl<A: AudioCapture, T: Transcriber> EncounterDriver<A, T> {
     /// - stop the current encounter,
     /// - flush its audio/transcript, and start a new encounter for the new patient
     ///  -- all atomically from the clinician's perspective.
-    pub fn switch_patient(
+    pub async fn switch_patient(
         &mut self,
         new_patient_id: PatientId,
         mode: CaptureMode,
     ) -> AppResult<EncounterId> {
         if self.active_encounter.is_some() {
-            self.stop_encounter()?;
+            self.stop_encounter().await?;
         }
 
-        let new_encounter_id = self.start_encounter(new_patient_id, mode);
-        new_encounter_id
+        self.start_encounter(new_patient_id, mode).await
     }
 
     pub fn has_active_encounter(&self) -> bool {
@@ -155,13 +154,14 @@ mod tests {
         (driver, receiver, store)
     }
 
-    #[test]
-    fn start_encounter_publishes_audio_started() {
+    #[tokio::test]
+    async fn start_encounter_publishes_audio_started() {
         let (mut driver, mut receiver, store) = test_driver();
         let patient_id = Uuid::now_v7();
 
         let encounter_id = driver
             .start_encounter(patient_id, CaptureMode::Ambient)
+            .await
             .unwrap();
 
         let event = receiver.try_recv().unwrap();
@@ -184,17 +184,18 @@ mod tests {
         assert_eq!(note.encounter_count, 1);
     }
 
-    #[test]
-    fn stop_encounter_publishes_audio_stopped_then_transcript_ready() {
+    #[tokio::test]
+    async fn stop_encounter_publishes_audio_stopped_then_transcript_ready() {
         let (mut driver, mut receiver, store) = test_driver();
         let patient_id = Uuid::now_v7();
 
         let encounter_id = driver
             .start_encounter(patient_id, CaptureMode::Dictation)
+            .await
             .unwrap();
         let _started = receiver.try_recv().unwrap();
 
-        let stopped_id = driver.stop_encounter().unwrap();
+        let stopped_id = driver.stop_encounter().await.unwrap();
         assert_eq!(stopped_id, encounter_id);
 
         let first = receiver.try_recv().unwrap();
@@ -233,44 +234,48 @@ mod tests {
         assert!(note.encounters[0].transcript.is_some());
     }
 
-    #[test]
-    fn double_start_returns_error() {
+    #[tokio::test]
+    async fn double_start_returns_error() {
         let (mut driver, _receiver, _store) = test_driver();
         let patient_id = Uuid::now_v7();
 
         driver
             .start_encounter(patient_id, CaptureMode::Ambient)
+            .await
             .unwrap();
 
         let err = driver
             .start_encounter(patient_id, CaptureMode::Dictation)
+            .await
             .unwrap_err();
 
         assert!(err.to_string().contains("encounter already in progress"));
     }
 
-    #[test]
-    fn stop_without_start_returns_error() {
+    #[tokio::test]
+    async fn stop_without_start_returns_error() {
         let (mut driver, _receiver, _store) = test_driver();
 
-        let err = driver.stop_encounter().unwrap_err();
+        let err = driver.stop_encounter().await.unwrap_err();
 
         assert!(err.to_string().contains("no encounter in progress"));
     }
 
-    #[test]
-    fn switch_patient_stops_old_and_starts_new() {
+    #[tokio::test]
+    async fn switch_patient_stops_old_and_starts_new() {
         let (mut driver, mut receiver, store) = test_driver();
         let patient_a = Uuid::now_v7();
         let patient_b = Uuid::now_v7();
 
         let encounter_a = driver
             .start_encounter(patient_a, CaptureMode::Ambient)
+            .await
             .unwrap();
         let _started_a = receiver.try_recv().unwrap();
 
         let encounter_b = driver
             .switch_patient(patient_b, CaptureMode::Dictation)
+            .await
             .unwrap();
 
         let stopped_a = receiver.try_recv().unwrap();

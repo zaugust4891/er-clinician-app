@@ -95,14 +95,14 @@ where
             AppError::Audio("No active patient. Please register and select one first.".to_string())
         })?;
 
-        self.driver.start_encounter(patient_id, mode)
+        self.runtime.block_on(self.driver.start_encounter(patient_id, mode))
     }
 
     pub fn stop_encounter(&mut self) -> AppResult<EncounterId> {
         // 1. Driver publishes AudioStopped + TranscriptReady 
         // (state  Idle, snapshot).
-        let encounter_id = self.driver.stop_encounter()?;
-        
+        let encounter_id = self.runtime.block_on(self.driver.stop_encounter())?;
+
         // 2. Summarize and persist. 
         //      Best-effort: a summarization failure must NOT lose the encounter
         //          — the transcript is already durably persisted.
@@ -160,20 +160,20 @@ where
         )?;
 
         // Persist 
-        self.bus.publish(NoteEvent::encounter_summarized(
+        self.runtime.block_on(self.bus.publish(NoteEvent::encounter_summarized(
             patient_id, 
             encounter_id, 
             sections, 
             vec![encounter_id]),
             &self.store, 
-        )?;
+        ))?;
         Ok(())
     }
 
 
     pub fn stop_active_encounter_for_shutdown(&mut self) -> AppResult<Option<EncounterId>> {
         if self.driver.has_active_encounter() {
-            self.driver.stop_encounter().map(Some)
+            self.runtime.block_on(self.driver.stop_encounter()).map(Some)
         } else {
             Ok(None)
         }
@@ -192,7 +192,7 @@ where
 
         // If an encounter is in progress (for the OLD patient), close it cleanly.
         if self.driver.has_active_encounter() {
-            self.driver.stop_encounter()?;
+            self.runtime.block_on(self.driver.stop_encounter())?;
         }
 
         // Switch context. We do NOT auto-start a new encounter - that's a separate clinician action.
@@ -216,17 +216,17 @@ where
 
         let lab_result_event = NoteEvent::result_received(patient_id, result, clinical_occurred_at);
 
-        self.bus.publish(lab_result_event, &self.store)?;
+        self.runtime.block_on(self.bus.publish(lab_result_event, &self.store))?;
 
         Ok(())
     }
 
     pub fn set_disposition(&mut self, disposition: Disposition) -> AppResult<()> {
         let patient_id = self.check_active_patient_id()?;
-        self.bus.publish(
+        self.runtime.block_on(self.bus.publish(
             NoteEvent::disposition_set(patient_id, disposition),
             &self.store,
-        )?;
+        ))?;
         Ok(())
     }
 
@@ -251,10 +251,10 @@ where
             frequency: String::new(),
         };
 
-        self.bus.publish(
+        self.runtime.block_on(self.bus.publish(
             NoteEvent::medication_recorded(patient_id, medication),
             &self.store,
-        )?;
+        ))?;
         Ok(())
     }
 
@@ -274,19 +274,19 @@ where
             is_primary,
         };
 
-        self.bus.publish(
+        self.runtime.block_on(self.bus.publish(
             NoteEvent::diagnosis_assigned(patient_id, diagnosis),
             &self.store,
-        )?;
+        ))?;
         Ok(())
     }
 
     pub fn record_data_reviewed(&mut self, physician_review: String) -> AppResult<()> {
         let patient_id = self.check_active_patient_id()?;
-        self.bus.publish(
+        self.runtime.block_on(self.bus.publish(
             NoteEvent::data_reviewed(patient_id, physician_review),
             &self.store,
-        )?;
+        ))?;
         Ok(())
     }
 
@@ -336,10 +336,10 @@ where
         
 
         // 4. Persist the MDM, THEN drive the state transition.
-        self.bus.publish(
-            NoteEvent::mdm_generated(patient_id, mdm, source_ids), &self.store)?; 
+        self.runtime.block_on(self.bus.publish(
+            NoteEvent::mdm_generated(patient_id, mdm, source_ids), &self.store))?; 
 
-        self.bus.publish(NoteEvent::trigger_mdm(patient_id), &self.store)?;
+        self.runtime.block_on(self.bus.publish(NoteEvent::trigger_mdm(patient_id), &self.store))?;
         // Idle -> Finalizing
 
         Ok(())
@@ -351,7 +351,7 @@ where
         let patient_id = self.check_active_patient_id()?;
         let review_ready = NoteEvent::review_ready(patient_id);
 
-        self.bus.publish(review_ready, &self.store)?;
+        self.runtime.block_on(self.bus.publish(review_ready, &self.store))?;
 
         Ok(())
     }
@@ -362,7 +362,7 @@ where
         let patient_id = self.check_active_patient_id()?;
         let signed_note = NoteEvent::sign(patient_id);
 
-        self.bus.publish(signed_note, &self.store)?;
+        self.runtime.block_on(self.bus.publish(signed_note, &self.store))?;
 
         Ok(())
     }
@@ -426,11 +426,11 @@ where
     }
 
     pub fn event_count(&self) -> AppResult<usize> {
-        Ok(self.repo.event_count()?)
+        Ok(self.runtime.block_on(self.repo.event_count())?)
     }
 
     pub fn snapshot_count(&self) -> AppResult<usize> {
-        Ok(self.repo.snapshot_count()?)
+        Ok(self.runtime.block_on(self.repo.snapshot_count())?)
     }
 
     pub fn has_active_encounter(&self) -> bool {
@@ -442,14 +442,14 @@ where
         let patient_id = self.check_active_patient_id()?;
 
         let (note, replayed_count) =
-            if let Some((sequence_id, mut note)) = self.repo.get_latest_snapshot(patient_id)? {
-                let delta = self.repo.get_events_since(patient_id, sequence_id)?;
+            if let Some((sequence_id, mut note)) = self.runtime.block_on(self.repo.get_latest_snapshot(patient_id))? {
+                let delta = self.runtime.block_on(self.repo.get_events_since(patient_id, sequence_id))?;
                 for stored in &delta {
                     apply_event(&mut note, &stored.event);
                 }
                 (note, delta.len())
             } else {
-                let events = self.repo.get_events(patient_id)?;
+                let events = self.runtime.block_on(self.repo.get_events(patient_id))?;
                 if events.is_empty() {
                     (PatientNote::new(patient_id), 0)
                 } else {
@@ -605,6 +605,13 @@ fn assemble_objective_data(note: &PatientNote) -> String {
 mod tests {
     use super::*;
 
+    // NOT #[tokio::test]: this test deliberately drives the ShiftManager's
+    // sync→async `block_on` bridge (the exact path the CLI uses). `block_on`
+    // is only legal on a thread that is NOT already a runtime worker, so the
+    // test must run on an ordinary `#[test]` thread — mirroring why the CLI's
+    // `main` is `fn main()` and not `#[tokio::main]`. Marking it #[tokio::test]
+    // would run it on a worker thread and panic: "Cannot start a runtime from
+    // within a runtime."
     #[test]
     fn construct_shift_manager_with_mock_summarizer() {
         let conn = er_store::db::open_memory_db().unwrap();
