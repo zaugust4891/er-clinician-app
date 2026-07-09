@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO snapshots (patient_id, org_id, sequence_id, snapshot, checksum, created_at)\n            VALUES ($1, $2, $3, $4, $5, now())\n            ON CONFLICT(patient_id) DO UPDATE\n                SET org_id = EXCLUDED.org_id,\n                    sequence_id = EXCLUDED.sequence_id,\n                    snapshot = EXCLUDED.snapshot,\n                    checksum = EXCLUDED.checksum,\n                    created_at = EXCLUDED.created_at\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int8",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b28c7af7ed97b9a2b5d903f8a8403957d93f19bec11e39597da9d1b2988de1a2"
+}

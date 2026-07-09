@@ -1,0 +1,35 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT sequence_id, snapshot, checksum\n               FROM snapshots\n               WHERE org_id = $1 AND patient_id = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "sequence_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "snapshot",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "checksum",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "0fae67b815d4d52842ecc98a7d49eb2cd5a723b6554b09903b9979f9589c5c29"
+}

@@ -2,7 +2,6 @@ mod config;
 mod routes;
 mod state;
 mod error;
-mod repository;
 
 use std::time::Duration;
 use tracing_subscriber::{Layer, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};

@@ -1,0 +1,27 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO events\n                    (event_id, org_id, patient_id, event_type, payload, clinical_occurred_at)\n                VALUES ($1, $2, $3, $4, $5, $6)\n                ON CONFLICT (event_id) DO NOTHING\n                RETURNING sequence_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "sequence_id",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Jsonb",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "7bcfaa9904d3d8fbd2a7830cf380880d4c57f89b46393287116b8c8131536f7b"
+}
