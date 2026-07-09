@@ -324,14 +324,18 @@ where
         };
 
 
-         // 2. De-identify the objective-data blob 
-         //   (sections already de-identified at summarize time).
+         // 2. De-identify EVERY free-text blob before the model call.
+         //    Both objective_data and the disposition are free text that can carry
+         //    PHI (e.g. "f/u with Dr. Jones at 123 Main St", a callback number).
+         //    sections (HPI/ROS/Exam) were already de-identified at summarize time
+         //    because they are derived from the de-identified transcript.
         let patient = self.patients.get(&patient_id).cloned().ok_or_else(|| PatientNotFound(patient_id.clone()))?;
         let safe_objective_data = self.deidentifier.deidentify(&objective_data, &patient);
+        let safe_disposition = self.deidentifier.deidentify(&disposition_str, &patient);
 
         // 3. Generate (sync → async bridge).
         let mdm = self.runtime.block_on(
-            self.summarizer.generate_mdm(&sections, &safe_objective_data, &disposition_str,)
+            self.summarizer.generate_mdm(&sections, &safe_objective_data, &safe_disposition,)
         )?;
         
 

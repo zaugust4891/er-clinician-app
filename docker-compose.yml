@@ -2,7 +2,7 @@ services:
   postgres:
     image: postgres:16
     environment: { POSTGRES_PASSWORD: dev, POSTGRES_DB: ernote }
-    ports: ["5432:5432"]
+    ports: ["5433:5432"]
   minio:                                # S3-compatible
     image: minio/minio
     command: server /data --console-address ":9001"

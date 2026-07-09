@@ -4,6 +4,12 @@
 //! data on stdin, get a generated MDM. No audio, no event sourcing, no FHIR,
 //! no shift state — just the Claude MDM prompt.
 //!
+//! ⚠️ SAFETY: this binary sends its input to the Anthropic API, which is NOT
+//! under a Business Associate Agreement. It is a SYNTHETIC-DATA demo only. It
+//! refuses to run unless `ER_MDM_STANDALONE_SYNTHETIC_OK=1` is set (an explicit
+//! acknowledgement that the input contains no real PHI), and it best-effort
+//! strips structured identifiers before sending. Do not feed it real charts.
+//!
 //! Input format (all sections optional, order fixed):
 //!
 //! ```text
@@ -29,13 +35,26 @@
 
 use std::io::Read;
 
-use er_domain::NoteSections;
+use er_domain::{NoteSections, PatientRecord};
 use er_app::error::AppResult;
 use er_ai::claude::ClaudeSummarizer;
+use er_ai::deidentify::Deidentifier;
 use er_ai::summarizer::Summarizer;
 
 const DATA_SEP: &str = "---DATA---";
 const DISPO_SEP: &str = "---DISPO---";
+
+/// This tool sends its input to the Anthropic API, which is NOT covered by a
+/// Business Associate Agreement. It is a synthetic-data demo only. The operator
+/// must set this env var to confirm the input contains no real PHI before any
+/// network call is made.
+const SYNTHETIC_OK_ENV: &str = "ER_MDM_STANDALONE_SYNTHETIC_OK";
+
+fn synthetic_ack() -> bool {
+    std::env::var(SYNTHETIC_OK_ENV)
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
 
 #[tokio::main]
 async fn main() -> AppResult<()> {
@@ -54,6 +73,32 @@ async fn main() -> AppResult<()> {
         );
         return Ok(());
     }
+
+    // GUARD: this tool POSTs its input to the Anthropic API, which is NOT under a
+    // BAA. It is a synthetic-data demo. Refuse to send anything unless the operator
+    // has explicitly acknowledged the input contains no real PHI.
+    if !synthetic_ack() {
+        eprintln!(
+            "REFUSING to send: mdm_standalone transmits its input to the Anthropic API,\n\
+             which is NOT covered by a Business Associate Agreement. Use ONLY synthetic /\n\
+             non-PHI data with this tool.\n\
+             \n\
+             If your input contains NO real patient information, re-run with:\n\
+             \n    {SYNTHETIC_OK_ENV}=1 cargo run --bin mdm_standalone < your_synthetic_file.txt\n"
+        );
+        return Ok(());
+    }
+
+    // Best-effort minimization before the (non-BAA) call: strip structured
+    // identifiers (SSN / phone / MRN-shaped numbers / numeric dates). This does
+    // NOT remove names — the standalone tool has no patient context, so name
+    // redaction is impossible here. The synthetic-only guard above is the real
+    // control; this is defense-in-depth, not HIPAA de-identification.
+    let mut deid = Deidentifier::new();
+    let placeholder = PatientRecord::new("standalone");
+    let note_text = deid.deidentify(&note_text, &placeholder);
+    let data_text = deid.deidentify(&data_text, &placeholder);
+    let dispo = deid.deidentify(&dispo, &placeholder);
 
     let summarizer = ClaudeSummarizer::new()?;
     let sections = NoteSections {

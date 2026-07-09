@@ -118,7 +118,7 @@ impl Repository for SqliteRepository {
         let event_id_text = event_id.to_string();
         let patient_id_text = patient_id.to_string();
         let event_type_text = event.event_type();
-        let occurred_at_text = Utc::now().to_rfc3339();
+        let occurred_at_text = event.clinical_occurred_at().to_rfc3339();
         let rows_inserted = conn.execute(
             "INSERT OR IGNORE INTO events \
             (event_id, patient_id, event_type, payload, occurred_at) \
@@ -185,7 +185,7 @@ impl Repository for SqliteRepository {
         // SHA-256 of the serialized JSON, as lowercase hex. Written alongside
         // the row so get_latest_snapshot can detect corruption and fall back
         // to a full event replay.
-        let checksum = format!("{:x}", Sha256::digest(snapshot_json.as_bytes()));
+        let checksum = snapshot_checksum(&snapshot_json);
 
         // Upsert: one snapshot per patient, latest wins. patient_id is the
         // PRIMARY KEY on the snapshots table.
@@ -279,4 +279,8 @@ pub struct StoredEvent {
     pub event_id: Uuid,
     pub event: NoteEvent,
     pub occurred_at: DateTime<Utc>,
+}
+
+pub fn snapshot_checksum(serialized: &str) -> String {
+    format!("{:x}", sha2::Sha256::digest(serialized.as_bytes()))
 }
