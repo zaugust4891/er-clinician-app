@@ -319,6 +319,11 @@ pub trait Repository: Send + Sync {
 
 ### 3.2 sqlx setup in `er-server`
 
+> 📖 **Hands-on walkthrough:** `phase4-step3-postgres-guide.md` implements this whole sub-step
+> end to end — dependency flags, the `0001` migration (with the `org_id`-FK and `TEXT`-vs-`JSONB`
+> snapshot decisions explained), the `StoreError` change for sqlx errors, every `PostgresRepository`
+> method with full code + the *why*, the `.sqlx` offline-cache workflow, and `#[sqlx::test]` testing.
+
 ```
 $ cargo add -p er-server sqlx --features postgres,runtime-tokio,tls-rustls,uuid,chrono,json,migrate
 $ mkdir crates/er-server/migrations
@@ -354,6 +359,7 @@ impl Repository for PostgresRepository {
     // get_events / get_events_since: WHERE org_id = $1 AND patient_id = $2 ORDER BY sequence_id
     // save/get snapshot: jsonb + the same SHA-256 hex checksum logic, then note.hydrate()
 }
+
 ```
 
 Run `cargo sqlx prepare --workspace` and commit `.sqlx/` so CI type-checks queries without a live DB.
@@ -378,6 +384,12 @@ $ DATABASE_URL=… cargo test -p er-server          # generic suite + crash reco
 ---
 
 ## Step 4 — Auth Middleware + Tenancy
+
+> 📖 **Deep dive:** `phase4-step4-deep-dive.md` explains every concept in this step from the ground
+> up (stateless auth & JWTs, RS256/asymmetric signing, JWKS & key rotation, the validation pipeline
+> and the attack each check stops, axum middleware/extractors, dev-vs-cognito modes, tenancy by
+> construction, and why cross-tenant access returns 404 not 403) and maps each change to the exact
+> file/line in this repo. Read it once before coding.
 
 **Objective:** JWT-validating middleware with two modes — `dev` (local keypair, no AWS needed) and `cognito` (JWKS) — plus the `orgs`/`clinicians` tables and the rule that org scoping happens in the repository constructor, never in handlers.
 

@@ -175,18 +175,10 @@ repository is stored and passed around:
 - `EventBus` holds `repository: Option<Arc<dyn Repository>>` (`event_bus.rs:14`).
 - The crash-recovery tests use `repo: Arc<dyn Repository>` (`crash_recovery.rs`).
 
-That `dyn Repository` is the important part. **`dyn Trait` is a *trait object*** — it means "some
-concrete type that implements `Repository`, but I've erased *which* one; I'll dispatch the right
-method at runtime through a vtable (a table of function pointers)." Trait objects are how this
-code stays generic over "SQLite today, Postgres tomorrow, a fake in tests" without sprinkling
-generic type parameters everywhere.
+That `dyn Repository` is the important part. **`dyn Trait` is a *trait object*** — it means "some concrete type that implements `Repository`, but I've erased *which* one; I'll dispatch the right method at runtime through a vtable (a table of function pointers)." Trait objects are how this code stays generic over "SQLite today, Postgres tomorrow, a fake in tests" without sprinkling generic type parameters everywhere.
 
-The problem: a trait that uses native `async fn` is **not "dyn-compatible"** (the older term is
-"object-safe") out of the box. The reason is mechanical. An `async fn` returns an anonymous,
-compiler-generated `Future` type whose *size is different for every implementation* (SQLite's
-future and Postgres's future are different state machines of different sizes). A vtable needs a
-single, fixed return type to point at. An unsized, per-impl return type can't go in a vtable. So
-`dyn Repository` with native `async fn` simply doesn't compile in the way you need.
+The problem: a trait that uses native `async fn` is **not "dyn-compatible"** (the older term is "object-safe") out of the box. The reason is mechanical. An `async fn` returns an anonymous, compiler-generated `Future` type whose *size is different for every implementation* (SQLite's future and Postgres's future are different state machines of different sizes). A vtable needs a
+single, fixed return type to point at. An unsized, per-impl return type can't go in a vtable. So `dyn Repository` with native `async fn` simply doesn't compile in the way you need.
 
 ### 2.2 What `#[async_trait]` does about it
 
@@ -201,8 +193,7 @@ pub trait Repository: Send + Sync {
 }
 ```
 
-the macro transforms each `async fn` into a normal `fn` that returns a **heap-allocated, boxed
-future with a uniform type**:
+the macro transforms each `async fn` into a normal `fn` that returns a **heap-allocated, boxed future with a uniform type**:
 
 ```rust
 fn append_event<'a>(&'a self, …)
@@ -237,8 +228,7 @@ The trait is declared `pub trait Repository: Send + Sync`. Two thread-safety mar
 - **`Send`** = "a value of this type can be *moved* to another thread safely."
 - **`Sync`** = "a value of this type can be *shared* (by reference) across threads safely."
 
-The server runtime has multiple worker threads, and `Arc<dyn Repository>` gets cloned and handed
-to tasks that may run on any of them. So the repository must be safe to share across threads —
+The server runtime has multiple worker threads, and `Arc<dyn Repository>` gets cloned and handed to tasks that may run on any of them. So the repository must be safe to share across threads —
 hence `Sync` — and the futures it returns must be safe to move between threads (Tokio may resume
 a paused future on a *different* worker thread than the one that started it) — hence the `+ Send`
 on the boxed future in §2.2, which `#[async_trait]` adds for you. This is also why
