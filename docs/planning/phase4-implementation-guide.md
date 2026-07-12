@@ -401,8 +401,14 @@ $ cargo add -p er-server jsonwebtoken   # v9
 
 ```rust
 #[derive(Deserialize)]
-struct Claims { sub: String, #[serde(rename = "custom:org_id")] org_id: Option<Uuid>,
-                token_use: Option<String>, exp: usize, iss: String, client_id: Option<String> }
+struct Claims { sub: String, 
+                #[serde(rename = "custom:org_id")] 
+                org_id: Option<Uuid>,
+                token_use: Option<String>, 
+                exp: usize, 
+                iss: String, 
+                client_id: Option<String> 
+            }
 
 pub struct AuthedClinician { pub clinician_id: Uuid, pub org_id: Uuid }   // axum extractor
 ```

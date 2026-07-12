@@ -7,9 +7,14 @@ version.workspace = true
 async-trait = "0.1.89"
 anyhow = { version = "1.0", default-features = true }
 axum = "0.8.9"
+base64 = "0.22"
 chrono.workspace = true
 dotenvy.workspace = true
 er-app = { version = "0.1.0", path = "../er-app" }
+jsonwebtoken = { version = "10.4.0", features = ["rust_crypto"] }
+moka = {version = "0.12", features = ["future"] }
+rsa = "0.9"
+reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -22,4 +27,4 @@ uuid.workspace = true
 sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "chrono", "json", "macros", "migrate"] }
 er-store = { version = "0.1.0", path = "../er-store" }
 er-domain = { version = "0.1.0", path = "../er-domain" }
-jsonwebtoken = "10.4.0"
+
