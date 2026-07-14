@@ -3,3 +3,32 @@
 db_steps.txt
 next_steps.md
 ARCHITECTURE.md 
+state_pattern.md
+# PAI hook writes a literal `$HOME/` dir (unexpanded shell var); ignore it anywhere
+**/$HOME/
+.env
+.env.example
+repository_code_to_add.txt
+test_note.txt
+
+repository-architecture.md
+
+
+# Local-only design docs and exported files
+approck-web-architecture.md
+ed_note_example.rtf
+ed_note_example.odt
+ed_note_example.docx
+doctor-feedback-responses.md
+product-summary.md
+next-steps-031326.txt
+roadmap-and-next-phase-040826.md
+approck-feasibility-analysis.md
+pricing-strategy.md
+infrastructure-cost-model.md
+docs/planning/*
+
+# LibreOffice lock files
+.~lock.*
+
+

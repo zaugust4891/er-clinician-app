@@ -116,6 +116,18 @@ async fn suite(repo: Arc<dyn Repository>) {
     assert_eq!(repo.snapshot_count().await.unwrap(), snaps_before + 1);
 }
 
+/// The tenancy migration added FKs from events/snapshots to orgs, so every
+/// org a test writes under must have a parent row first.
+async fn seed_org(pool: &PgPool) -> Uuid {
+    let org = Uuid::now_v7();
+    sqlx::query("INSERT INTO orgs (id, name) VALUES ($1, 'test org')")
+        .bind(org)
+        .execute(pool)
+        .await
+        .unwrap();
+    org
+}
+
 #[tokio::test]
 async fn sqlite_repository_satisfies_contract() {
     let conn = er_store::db::open_memory_db().unwrap();
@@ -124,14 +136,16 @@ async fn sqlite_repository_satisfies_contract() {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn postgres_repository_satisfies_contract(pool: PgPool) {
-    suite(Arc::new(PostgresRepository::for_org(pool, Uuid::now_v7()))).await;
+    let org = seed_org(&pool).await;
+    suite(Arc::new(PostgresRepository::for_org(pool, org))).await;
 }
 
 /// A tampered snapshot must be treated as absent so load_patient_note falls
 /// back to full replay — same behavior the SQLite impl already guarantees.
 #[sqlx::test(migrations = "./migrations")]
 async fn postgres_snapshot_checksum_mismatch_falls_back(pool: PgPool) {
-    let repo = PostgresRepository::for_org(pool.clone(), Uuid::now_v7());
+    let org = seed_org(&pool).await;
+    let repo = PostgresRepository::for_org(pool.clone(), org);
     let patient = Uuid::now_v7();
     let encounter = Uuid::now_v7();
 
@@ -157,8 +171,9 @@ async fn postgres_snapshot_checksum_mismatch_falls_back(pool: PgPool) {
 /// scoped to different orgs, must be fully isolated from each other.
 #[sqlx::test(migrations = "./migrations")]
 async fn postgres_repositories_are_org_isolated(pool: PgPool) {
-    let org_a = PostgresRepository::for_org(pool.clone(), Uuid::now_v7());
-    let org_b = PostgresRepository::for_org(pool, Uuid::now_v7());
+    let (id_a, id_b) = (seed_org(&pool).await, seed_org(&pool).await);
+    let org_a = PostgresRepository::for_org(pool.clone(), id_a);
+    let org_b = PostgresRepository::for_org(pool, id_b);
     let patient = Uuid::now_v7();
 
     org_a
@@ -185,8 +200,8 @@ async fn postgres_repositories_are_org_isolated(pool: PgPool) {
 /// the port (deep-dive §6.3).
 #[sqlx::test(migrations = "./migrations")]
 async fn postgres_full_lifecycle_survives_reload(pool: PgPool) {
-    let repo: Arc<dyn Repository> =
-        Arc::new(PostgresRepository::for_org(pool, Uuid::now_v7()));
+    let org = seed_org(&pool).await;
+    let repo: Arc<dyn Repository> = Arc::new(PostgresRepository::for_org(pool, org));
     let store = er_app::load::new_store();
     let bus = er_app::EventBus::new(32, Some(repo.clone()));
 
