@@ -22,7 +22,7 @@ impl AuthConfig {
         match self {
             Self::Dev{ .. } => DEV_ISSUER.to_string(),
             Self::Cognito { region, pool_id, .. } => 
-                format!("http//cognito-idp.{region}.amazonaws.com/{pool_id}"),
+                format!("https//cognito-idp.{region}.amazonaws.com/{pool_id}"),
         }
     }
 
