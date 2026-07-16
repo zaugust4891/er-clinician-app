@@ -1,5 +1,9 @@
 use uuid::Uuid;
 
+use crate::auth::AuthError;
+use crate::auth::keys::KeySet;
+use crate::config::AuthConfig;
+
 
 
 
@@ -18,33 +22,27 @@ pub struct Claims {
 pub async fn validate_token(token: &str, keys: &KeySet, auth: &AuthConfig) -> Result<Claims, AuthError> {
     // Decode only the header - this does not trust the payload
     let header = jsonwebtoken::decode_header(token)?;
-    let header = header.kid.ok_or(AuthError::MissingKid)?;
+    let kid = header.kid.ok_or(AuthError::MissingKid)?;
 
     // Pick the public key by kid (KeySet refreshes on miss in cognito mode)
-
+    let key = keys.key_for(&kid).await?;
 
 
     // signature + exp + iss in one call
-
+    let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::RS256);
+    validation.set_issuer(&[auth.issuer()]);
+    validation.set_required_spec_claims(&["exp", "iss"]);
 
     let data = jsonwebtoken::decode::<Claims>(token, &key, &validation)?;
 
     // Cognito-only token_use == "access", client_id is ours
     // dev tokens are minted with token_use=access
 
-
+    if let AuthConfig::Cognito { client_id, .. } = auth {
+        if data.claims.token_use.as_deref() != Some("access") { return Err(AuthError::WrongTokenUse); }
+        if data.claims.client_id.as_deref() != Some(client_id) { return Err(AuthError::WrongClientId); }
+    }   
 
     Ok(data.claims)
 }
 
-
-
-pub struct Keyset {
-    jwks: tokio::sync::RwLock<jsonwebtoken::jwk::JwkSet>,
-    refresh_url: Option<String>, // Some(...) only in cognito mode
-    http: Option<reqwest::Client>,
-}
-
-impl Keyset {
-    
-}

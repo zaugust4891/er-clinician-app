@@ -23,4 +23,6 @@ pub enum AuthError {
     #[error("client_id mismatch")] WrongClientId,
     #[error("no clinician for sub {0}")] UnknownClinician(String),
     #[error("db error during auth: {0}")] Db(#[from] sqlx::Error),
+    #[error("jwks fetch failed: {0}")] Fetch(#[from] reqwest::Error),
+    #[error("keyset is not refreshable(dev mode)")] NotRefreshable, 
 }
