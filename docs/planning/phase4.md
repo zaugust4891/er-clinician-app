@@ -22,6 +22,8 @@ The original roadmap (`roadmap-and-next-phase-040826.md` §2) put "iOS platform 
 | Phase 7 | FHIR WRITE | FHIR WRITE (unchanged) |
 | Phase 8 | Deep Epic/HL7 | Deep Epic/HL7 (unchanged) |
 
+> **Update 2026-07-20:** the rows below Phase 5 were revised again. Phase 6 is now **Design, Polish & App-Store-Grade Presentation** (gating the first real-shift pilot); FHIR READ/WRITE and Deep Epic shift to Phases 7/8/9. `roadmap-remaining-phases-072026.md` is authoritative for Phase 6 onward; Phases 4–5 in this table are unchanged.
+
 The approck feasibility analysis said: *"Re-evaluate the framework question only when EMR integration forces a backend service… at that point pick a thin off-the-shelf framework (axum)."* The trigger arrived earlier than EMR integration — it's commercialization — but the conclusion stands: **axum, thin, no framework-building.**
 
 ---

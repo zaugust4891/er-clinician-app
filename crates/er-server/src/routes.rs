@@ -1,5 +1,8 @@
 use axum::{Json, Router, http::StatusCode, middleware, response::IntoResponse, routing::get};
+use axum::extract::{State, Path};
+use er_store::Repository;
 use serde_json::json;
+use uuid::Uuid;
 
 use crate::{auth::{self, AuthedClinician}, state::AppState};
 
@@ -32,4 +35,27 @@ async fn me(authed: AuthedClinician) -> impl IntoResponse {
     Json(json!({ "clinician_id": authed.clinician_id, "org_id": authed.org_id }))
 }
 
+async fn patient_note(State(state): State<AppState>, authed: AuthedClinician, Path(patient_id): Path<Uuid>) -> Result<Json<serde_json::Value>, StatusCode> {
+    let repo = state.repo_for(&authed); // the ONLY data-access pattern
+    let events = repo.get_events(patient_id).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if events.is_empty() {
+        return Err(StatusCode::NOT_FOUND); // Cross-tenant and nonexistent look identical
+    }
+    // replay wants `&[NoteEvent]`: collect the `.event` field of each StoredEvent into a
+    // Vec that owns them, then pass a shared borrow (`&Vec<T>` coerces to `&[T]`).
+    let note_events: Vec<_> = events.into_iter().map(|e| e.event).collect();
+    let note = er_domain::replay::replay(patient_id, &note_events); // returns PatientNote, not Result
+    Ok(Json(json!({ "phase": format!("{:?}", note.phase), "hpi": note.note_sections.hpi.clone() })))
+}
 
+
+
+
+/*  
+/// State(state) is the same as 
+/// async fn(wrapper: State<AppState>) {
+///     let State(state) = wrapper     
+/// }
+/// or
+/// let state = state.0  
+*/
