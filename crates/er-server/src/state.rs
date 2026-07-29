@@ -57,4 +57,21 @@ impl AppState {
     pub fn repo_for(&self, authed: &AuthedClinician) -> PostgresRepository {
         PostgresRepository::for_org(self.pool.clone(), authed.org_id)
     }
+
+    /// Test-only: build a dev-mode `AppState` around an already-connected pool
+    /// (e.g. the one `#[sqlx::test]` provides), instead of connecting via env config.
+    /// Kept `pub` (not `#[cfg(test)]`) so integration tests in `tests/` — a separate
+    /// crate — can see it.
+    pub fn for_tests(pool: sqlx::PgPool, keys: Arc<auth::keys::KeySet>) -> AppState {
+        let resolver = Arc::new(auth::resolver::ClinicianResolver::new(pool.clone()));
+        let config = Config {
+            bind: "127.0.0.1:0".to_string(),
+            database_url: String::new(),   // unused: the pool is already connected
+            s3_endpoint_url: String::new(),
+            sqs_endpoint_url: String::new(),
+            auth_mode: AuthConfig::Dev { jwks_path: "dev/keys/jwks.json".into() },
+        };
+        AppState { config, pool, keys, resolver }
+    }
+
 }
