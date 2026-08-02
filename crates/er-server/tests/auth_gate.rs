@@ -1,10 +1,9 @@
 use std::assert_eq;
-use tracing_subscriber::fmt::format::json;
 use uuid::Uuid;
 
 use er_server::{routes, state::AppState, auth::keys::KeySet};
 use std::{sync::Arc, path::Path};
-use sqlx::{PgPool, pool::maybe::MaybePoolConnection::PoolConnection};
+use sqlx::PgPool;
 
 const ORG_A: Uuid = Uuid::from_u128(0x0A);
 const ORG_B: Uuid = Uuid::from_u128(0x0B);
@@ -69,7 +68,7 @@ fn mint(sub: &str) -> String {
         "sub": sub,
         "iss": DEV_ISSUER, // must match dev-mode issuer()
         "token_use": "access",
-        "exp": &jsonwebtoken::get_current_timestamp() + 3600, // 1h in future
+        "exp": jsonwebtoken::get_current_timestamp() + 3600, // 1h in future
     });
 
     jsonwebtoken::encode(&header, &claims, &key).expect("sign dev jwt")
@@ -141,7 +140,7 @@ async fn no_token_is_401_and_healthz_is_open(pool: PgPool) {
 async fn dev_token_reaches_me(pool: PgPool) {
     seed_org_and_clinician(&pool, ORG_A, "test-doc-cusamano").await;
     let app = routes::router(test_state(pool).await);
-    assert_eq!(get(&app, "v1/me", Some(&mint("test-doc-cusamano"))).await, 200);
+    assert_eq!(get(&app, "/v1/me", Some(&mint("test-doc-cusamano"))).await, 200);
 }
 
 /// Key here: "belongs to another org" and "doesn't exist" are indistinguishable to the caller.

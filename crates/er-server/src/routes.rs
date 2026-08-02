@@ -17,6 +17,7 @@ use crate::{auth::{self, AuthedClinician}, state::AppState};
 pub fn router(state: AppState) -> Router {
     let v1 = Router::new()
         .route("/v1/me", get(me))
+        .route("/v1/patients/{id}/note", get(patient_note))
         .route_layer(middleware::from_fn_with_state(state.clone(), auth::middleware::require_auth));
     
     // No auth - load balancer probe. This is the tail expression (no `let`, no `;`),
