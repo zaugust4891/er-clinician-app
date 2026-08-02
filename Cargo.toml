@@ -31,6 +31,7 @@ er-store = { path = "crates/er-store" }
 er-ai = { path = "crates/er-ai" }
 er-pipeline = { path = "crates/er-pipeline" }
 er-app = { path = "crates/er-app" }
+er-api = { path = "crates/er-api" }
 
 # Platform-specific (added behind feature flags when needed)
 # cpal = "0.15"        # Audio capture (iOS support experimental)

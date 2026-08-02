@@ -527,6 +527,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "er-api"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "er-domain",
+ "serde",
+ "uuid",
+]
+
+[[package]]
 name = "er-app"
 version = "0.1.0"
 dependencies = [

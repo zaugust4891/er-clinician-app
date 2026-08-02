@@ -1,0 +1,20 @@
+
+[package]
+
+name = "er-api"
+
+edition.workspace = true
+
+version.workspace = true
+
+# Serde-only. The "client" feature (S9) adds the optional deps — nothing here yet.
+
+[dependencies]
+
+er-domain.workspace = true
+
+serde.workspace = true
+
+uuid.workspace = true
+
+chrono.workspace = true
