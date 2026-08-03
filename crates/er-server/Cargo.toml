@@ -11,6 +11,7 @@ base64 = "0.22"
 chrono.workspace = true
 dotenvy.workspace = true
 er-app = { version = "0.1.0", path = "../er-app" }
+er-api.workspace = true
 jsonwebtoken = { version = "10.4.0", features = ["rust_crypto"] }
 moka = {version = "0.12", features = ["future"] }
 rsa = "0.9"

@@ -603,6 +603,7 @@ dependencies = [
  "base64",
  "chrono",
  "dotenvy",
+ "er-api",
  "er-app",
  "er-domain",
  "er-store",
