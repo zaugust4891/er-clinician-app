@@ -6,6 +6,9 @@ use uuid::Uuid;
 
 use crate::{auth::{self, AuthedClinician}, state::AppState};
 
+/// log identifiers, never content.
+/// patient_id = %id is always fine; payload = ?event never is — an event payload can contain a full transcript. 
+
 /// Map from (path, method) -> handler
 /// caputre state clone so Middleware's State(state) parameter can be injected as require_auth's State<AppState> first argument.
 /// So Router<AppState> becomes Router<()> aka Router which we return from fn router()
