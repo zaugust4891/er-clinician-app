@@ -1,4 +1,4 @@
--- Add migration script here
+
 CREATE TABLE orgs (
     id          UUID PRIMARY KEY,
     name        TEXT NOT NULL,
