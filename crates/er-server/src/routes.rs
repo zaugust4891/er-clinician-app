@@ -1,4 +1,4 @@
-use axum::{Json, Router, http::StatusCode, middleware, response::IntoResponse, routing::get};
+use axum::{Json, Router, http::StatusCode, middleware, response::IntoResponse, routing::{get, post}};
 use axum::extract::{State, Path};
 
 use er_store::Repository;
@@ -23,6 +23,7 @@ use crate::{auth::{self, AuthedClinician}, state::AppState};
 pub fn router(state: AppState) -> Router {
     let v1 = Router::new()
         .route("/v1/me", get(me))
+        .route("/v1/patients", post(register_patient))
         .route("/v1/patients/{id}/note", get(patient_note))
         .route_layer(middleware::from_fn_with_state(state.clone(), auth::middleware::require_auth));
     
@@ -42,14 +43,20 @@ async fn me(authed: AuthedClinician) -> impl IntoResponse {
     Json(json!({ "clinician_id": authed.clinician_id, "org_id": authed.org_id }))
 }
 
-async fn patient_note(State(state): State<AppState>, authed: AuthedClinician, Path(patient_id): Path<Uuid>) -> Result<Json<serde_json::Value>, StatusCode> {
+async fn patient_note(State(state): State<AppState>, authed: AuthedClinician, Path(patient_id): Path<Uuid>) -> Result<Json<serde_json::Value>, ApiError> {
     let repo = state.repo_for(&authed); // the ONLY data-access pattern
-    let events = repo.get_events(patient_id).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    if events.is_empty() {
-        return Err(StatusCode::NOT_FOUND); // Cross-tenant and nonexistent look identical
-    }
+    // Guard first, load second. "Not yours" and "doesn't exist" both become 404 here,
+    // which frees the load below to treat "no events" as the honest answer it is:
+    // a registered patient nothing has happened to yet.
+    ensure_patient_in_org(&repo, patient_id).await?;
+    // `?` alone — no map_err. `impl From<StoreError> for ApiError` (error.rs) turns a
+    // storage failure into ApiError::Internal, which logs the cause and tells the
+    // caller nothing but 500.
+    let events = repo.get_events(patient_id).await?;
     // replay wants `&[NoteEvent]`: collect the `.event` field of each StoredEvent into a
     // Vec that owns them, then pass a shared borrow (`&Vec<T>` coerces to `&[T]`).
+    // An empty Vec is fine: replay folds zero events onto PatientNote::new, whose
+    // phase is Registered.
     let note_events: Vec<_> = events.into_iter().map(|e| e.event).collect();
     let note = er_domain::replay::replay(patient_id, &note_events); // returns PatientNote, not Result
     Ok(Json(json!({ "phase": format!("{:?}", note.phase), "hpi": note.note_sections.hpi.clone() })))

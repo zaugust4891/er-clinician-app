@@ -14,7 +14,7 @@ pub enum AuthConfig {
     Cognito { region: String, pool_id: String, client_id: String },
 }
 
-pub const DEV_ISSUER: &str = "https//dev.local";
+pub const DEV_ISSUER: &str = "https://dev.local";
 
 
 impl AuthConfig {
@@ -22,7 +22,7 @@ impl AuthConfig {
         match self {
             Self::Dev{ .. } => DEV_ISSUER.to_string(),
             Self::Cognito { region, pool_id, .. } => 
-                format!("https//cognito-idp.{region}.amazonaws.com/{pool_id}"),
+                format!("https://cognito-idp.{region}.amazonaws.com/{pool_id}"),
         }
     }
 
