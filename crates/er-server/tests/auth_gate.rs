@@ -1,129 +1,20 @@
-use std::assert_eq;
+//! HTTP gate tests: auth (Step 4) and the S3 patient-registration/ownership guard.
+//!
+//! Fixtures live in `common/` — shared with `sync_gate.rs` (S4).
+
+use sqlx::PgPool;
 use uuid::Uuid;
 
-use er_server::{routes, state::AppState, auth::keys::KeySet};
-use std::{sync::Arc, path::Path};
-use sqlx::PgPool;
-
-const ORG_A: Uuid = Uuid::from_u128(0x0A);
-const ORG_B: Uuid = Uuid::from_u128(0x0B);
-
-///Insert an org and one clinician(cognito = `sub`) in it. Order matters:
-/// clinicians.org_id REFERENCES orgs(id), so the org row must exist first.
-async fn seed_org_and_clinician(pool: &PgPool, org_id: Uuid, sub: &str ) {
-    sqlx::query("INSERT INTO orgs (id, name) VALUES ($1, $2) ON CONFLICT DO NOTHING")
-        .bind(org_id)
-        .bind("Test Org")
-        .execute(pool)
-        .await
-        .expect("seed org");
-
-    sqlx::query(
-        "INSERT INTO clinicians (id, org_id, cognito_sub, display_name) \
-        VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING",
-    )
-    .bind(Uuid::now_v7()) // clinician id - random per row
-    .bind(org_id)
-    .bind(sub)
-    .bind("Dr. Cusamano")
-    .execute(pool)
-    .await
-    .expect("seed clinician");    
-}
-
-async fn test_state(pool: PgPool) -> AppState {
-    // cwd for integration tests is the crate dir (crates/er-server), so the repo-root
-    // dev keys are two levels up. `concat!(env!("CARGO_MANIFEST_DIR"), ...)` would be
-    // cwd-independent if you prefer.
-    let keys = Arc::new(
-        KeySet::from_file(Path::new("../../dev/keys/jwks.json")).expect("dev jwks"),
-    );
-    AppState::for_tests(pool, keys)
-}
-
-use tower::ServiceExt;                    // brings `.oneshot`
-use axum::{body::Body, http::{Request, header}};
-
-async fn get(app: &axum::Router, path: &str, token: Option<&str>) -> u16 {
-    let mut req = Request::builder().method("GET").uri(path);
-    if let Some(t) = token {
-        req = req.header(header::AUTHORIZATION, format!("Bearer {t}"));
-    }
-    let response = app.clone().oneshot(req.body(Body::empty()).unwrap()).await.unwrap();
-    response.status().as_u16()
-}
-
-/// Like `get`, but also hands back the parsed JSON body — needed when the status
-/// code alone can't distinguish two outcomes (200-with-a-note vs 200-with-nothing).
-async fn get_json(app: &axum::Router, path: &str, token: &str) -> (u16, serde_json::Value) {
-    let req = Request::builder()
-        .method("GET")
-        .uri(path)
-        .header(header::AUTHORIZATION, format!("Bearer {token}"));
-    let response = app.clone().oneshot(req.body(Body::empty()).unwrap()).await.unwrap();
-    let status = response.status().as_u16();
-    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
-    (status, serde_json::from_slice(&bytes).unwrap())
-}
-
-/// POST a JSON body and hand back status + parsed response. `Json<T>` rejects a
-/// request without `content-type: application/json` with a 415 before the handler
-/// ever runs, so the header is not optional decoration.
-async fn post_json(
-    app: &axum::Router,
-    path: &str,
-    token: &str,
-    body: serde_json::Value,
-) -> (u16, serde_json::Value) {
-    let req = Request::builder()
-        .method("POST")
-        .uri(path)
-        .header(header::AUTHORIZATION, format!("Bearer {token}"))
-        .header(header::CONTENT_TYPE, "application/json")
-        .body(Body::from(serde_json::to_vec(&body).unwrap()))
-        .unwrap();
-    let response = app.clone().oneshot(req).await.unwrap();
-    let status = response.status().as_u16();
-    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
-    (status, serde_json::from_slice(&bytes).unwrap())
-}
-
-/// How many `patients` rows carry this id, across every org. Deliberately NOT
-/// org-scoped: the idempotency claim is about the table, and an org-scoped count
-/// would hide a second row written under a different tenant.
-async fn patient_row_count(pool: &PgPool, patient_id: Uuid) -> i64 {
-    sqlx::query_scalar("SELECT COUNT(*) FROM patients WHERE id = $1")
-        .bind(patient_id)
-        .fetch_one(pool)
-        .await
-        .expect("count patients")
-}
-
-use er_server::config::DEV_ISSUER;
-
-/// Sign a valid dev access token for `sub`, using the same private key and kid
-/// the dev JWKS trusts. Mirrors the S3 unit-test signer.
-fn mint(sub: &str) -> String {
-    let mut header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::RS256);
-    header.kid = Some("dev-key-1".to_string()); // must match jwks.json's kid
-
-    let pem = std::fs::read("../../dev/keys/dev_private.pem").expect("dev private key");
-    let key = jsonwebtoken::EncodingKey::from_rsa_pem(&pem).expect("valid rsa pem");
-
-    let claims = serde_json::json!({
-        "sub": sub,
-        "iss": DEV_ISSUER, // must match dev-mode issuer()
-        "token_use": "access",
-        "exp": jsonwebtoken::get_current_timestamp() + 3600, // 1h in future
-    });
-
-    jsonwebtoken::encode(&header, &claims, &key).expect("sign dev jwt")
-}
-
+use er_domain::{CaptureMode, NoteEvent};
 use er_server::repository::PostgresRepository;
-use er_store::repository::Repository; // to use the .append_event() trait method
-use er_domain::{NoteEvent, CaptureMode};
+use er_server::routes;
+use er_store::repository::Repository; // .append_event is a trait method
 
+mod common;
+use common::{
+    get, get_json, mint, patient_row_count, post_json, seed_active_shift, seed_org_and_clinician,
+    seed_registered_patient, test_state, ORG_A, ORG_B,
+};
 
 /*
 NOTES on the following helper function seed_patient_events(): 
@@ -155,46 +46,6 @@ NOTES on the following helper function seed_patient_events():
   seed_org_and_clinician(&pool, ORG_B, "doc-b") runs before seed_patient_events(&pool, ORG_B). 
   If you ever call seed_patient_events for an org you didn't seed first, the insert fails the foreign key.
 */
-
-/// Register a patient in `org_id` through the same org-scoped path production uses,
-/// and hand back its id. Since S3 every per-patient route is gated on `patients`
-/// having a row — seeding an event stream alone now yields a 404, correctly.
-///
-/// `created_by` is read back from `clinicians` rather than invented: the column is
-/// `REFERENCES clinicians(id)`, so `seed_org_and_clinician` must have run for this
-/// org first (the same ordering requirement the notes above describe for events).
-async fn seed_registered_patient(pool: &PgPool, org_id: Uuid) -> Uuid {
-    let patient_id = Uuid::now_v7();
-    let created_by: Uuid = sqlx::query_scalar("SELECT id FROM clinicians WHERE org_id = $1 LIMIT 1")
-        .bind(org_id)
-        .fetch_one(pool)
-        .await
-        .expect("seed_org_and_clinician must run before seeding a patient");
-
-    PostgresRepository::for_org(pool.clone(), org_id)
-        .register_patient(patient_id, created_by, "chest pain", None)
-        .await
-        .expect("register patient");
-
-    patient_id
-}
-
-/// Open an active shift for the org's clinician by writing the row directly —
-/// there is no shift endpoint until S8, but `register_patient`'s attach half is
-/// live now and needs something to attach to.
-async fn seed_active_shift(pool: &PgPool, org_id: Uuid) -> Uuid {
-    let shift_id = Uuid::now_v7();
-    sqlx::query(
-        "INSERT INTO shifts (id, org_id, clinician_id, status) \
-         SELECT $1, $2, c.id, 'active' FROM clinicians c WHERE c.org_id = $2 LIMIT 1",
-    )
-    .bind(shift_id)
-    .bind(org_id)
-    .execute(pool)
-    .await
-    .expect("seed active shift");
-    shift_id
-}
 
 async fn seed_patient_events(pool: &PgPool, org_id: Uuid) -> Uuid {
     let patient_id = seed_registered_patient(pool, org_id).await;

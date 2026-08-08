@@ -15,6 +15,7 @@ async fn main() -> anyhow::Result<()> {
     let config = config::Config::from_env()?;
     let state = state::AppState::build(&config).await?;
     let app = routes::router(state)
+        .layer(axum::extract::DefaultBodyLimit::max(2 * 1024 * 1024))
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .layer(tower_http::timeout::TimeoutLayer::with_status_code(axum::http::StatusCode::REQUEST_TIMEOUT, Duration::from_secs(30)));
     let listener = tokio::net::TcpListener::bind(&config.bind).await?; //SIGTERM for ECS

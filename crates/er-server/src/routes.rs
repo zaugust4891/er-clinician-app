@@ -25,6 +25,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/me", get(me))
         .route("/v1/patients", post(register_patient))
         .route("/v1/patients/{id}/note", get(patient_note))
+        .route("/v1/patients/{id}/events", post(append_events))
         .route_layer(middleware::from_fn_with_state(state.clone(), auth::middleware::require_auth));
     
     // No auth - load balancer probe. This is the tail expression (no `let`, no `;`),
@@ -94,6 +95,53 @@ async fn register_patient(
         created_at: chrono::Utc::now(),
     }))
 }
+
+
+const MAX_EVENT_BATCH: usize = 500; // one shift's worth of taps; far under the body limit
+
+async fn append_events(
+    State(state): State<AppState>,
+    authed: AuthedClinician,
+    Path(patient_id): Path<Uuid>,
+    Json(body): Json<er_api::AppendEventsRequest>,
+) -> Result<Json<er_api::AppendEventsResponse>, ApiError> {
+
+    if body.events.is_empty() {
+        return Err(ApiError::Validation("empty_batch"));
+    }
+
+    if body.events.len() > MAX_EVENT_BATCH {
+        return Err(ApiError::Validation("batch_too_large"));
+    }
+
+    for e in &body.events {
+        if e.event.extract_patient_id() != patient_id {
+            return Err(ApiError::Validation("event_patient_mismatch"));
+        }
+    }
+
+    let repo = state.repo_for(&authed);
+    ensure_patient_in_org(&repo, patient_id).await?;
+
+    let mut results = Vec::with_capacity(body.events.len());
+
+    for e in body.events {
+        let seq = repo.append_event(patient_id, e.event_id, e.event).await?;
+        results.push(er_api::EventAck {
+            event_id: e.event_id,
+            sequence_id: seq 
+        });
+    }
+
+    Ok(Json(er_api::AppendEventsResponse { results }))
+}
+
+
+
+
+
+
+
 
 
 

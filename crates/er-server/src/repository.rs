@@ -17,15 +17,21 @@ impl PostgresRepository {
         Self { pool, org_id }
     }
 
-    async fn sequence_for(&self, event_id: Uuid) -> StoreResult<u64> {
+    async fn sequence_for(&self, patient_id: PatientId, event_id: Uuid) -> StoreResult<u64> {
         let seq = sqlx::query_scalar!(
-            "SELECT sequence_id FROM events WHERE event_id = $1",
-            event_id,
+            "SELECT sequence_id FROM events WHERE event_id = $1 AND org_id = $2 AND patient_id = $3",
+            event_id, self.org_id, patient_id,
         )
-        .fetch_one(&self.pool)
+        .fetch_optional(&self.pool)
         .await
         .map_err(StoreError::backend)?;
-        Ok(seq as u64)
+
+        match seq {
+            Some(s) => Ok(s as u64),
+            None => Err(StoreError::Backend(
+                "event_id conflict outside this org/patient - refusing".into(),
+            )),
+        }
     }
 
     fn to_stored_events_struct(
@@ -90,6 +96,13 @@ impl Repository for PostgresRepository {
     async fn append_event(&self, patient_id: PatientId, event_id: Uuid, event: NoteEvent) -> StoreResult<u64> {
         let payload = serde_json::to_value(&event)?;
         let occurred = event.clinical_occurred_at();
+        let mut tx = self.pool.begin().await.map_err(StoreError::backend)?;
+
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+            .bind(patient_id.to_string())
+            .execute(&mut *tx).await.map_err(StoreError::backend)?; 
+
+
         let rec = sqlx::query!(
             r#"INSERT INTO events
                     (event_id, org_id, patient_id, event_type, payload, clinical_occurred_at)
@@ -103,13 +116,13 @@ impl Repository for PostgresRepository {
                 payload,
                 occurred,
         )
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(StoreError::backend)?;
+        .fetch_optional(&mut *tx).await.map_err(StoreError::backend)?;
+        
+        tx.commit().await.map_err(StoreError::backend)?;
 
         match rec {
             Some(r) => Ok(r.sequence_id as u64),
-            None => self.sequence_for(event_id).await,
+            None => self.sequence_for(patient_id, event_id).await,
         }
     }
 
