@@ -169,6 +169,27 @@ pub async fn seed_active_shift(pool: &PgPool, org_id: Uuid) -> Uuid {
 // Assertions against raw tables
 // ---------------------------------------------------------------------------
 
+/// PUT a JSON body. Same content-type reasoning as `post_json`; the response body
+/// is returned raw because some PUT handlers answer with a bare status and no JSON.
+pub async fn put_json(
+    app: &axum::Router,
+    path: &str,
+    token: &str,
+    body: serde_json::Value,
+) -> (u16, String) {
+    let req = Request::builder()
+        .method("PUT")
+        .uri(path)
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(serde_json::to_vec(&body).unwrap()))
+        .unwrap();
+    let response = app.clone().oneshot(req).await.unwrap();
+    let status = response.status().as_u16();
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    (status, String::from_utf8_lossy(&bytes).into_owned())
+}
+
 /// How many `patients` rows carry this id, across every org. Deliberately NOT
 /// org-scoped: the idempotency claim is about the table, and an org-scoped count
 /// would hide a second row written under a different tenant.

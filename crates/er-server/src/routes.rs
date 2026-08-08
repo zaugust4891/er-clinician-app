@@ -1,4 +1,4 @@
-use axum::{Json, Router, http::StatusCode, middleware, response::IntoResponse, routing::{get, post}};
+use axum::{Json, Router, http::StatusCode, middleware, response::IntoResponse, routing::{get, post, put}};
 use axum::extract::{State, Path, Query};
 
 use er_store::Repository;
@@ -28,6 +28,7 @@ pub fn router(state: AppState) -> Router {
         // Same path, two methods: chain onto ONE MethodRouter. A second `.route()`
         // with an identical path string panics at construction ("Overlapping method route").
         .route("/v1/patients/{id}/events", post(append_events).get(events_since))
+        .route("/v1/patients/{id}/snapshot", put(put_snapshot).get(get_snapshot))
         .route_layer(middleware::from_fn_with_state(state.clone(), auth::middleware::require_auth));
     
     // No auth - load balancer probe. This is the tail expression (no `let`, no `;`),
@@ -175,6 +176,47 @@ async fn events_since(
     has_more,
     }))
 
+}
+
+// ---------------------------------------------------------------------------
+// S6 — snapshot sync
+// ---------------------------------------------------------------------------
+
+/// Store the client's checkpoint. The body's note is treated as opaque *state*:
+/// we never call domain methods on it, so it needs no `hydrate()` here — the
+/// `state` trait object is `#[serde(skip)]` and simply never makes the trip.
+///
+/// The checksum is computed server-side inside `save_snapshot` over the string
+/// the server itself serialized, so client/server serialization differences
+/// (key order, float formatting) can never raise a false corruption alarm.
+/// It guards storage integrity — write-to-read — which is its one job.
+async fn put_snapshot(
+    State(state): State<AppState>,
+    authed: AuthedClinician,
+    Path(patient_id): Path<Uuid>,
+    Json(body): Json<er_api::SnapshotUp>,
+) -> Result<StatusCode, ApiError> {
+    let repo = state.repo_for(&authed);
+    ensure_patient_in_org(&repo, patient_id).await?;
+    repo.save_snapshot(patient_id, body.sequence_id, &body.snapshot).await?;
+    Ok(StatusCode::OK)
+}
+
+async fn get_snapshot(
+    State(state): State<AppState>,
+    authed: AuthedClinician,
+    Path(patient_id): Path<Uuid>,
+) -> Result<Json<er_api::SnapshotDown>, ApiError> {
+    let repo = state.repo_for(&authed);
+    ensure_patient_in_org(&repo, patient_id).await?;
+    match repo.get_latest_snapshot(patient_id).await? {
+        Some((sequence_id, snapshot)) => Ok(Json(er_api::SnapshotDown { sequence_id, snapshot })),
+        // "No snapshot yet" is a NORMAL 404, not an error: it mirrors the local
+        // `Ok(None)` contract, and the client answers it by replaying from since=0.
+        // A checksum mismatch lands here too — `get_latest_snapshot` reports a
+        // corrupted row as absent precisely so the caller self-heals by replay.
+        None => Err(ApiError::NotFound),
+    }
 }
 
 
