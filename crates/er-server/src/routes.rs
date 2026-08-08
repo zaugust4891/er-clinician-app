@@ -1,9 +1,12 @@
 use axum::{Json, Router, http::StatusCode, middleware, response::IntoResponse, routing::get};
 use axum::extract::{State, Path};
+
 use er_store::Repository;
 use serde_json::json;
 use uuid::Uuid;
 
+use crate::repository::PostgresRepository;
+use crate::error::ApiError;
 use crate::{auth::{self, AuthedClinician}, state::AppState};
 
 /// log identifiers, never content.
@@ -52,8 +55,38 @@ async fn patient_note(State(state): State<AppState>, authed: AuthedClinician, Pa
     Ok(Json(json!({ "phase": format!("{:?}", note.phase), "hpi": note.note_sections.hpi.clone() })))
 }
 
+async fn ensure_patient_in_org(repo: &PostgresRepository, patient_id: Uuid) -> Result<(), ApiError> {
+    if repo.patient_registered(patient_id).await? {
+        Ok(())
+    } else {
+        Err(ApiError::NotFound)
+    }
+}
 
 
+async fn register_patient(
+    State(state): State<AppState>,
+    authed: AuthedClinician,
+    Json(body): Json<er_api::RegisterPatientRequest>,
+) -> Result<Json<er_api::PatientView>, ApiError> {
+    if body.chief_complaint.trim().is_empty() {
+        return Err(ApiError::Validation("chief_complaint_required"));
+    }
+    let repo = state.repo_for(&authed);
+    repo.register_patient(
+        body.patient_id, 
+        authed.clinician_id, 
+        &body.chief_complaint, 
+        body.display_label.as_deref(),
+    ).await?;
+
+    Ok(Json(er_api::PatientView {
+        patient_id: body.patient_id,
+        chief_complaint: body.chief_complaint,
+        display_label: body.display_label,
+        created_at: chrono::Utc::now(),
+    }))
+}
 
 
 

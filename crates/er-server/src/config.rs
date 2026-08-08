@@ -14,7 +14,7 @@ pub enum AuthConfig {
     Cognito { region: String, pool_id: String, client_id: String },
 }
 
-pub const DEV_ISSUER: &str = "https://dev.local";
+pub const DEV_ISSUER: &str = "https//dev.local";
 
 
 impl AuthConfig {

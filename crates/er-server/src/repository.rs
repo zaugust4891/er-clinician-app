@@ -39,6 +39,50 @@ impl PostgresRepository {
         Ok(StoredEvent { sequence_id: sequence_id as u64, event_id, event, occurred_at })
         
     }
+
+    pub async fn patient_registered(&self, patient_id: Uuid) -> StoreResult<bool> {
+        let db_hit = sqlx::query_scalar!(
+            "SELECT 1 AS one FROM patients WHERE id = $1 AND org_id = $2",
+            patient_id, self.org_id,
+        ).fetch_optional(&self.pool).await.map_err(StoreError::backend)?;
+        Ok(db_hit.is_some())
+    }
+
+    /// Idempotent insert + attach to the clinician's active shift, atomically.
+    /// A transaction makes it both-or-neither: no registered-but-unlisted
+    /// patients if the process dies between the two inserts.
+    pub async fn register_patient(
+        &self,
+        patient_id: Uuid,
+        created_by: Uuid,
+        chief_complaint: &str,
+        display_label: Option<&str>,
+    ) -> StoreResult<()> {
+        let mut tx = self.pool.begin().await.map_err(StoreError::backend)?;
+
+        sqlx::query!(
+            r#"INSERT INTO patients (id, org_id, created_by, chief_complaint, display_label)
+               VALUES ($1, $2, $3, $4, $5)
+               ON CONFLICT (id) DO NOTHING"#,             // retry-safe (§C2)
+            patient_id, self.org_id, created_by, chief_complaint, display_label,
+        ).execute(&mut *tx).await.map_err(StoreError::backend)?;
+
+        // Attach to the active shift if one exists; next free position.
+        // COALESCE(x, 0) = "x, or 0 if x is NULL" — first patient gets position 0.
+        sqlx::query!(
+            r#"INSERT INTO shift_patients (shift_id, patient_id, position)
+               SELECT s.id, $2,
+                      COALESCE((SELECT MAX(sp.position) + 1
+                                  FROM shift_patients sp WHERE sp.shift_id = s.id), 0)
+                 FROM shifts s
+                WHERE s.clinician_id = $1 AND s.status = 'active'
+               ON CONFLICT DO NOTHING"#,
+            created_by, patient_id,
+        ).execute(&mut *tx).await.map_err(StoreError::backend)?;
+
+        tx.commit().await.map_err(StoreError::backend)?;
+        Ok(())
+    }
 }
 
 #[async_trait]
