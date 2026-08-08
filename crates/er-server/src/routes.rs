@@ -1,5 +1,5 @@
 use axum::{Json, Router, http::StatusCode, middleware, response::IntoResponse, routing::{get, post}};
-use axum::extract::{State, Path};
+use axum::extract::{State, Path, Query};
 
 use er_store::Repository;
 use serde_json::json;
@@ -25,7 +25,9 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/me", get(me))
         .route("/v1/patients", post(register_patient))
         .route("/v1/patients/{id}/note", get(patient_note))
-        .route("/v1/patients/{id}/events", post(append_events))
+        // Same path, two methods: chain onto ONE MethodRouter. A second `.route()`
+        // with an identical path string panics at construction ("Overlapping method route").
+        .route("/v1/patients/{id}/events", post(append_events).get(events_since))
         .route_layer(middleware::from_fn_with_state(state.clone(), auth::middleware::require_auth));
     
     // No auth - load balancer probe. This is the tail expression (no `let`, no `;`),
@@ -136,11 +138,44 @@ async fn append_events(
     Ok(Json(er_api::AppendEventsResponse { results }))
 }
 
+#[derive(serde::Deserialize)]
+struct SinceParams {
+    #[serde(default)]                        // absent → 0 → "from the beginning"
+    since: u64,
+    #[serde(default = "default_page")]       // absent → 500
+    limit: usize,
+}
+fn default_page() -> usize { 500 }
+const MAX_PAGE: usize = 1_000;
 
 
 
+async fn events_since(
+    State(state): State<AppState>,
+    authed: AuthedClinician,
+    Path(patient_id): Path<Uuid>,
+    Query(q): Query<SinceParams>,           
+) -> Result<Json<er_api::EventsPage>, ApiError> {
+    let limit = q.limit.clamp(1, MAX_PAGE);
+    let repo = state.repo_for(&authed);
+    ensure_patient_in_org(&repo, patient_id).await?;
 
 
+    let mut events = repo.get_events_since(patient_id, q.since).await?;
+    let has_more = events.len() > limit;
+    events.truncate(limit);
+
+    Ok(Json(er_api::EventsPage {
+    events: events.into_iter().map(|se| er_api::EventDown {
+        sequence_id: se.sequence_id,
+        event_id:    se.event_id,
+        event:       se.event,
+        occurred_at: se.occurred_at,
+    }).collect(),
+    has_more,
+    }))
+
+}
 
 
 

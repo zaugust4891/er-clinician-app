@@ -16,8 +16,8 @@ use er_store::repository::Repository;
 
 mod common;
 use common::{
-    event_row_count, mint, post_json, seed_org_and_clinician, seed_registered_patient, test_state,
-    ORG_A, ORG_B,
+    event_row_count, get, get_json, mint, post_json, seed_org_and_clinician,
+    seed_registered_patient, test_state, ORG_A, ORG_B,
 };
 
 /// One `EventUp` as JSON. Built by serializing a real `NoteEvent` rather than
@@ -332,4 +332,245 @@ async fn event_id_colliding_across_orgs_fails_closed(pool: PgPool) {
         assert_ne!(leaked, seq_a, "and certainly not org A's sequence_id");
     }
     assert_eq!(event_row_count(&pool, patient_b).await, 0, "nothing stored for org B");
+}
+
+// ===========================================================================
+// S5 — Event downsync: GET /v1/patients/{id}/events?since=N
+// ===========================================================================
+
+/// A realistic five-event encounter, written straight through the repository.
+/// Returns the events in order alongside their assigned sequence_ids, so tests
+/// can assert on both the domain payloads and the cursor values.
+async fn seed_five_events(pool: &PgPool, org: Uuid, patient: Uuid) -> (Vec<NoteEvent>, Vec<u64>) {
+    let repo = PostgresRepository::for_org(pool.clone(), org);
+    let encounter = Uuid::now_v7();
+    let events = vec![
+        NoteEvent::audio_started(patient, encounter, CaptureMode::Ambient),
+        NoteEvent::transcript_ready(
+            patient,
+            encounter,
+            "substernal chest pressure, radiating to the left arm".to_string(),
+            chrono::Utc::now(),
+        ),
+        NoteEvent::audio_stopped(patient, encounter),
+        NoteEvent::trigger_mdm(patient),
+        NoteEvent::review_ready(patient),
+    ];
+
+    let mut seqs = Vec::with_capacity(events.len());
+    for e in &events {
+        seqs.push(
+            repo.append_event(patient, Uuid::now_v7(), e.clone())
+                .await
+                .expect("seed event"),
+        );
+    }
+    (events, seqs)
+}
+
+fn page_seqs(body: &serde_json::Value) -> Vec<u64> {
+    body["events"]
+        .as_array()
+        .expect("events array")
+        .iter()
+        .map(|e| e["sequence_id"].as_u64().expect("sequence_id"))
+        .collect()
+}
+
+fn events_query(patient: Uuid, query: &str) -> String {
+    format!("/v1/patients/{patient}/events{query}")
+}
+
+/// The paging contract itself: a page smaller than the remaining stream must say so.
+#[sqlx::test]
+async fn page_limit_truncates_and_sets_has_more(pool: PgPool) {
+    seed_org_and_clinician(&pool, ORG_A, "doc-joey-a").await;
+    let patient = seed_registered_patient(&pool, ORG_A).await;
+    let (_, seqs) = seed_five_events(&pool, ORG_A, patient).await;
+    let app = routes::router(test_state(pool).await);
+
+    let (status, body) = get_json(
+        &app,
+        &events_query(patient, "?since=0&limit=2"),
+        &mint("doc-joey-a"),
+    )
+    .await;
+
+    assert_eq!(status, 200);
+    assert_eq!(page_seqs(&body), seqs[0..2].to_vec(), "first two, in order");
+    assert_eq!(body["has_more"], true, "three events remain");
+}
+
+/// Absent query parameters mean "from the beginning, default page" — a bare
+/// `GET …/events` must be a valid full-stream fetch, not a 400.
+#[sqlx::test]
+async fn missing_query_params_default_to_the_whole_stream(pool: PgPool) {
+    seed_org_and_clinician(&pool, ORG_A, "doc-joey-a").await;
+    let patient = seed_registered_patient(&pool, ORG_A).await;
+    let (_, seqs) = seed_five_events(&pool, ORG_A, patient).await;
+    let app = routes::router(test_state(pool).await);
+
+    let (status, body) = get_json(&app, &events_query(patient, ""), &mint("doc-joey-a")).await;
+
+    assert_eq!(status, 200);
+    assert_eq!(page_seqs(&body), seqs);
+    assert_eq!(body["has_more"], false, "the default page holds all five");
+}
+
+/// §C3's cursor loop, run for real: start at 0, advance to the last sequence_id
+/// of each page, stop when has_more is false. Every event exactly once, in order,
+/// with no gaps and no repeats. This is the loop every client will implement.
+#[sqlx::test]
+async fn cursor_loop_visits_every_event_exactly_once(pool: PgPool) {
+    seed_org_and_clinician(&pool, ORG_A, "doc-joey-a").await;
+    let patient = seed_registered_patient(&pool, ORG_A).await;
+    let (_, seqs) = seed_five_events(&pool, ORG_A, patient).await;
+    let app = routes::router(test_state(pool).await);
+    let token = mint("doc-joey-a");
+
+    let mut cursor = 0u64;
+    let mut seen = Vec::new();
+    for _ in 0..10 {
+        // bounded: a correct loop needs 3 passes at limit=2; 10 catches a non-terminating one
+        let (status, body) = get_json(
+            &app,
+            &events_query(patient, &format!("?since={cursor}&limit=2")),
+            &token,
+        )
+        .await;
+        assert_eq!(status, 200);
+
+        let page = page_seqs(&body);
+        seen.extend(page.iter().copied());
+        if let Some(&last) = page.last() {
+            cursor = last;
+        }
+        if body["has_more"] == false {
+            break;
+        }
+    }
+
+    assert_eq!(seen, seqs, "the loop reconstructs the stream in order, once each");
+}
+
+/// A caller already at the head of the stream gets an empty page, not an error
+/// and not a repeat of the last event — proof `get_events_since` is exclusive.
+#[sqlx::test]
+async fn cursor_at_head_returns_empty_page(pool: PgPool) {
+    seed_org_and_clinician(&pool, ORG_A, "doc-joey-a").await;
+    let patient = seed_registered_patient(&pool, ORG_A).await;
+    let (_, seqs) = seed_five_events(&pool, ORG_A, patient).await;
+    let app = routes::router(test_state(pool).await);
+
+    let last = seqs.last().copied().unwrap();
+    let (status, body) = get_json(
+        &app,
+        &events_query(patient, &format!("?since={last}")),
+        &mint("doc-joey-a"),
+    )
+    .await;
+
+    assert_eq!(status, 200);
+    assert!(body["events"].as_array().unwrap().is_empty(), "nothing after the head");
+    assert_eq!(body["has_more"], false);
+}
+
+/// The dropped-phone story, proven end to end: a fresh device that downloads the
+/// stream from `since=0` and replays it locally must arrive at the SAME note the
+/// server-side stream produces. Compared as whole serialized documents rather than
+/// spot-checked fields, minus only the two values that are non-deterministic by
+/// construction (`id` and `created_at` come from `PatientNote::new`, not the events).
+#[sqlx::test]
+async fn wire_replay_matches_local_replay(pool: PgPool) {
+    seed_org_and_clinician(&pool, ORG_A, "doc-joey-a").await;
+    let patient = seed_registered_patient(&pool, ORG_A).await;
+    let (local_events, _) = seed_five_events(&pool, ORG_A, patient).await;
+    let app = routes::router(test_state(pool).await);
+
+    let (status, body) = get_json(&app, &events_query(patient, "?since=0"), &mint("doc-joey-a")).await;
+    assert_eq!(status, 200);
+
+    // Rebuild the domain events from the wire representation alone.
+    let wire_events: Vec<NoteEvent> = body["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| serde_json::from_value(e["event"].clone()).expect("event deserializes"))
+        .collect();
+    assert_eq!(wire_events.len(), local_events.len());
+
+    let from_wire = er_domain::replay::replay(patient, &wire_events);
+    let from_local = er_domain::replay::replay(patient, &local_events);
+
+    // Three values are non-deterministic by construction rather than by event data:
+    //   - `id` / `created_at`  — assigned by PatientNote::new, not derived from events
+    //   - `audit_log[*].id`    — AuditEntry::with_timestamp stamps a fresh Uuid::now_v7()
+    //     (audit.rs:50). Its *timestamp* was deliberately made deterministic from
+    //     clinical_occurred_at; the id was not. See the note in this test's sibling
+    //     assertion below — audit CONTENT is still compared in full.
+    let normalize = |note: &er_domain::PatientNote| {
+        let mut v = serde_json::to_value(note).expect("note serializes");
+        let obj = v.as_object_mut().unwrap();
+        obj.remove("id");
+        obj.remove("created_at");
+        for entry in obj["audit_log"].as_array_mut().unwrap() {
+            entry.as_object_mut().unwrap().remove("id");
+        }
+        v
+    };
+
+    assert_eq!(
+        normalize(&from_wire),
+        normalize(&from_local),
+        "a note replayed from downsynced events must equal the locally replayed note"
+    );
+
+    // Guard the exception: only audit ENTRY IDS may differ. If a future change makes
+    // some other field non-deterministic, the assert above catches it; this one keeps
+    // the audit trail itself — actions, order, and clinical timestamps — under test.
+    let audit_of = |note: &er_domain::PatientNote| {
+        note.audit_log
+            .iter()
+            .map(|e| (format!("{:?}", e.action), e.timestamp))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(audit_of(&from_wire), audit_of(&from_local));
+    assert!(!from_wire.audit_log.is_empty(), "the fixture must actually produce audit entries");
+}
+
+/// Downsync is behind the same ownership guard as every other per-patient route.
+#[sqlx::test]
+async fn downsync_of_another_orgs_patient_is_404(pool: PgPool) {
+    seed_org_and_clinician(&pool, ORG_A, "doc-joey-a").await;
+    seed_org_and_clinician(&pool, ORG_B, "doc-peppas-b").await;
+    let patient_b = seed_registered_patient(&pool, ORG_B).await;
+    seed_five_events(&pool, ORG_B, patient_b).await;
+    let app = routes::router(test_state(pool).await);
+
+    let url = events_query(patient_b, "?since=0");
+    assert_eq!(get(&app, &url, Some(&mint("doc-joey-a"))).await, 404, "org A is refused");
+    assert_eq!(get(&app, &url, Some(&mint("doc-peppas-b"))).await, 200, "org B owns it");
+}
+
+/// The paging off-by-one: a page that exactly consumes the remaining stream must
+/// report `has_more: false`. `has_more` is `len > limit`, and every other test here
+/// has len either well above or well below limit — only len == limit distinguishes
+/// `>` from `>=`, and `>=` would send every client on one pointless extra round trip.
+#[sqlx::test]
+async fn exactly_full_page_does_not_claim_more(pool: PgPool) {
+    seed_org_and_clinician(&pool, ORG_A, "doc-joey-a").await;
+    let patient = seed_registered_patient(&pool, ORG_A).await;
+    let (_, seqs) = seed_five_events(&pool, ORG_A, patient).await;
+    let app = routes::router(test_state(pool).await);
+
+    let (status, body) = get_json(
+        &app,
+        &events_query(patient, "?since=0&limit=5"), // exactly the whole stream
+        &mint("doc-joey-a"),
+    )
+    .await;
+
+    assert_eq!(status, 200);
+    assert_eq!(page_seqs(&body), seqs, "all five fit");
+    assert_eq!(body["has_more"], false, "the stream is exhausted, not one-short");
 }
