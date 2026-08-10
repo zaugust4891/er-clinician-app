@@ -29,6 +29,8 @@ pub fn router(state: AppState) -> Router {
         // with an identical path string panics at construction ("Overlapping method route").
         .route("/v1/patients/{id}/events", post(append_events).get(events_since))
         .route("/v1/patients/{id}/snapshot", put(put_snapshot).get(get_snapshot))
+        .route("/v1/patients/{id}/note/export", get(note_export))
+        .route("/v1/stats", get(stats))
         .route_layer(middleware::from_fn_with_state(state.clone(), auth::middleware::require_auth));
     
     // No auth - load balancer probe. This is the tail expression (no `let`, no `;`),
@@ -47,23 +49,20 @@ async fn me(authed: AuthedClinician) -> impl IntoResponse {
     Json(json!({ "clinician_id": authed.clinician_id, "org_id": authed.org_id }))
 }
 
-async fn patient_note(State(state): State<AppState>, authed: AuthedClinician, Path(patient_id): Path<Uuid>) -> Result<Json<serde_json::Value>, ApiError> {
+async fn patient_note(State(state): State<AppState>, authed: AuthedClinician, Path(patient_id): Path<Uuid>) -> Result<Json<er_api::NoteView>, ApiError> {
     let repo = state.repo_for(&authed); // the ONLY data-access pattern
-    // Guard first, load second. "Not yours" and "doesn't exist" both become 404 here,
-    // which frees the load below to treat "no events" as the honest answer it is:
-    // a registered patient nothing has happened to yet.
+    // Guard first, load second. 'Patient not in your org' and 'patient doesn't exist' both become 404 here,
+    // treats 'no events' ->  a registered patient nothing has happened to yet.
     ensure_patient_in_org(&repo, patient_id).await?;
     // `?` alone — no map_err. `impl From<StoreError> for ApiError` (error.rs) turns a
     // storage failure into ApiError::Internal, which logs the cause and tells the
     // caller nothing but 500.
-    let events = repo.get_events(patient_id).await?;
-    // replay wants `&[NoteEvent]`: collect the `.event` field of each StoredEvent into a
-    // Vec that owns them, then pass a shared borrow (`&Vec<T>` coerces to `&[T]`).
-    // An empty Vec is fine: replay folds zero events onto PatientNote::new, whose
-    // phase is Registered.
-    let note_events: Vec<_> = events.into_iter().map(|e| e.event).collect();
-    let note = er_domain::replay::replay(patient_id, &note_events); // returns PatientNote, not Result
-    Ok(Json(json!({ "phase": format!("{:?}", note.phase), "hpi": note.note_sections.hpi.clone() })))
+    let repository: &dyn er_store::Repository = &repo; 
+    let loaded_note = er_app::load_patient_note(repository, patient_id).await;
+    let loaded_note = loaded_note
+        .map_err(|e| ApiError::Internal(anyhow::Error::new(e)))?;
+    let patient_note = loaded_note.unwrap_or_else(|| er_domain::PatientNote::new(patient_id));
+    Ok(Json(er_api::NoteView::from(&patient_note)))
 }
 
 async fn ensure_patient_in_org(repo: &PostgresRepository, patient_id: Uuid) -> Result<(), ApiError> {
@@ -219,6 +218,47 @@ async fn get_snapshot(
     }
 }
 
+async fn note_export(State(state): State<AppState>, authed: AuthedClinician, Path(patient_id): Path<Uuid>) -> Result<impl IntoResponse, ApiError> {
+    let repo = state.repo_for(&authed);
+    ensure_patient_in_org(&repo, patient_id).await?;
+
+    let note = er_app::load_patient_note(&repo, patient_id)
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::Error::new(e)))?
+        .ok_or(ApiError::NotFound)?; // exporting nothing is 404
+    // format_note wants a PatientRecord; the server's PHI-minimal patients row maps onto it with the identity
+    // fields deliberately empty.
+    let row = repo.patient_row(patient_id).await?.ok_or(ApiError::NotFound)?;
+    let record = er_domain::PatientRecord {
+        id: patient_id,
+        first_name: None,
+        last_name: None,
+        age: None,
+        chief_complaint: row.chief_complaint,
+        room: row.display_label,
+        created_at: row.created_at,
+    };
+
+    // `format_results_text` already answers None for an empty slice, so the
+    // emptiness check lives there rather than being repeated at every call site.
+    let results_text = er_app::export::format_results_text(&note.results);
+
+    let text = er_app::export::format_note(
+        &record, &note.note_sections, note.disposition.as_ref(), 
+        results_text.as_deref(), &note.medication, &note.diagnoses, &note.data_reviewed
+    );
+
+    Ok(([(axum::http::header::CONTENT_TYPE, "text/plain; charset=utf-8")], text))
+    
+}
+
+async fn stats(State(state): State<AppState>, authed: AuthedClinician) -> Result<Json<er_api::StatsView>, ApiError> {
+    let repo = state.repo_for(&authed);
+    Ok(Json(er_api::StatsView {
+        event_count: repo.event_count().await? as u64,
+        snapshot_count: repo.snapshot_count().await? as u64,
+    }))
+}
 
 
 

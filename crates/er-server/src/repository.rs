@@ -12,6 +12,14 @@ pub struct PostgresRepository {
     org_id: Uuid,
 }
 
+/// The `patients` columns S7's export needs. A named struct rather than a tuple
+/// so adding a column later can't silently reorder a caller's bindings.
+pub struct PatientRow {
+    pub chief_complaint: String,
+    pub display_label: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
 impl PostgresRepository {
     pub fn for_org(pool: PgPool, org_id: Uuid) -> Self {
         Self { pool, org_id }
@@ -52,6 +60,29 @@ impl PostgresRepository {
             patient_id, self.org_id,
         ).fetch_optional(&self.pool).await.map_err(StoreError::backend)?;
         Ok(db_hit.is_some())
+    }
+
+    /// The PHI-minimal patient row, org-scoped. `note/export` (S7) needs the
+    /// chief complaint and room label to fill a `PatientRecord`; there is
+    /// deliberately nothing else here to fetch — no name, no age, no MRN (§C1).
+    ///
+    /// Returns `None` rather than erroring on a missing row so the caller keeps
+    /// the same 404-means-absent vocabulary as every other per-patient route.
+    pub async fn patient_row(&self, patient_id: Uuid) -> StoreResult<Option<PatientRow>> {
+        let row = sqlx::query!(
+            "SELECT chief_complaint, display_label, created_at
+               FROM patients WHERE id = $1 AND org_id = $2",
+            patient_id, self.org_id,
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(StoreError::backend)?;
+
+        Ok(row.map(|r| PatientRow {
+            chief_complaint: r.chief_complaint,
+            display_label: r.display_label,
+            created_at: r.created_at,
+        }))
     }
 
     /// Idempotent insert + attach to the clinician's active shift, atomically.

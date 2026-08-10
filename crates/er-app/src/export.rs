@@ -1,5 +1,5 @@
-use er_domain::{Diagnosis, Disposition, Medication, NoteSections, PatientRecord};
-
+use er_domain::{ClinicalResult, Diagnosis, Disposition, Medication, NoteSections, PatientRecord};
+use er_domain::note::format_result_line;
 /// Format a patient note for export (copy to clipboard → paste into Epic).
 /// Plain text only — no markdown, no HTML. Epic note fields accept plain text.
 pub fn format_note(
@@ -103,6 +103,21 @@ fn format_disposition(dispo: &Disposition) -> String {
         Disposition::LWBS => "Left Without Being Seen (LWBS)".into(),
     }
 }
+
+pub fn format_results_text(results: &[ClinicalResult]) -> Option<String> {
+    if results.is_empty() {
+        return None;
+    }
+
+    Some(
+        results
+            .iter()
+            .map(format_result_line)
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+}
+
 
 #[cfg(test)]
 mod tests {

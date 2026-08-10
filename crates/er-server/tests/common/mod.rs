@@ -77,6 +77,25 @@ pub async fn get_json(app: &axum::Router, path: &str, token: &str) -> (u16, serd
     (status, serde_json::from_slice(&bytes).unwrap())
 }
 
+/// GET returning status, the `content-type` header, and the raw body. Needed for
+/// endpoints whose body is not JSON — `note/export` serves flat text for a clipboard,
+/// and the content-type is part of that contract, not incidental.
+pub async fn get_text(app: &axum::Router, path: &str, token: &str) -> (u16, String, String) {
+    let req = Request::builder()
+        .method("GET")
+        .uri(path)
+        .header(header::AUTHORIZATION, format!("Bearer {token}"));
+    let response = app.clone().oneshot(req.body(Body::empty()).unwrap()).await.unwrap();
+    let status = response.status().as_u16();
+    let content_type = response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .map(|v| v.to_str().unwrap().to_owned())
+        .unwrap_or_default();
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    (status, content_type, String::from_utf8_lossy(&bytes).into_owned())
+}
+
 /// POST a JSON body and hand back status + parsed response. `Json<T>` rejects a
 /// request without `content-type: application/json` with a 415 before the handler
 /// ever runs, so the header is not optional decoration.
