@@ -530,9 +530,13 @@ dependencies = [
 name = "er-api"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "chrono",
  "er-domain",
+ "er-store",
+ "reqwest",
  "serde",
+ "serde_json",
  "uuid",
 ]
 

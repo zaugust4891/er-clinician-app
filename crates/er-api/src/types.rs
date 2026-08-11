@@ -14,15 +14,22 @@ pub struct EventUp {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct AppendEventsRequest { pub events: Vec<EventUp> }
+pub struct AppendEventsRequest { 
+    pub events: Vec<EventUp> 
+}
 
 /// Per-event acknowledgment: the server-assigned position in the stream.
 /// On a duplicate delivery this is the ORIGINAL sequence_id — same answer every time.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct EventAck { pub event_id: Uuid, pub sequence_id: u64 }
+pub struct EventAck { 
+    pub event_id: Uuid,
+    pub sequence_id: u64 
+}
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct AppendEventsResponse { pub results: Vec<EventAck> }
+pub struct AppendEventsResponse { 
+    pub results: Vec<EventAck>
+}
 
 /// One event coming down — the wire twin of er_store's StoredEvent envelope.
 #[derive(Debug, Serialize, Deserialize)]
@@ -36,14 +43,24 @@ pub struct EventDown {
 
 /// A page of the stream. `has_more` tells the client to keep looping (§C3).
 #[derive(Debug, Serialize, Deserialize)]
-pub struct EventsPage { pub events: Vec<EventDown>, pub has_more: bool }
+pub struct EventsPage { 
+    pub events: Vec<EventDown>, 
+    pub has_more: bool
+}
 
 // ---------- Snapshots (S6) ----------
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct SnapshotUp   { pub sequence_id: u64, pub snapshot: PatientNote }
+pub struct SnapshotUp   { 
+    pub sequence_id: u64,
+    pub snapshot: PatientNote
+}
+
 #[derive(Debug, Serialize, Deserialize)]
-pub struct SnapshotDown { pub sequence_id: u64, pub snapshot: PatientNote }
+pub struct SnapshotDown { 
+    pub sequence_id: u64,
+    pub snapshot: PatientNote
+}
 
 // ---------- Patients (S3) ----------
 
@@ -123,4 +140,7 @@ impl From<&PatientNote> for NoteView {
 // ---------- Ops (S7) ----------
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct StatsView { pub event_count: u64, pub snapshot_count: u64 }
+pub struct StatsView {
+    pub event_count: u64,
+    pub snapshot_count: u64
+}

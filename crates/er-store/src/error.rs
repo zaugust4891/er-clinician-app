@@ -16,6 +16,9 @@ pub enum StoreError {
         #[source]
         source: Box<dyn std::error::Error + Send + Sync>,
     },
+
+    #[error("server returned {status}: {message}")]
+    Remote { status: u16, message: String },
 }
 
 pub type StoreResult<T> = std::result::Result<T, StoreError>;
