@@ -188,6 +188,22 @@ pub async fn seed_active_shift(pool: &PgPool, org_id: Uuid) -> Uuid {
 // Assertions against raw tables
 // ---------------------------------------------------------------------------
 
+/// POST with no request body — for endpoints whose every input comes from the
+/// token and the path (`/v1/shifts`, `/v1/shifts/{id}/end`). Deliberately sends no
+/// content-type: these handlers must not require one, since there is nothing to type.
+pub async fn post_empty(app: &axum::Router, path: &str, token: &str) -> (u16, serde_json::Value) {
+    let req = Request::builder()
+        .method("POST")
+        .uri(path)
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .body(Body::empty())
+        .unwrap();
+    let response = app.clone().oneshot(req).await.unwrap();
+    let status = response.status().as_u16();
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    (status, serde_json::from_slice(&bytes).unwrap())
+}
+
 /// PUT a JSON body. Same content-type reasoning as `post_json`; the response body
 /// is returned raw because some PUT handlers answer with a bare status and no JSON.
 pub async fn put_json(

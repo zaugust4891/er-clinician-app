@@ -30,6 +30,12 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/patients/{id}/events", post(append_events).get(events_since))
         .route("/v1/patients/{id}/snapshot", put(put_snapshot).get(get_snapshot))
         .route("/v1/patients/{id}/note/export", get(note_export))
+        // `/active` is a literal and `{id}` a capture; axum matches literals first,
+        // so the resume route is never swallowed by the by-id route.
+        .route("/v1/shifts", post(start_shift))
+        .route("/v1/shifts/active", get(active_shift))
+        .route("/v1/shifts/{id}", get(get_shift))
+        .route("/v1/shifts/{id}/end", post(end_shift))
         .route("/v1/stats", get(stats))
         .route_layer(middleware::from_fn_with_state(state.clone(), auth::middleware::require_auth));
     
@@ -250,6 +256,82 @@ async fn note_export(State(state): State<AppState>, authed: AuthedClinician, Pat
 
     Ok(([(axum::http::header::CONTENT_TYPE, "text/plain; charset=utf-8")], text))
     
+}
+
+// ---------------------------------------------------------------------------
+// S8 — shifts
+// ---------------------------------------------------------------------------
+
+/// Build the wire view for a shift, fetching its roster. Kept in one place so
+/// every shift response carries the patient list in the same `position` order.
+async fn shift_view(
+    repo: &PostgresRepository,
+    row: crate::repository::ShiftRow,
+) -> Result<er_api::ShiftView, ApiError> {
+    let roster = repo.shift_roster(row.id).await?;
+    Ok(er_api::ShiftView {
+        shift_id: row.id,
+        started_at: row.started_at,
+        ended_at: row.ended_at,
+        status: row.status,
+        patients: roster
+            .into_iter()
+            .map(|p| er_api::PatientView {
+                patient_id: p.patient_id,
+                chief_complaint: p.chief_complaint,
+                display_label: p.display_label,
+                created_at: p.created_at,
+            })
+            .collect(),
+    })
+}
+
+async fn start_shift(
+    State(state): State<AppState>,
+    authed: AuthedClinician,
+) -> Result<Json<er_api::ShiftView>, ApiError> {
+    let repo = state.repo_for(&authed);
+    // `None` = the partial unique index rejected a second active shift. 409 tells
+    // the client to stop trying to start one and `GET /v1/shifts/active` instead.
+    match repo.create_shift(authed.clinician_id).await? {
+        Some(row) => Ok(Json(shift_view(&repo, row).await?)),
+        None => Err(ApiError::Conflict("shift_already_active")),
+    }
+}
+
+async fn get_shift(
+    State(state): State<AppState>,
+    authed: AuthedClinician,
+    Path(shift_id): Path<Uuid>,
+) -> Result<Json<er_api::ShiftView>, ApiError> {
+    let repo = state.repo_for(&authed);
+    let row = repo.get_shift(shift_id).await?.ok_or(ApiError::NotFound)?;
+    Ok(Json(shift_view(&repo, row).await?))
+}
+
+/// The resume request: the one a fresh device opens with, and the reason
+/// `shift.json` can go away. 404 means "you have no open shift" — a normal
+/// answer a first-boot clinician gets, then answers with POST /v1/shifts.
+async fn active_shift(
+    State(state): State<AppState>,
+    authed: AuthedClinician,
+) -> Result<Json<er_api::ShiftView>, ApiError> {
+    let repo = state.repo_for(&authed);
+    let row = repo
+        .active_shift(authed.clinician_id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    Ok(Json(shift_view(&repo, row).await?))
+}
+
+async fn end_shift(
+    State(state): State<AppState>,
+    authed: AuthedClinician,
+    Path(shift_id): Path<Uuid>,
+) -> Result<Json<er_api::ShiftView>, ApiError> {
+    let repo = state.repo_for(&authed);
+    let row = repo.end_shift(shift_id).await?.ok_or(ApiError::NotFound)?;
+    Ok(Json(shift_view(&repo, row).await?))
 }
 
 async fn stats(State(state): State<AppState>, authed: AuthedClinician) -> Result<Json<er_api::StatsView>, ApiError> {

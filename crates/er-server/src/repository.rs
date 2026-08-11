@@ -20,6 +20,44 @@ pub struct PatientRow {
     pub created_at: DateTime<Utc>,
 }
 
+/// A `shifts` row (S8). Wire-type-free on purpose: the repository stays in storage
+/// vocabulary and `routes.rs` maps this onto `er_api::ShiftView`, the same split
+/// `PatientRow` uses.
+pub struct ShiftRow {
+    pub id: Uuid,
+    pub started_at: DateTime<Utc>,
+    pub ended_at: Option<DateTime<Utc>>,
+    pub status: String,
+}
+
+/// One patient on a shift's roster, already in `position` order.
+pub struct RosterEntry {
+    pub patient_id: Uuid,
+    pub chief_complaint: String,
+    pub display_label: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Name of the partial unique index from the S1 migration. It is the referee for
+/// "one active shift per clinician" — the check is the database's, not ours, so
+/// two simultaneous starts cannot both win.
+const ONE_ACTIVE_SHIFT_INDEX: &str = "one_active_shift_per_clinician";
+
+/// Did this failure come from a clinician trying to open a second active shift?
+///
+/// `one_active_shift_per_clinician` is a partial unique INDEX, not a table
+/// CONSTRAINT, so Postgres may leave the constraint field of the error empty and
+/// name the index only in the message. Accept either signal rather than betting on
+/// which one this server version fills in — but require SQLSTATE 23505 first, so
+/// an unrelated error whose text happens to mention the index can't match.
+fn is_active_shift_violation(e: &sqlx::Error) -> bool {
+    let Some(db) = e.as_database_error() else { return false };
+    if db.code().as_deref() != Some("23505") {
+        return false; // not unique_violation
+    }
+    db.constraint() == Some(ONE_ACTIVE_SHIFT_INDEX) || db.message().contains(ONE_ACTIVE_SHIFT_INDEX)
+}
+
 impl PostgresRepository {
     pub fn for_org(pool: PgPool, org_id: Uuid) -> Self {
         Self { pool, org_id }
@@ -83,6 +121,128 @@ impl PostgresRepository {
             display_label: r.display_label,
             created_at: r.created_at,
         }))
+    }
+
+    // ---- Shifts (S8) ------------------------------------------------------
+
+    /// Open a shift for `clinician_id`. Returns `Ok(None)` when one is already
+    /// active — the partial unique index refereed it, and "you're already in a
+    /// shift" is an answer, not a failure. Every other database error propagates.
+    pub async fn create_shift(&self, clinician_id: Uuid) -> StoreResult<Option<ShiftRow>> {
+        let result = sqlx::query!(
+            r#"INSERT INTO shifts (id, org_id, clinician_id, status)
+               VALUES ($1, $2, $3, 'active')
+               RETURNING id, started_at, ended_at, status"#,
+            Uuid::now_v7(), self.org_id, clinician_id,
+        )
+        .fetch_one(&self.pool)
+        .await;
+
+        match result {
+            Ok(r) => Ok(Some(ShiftRow {
+                id: r.id,
+                started_at: r.started_at,
+                ended_at: r.ended_at,
+                status: r.status,
+            })),
+            Err(e) if is_active_shift_violation(&e) => Ok(None),
+            Err(e) => Err(StoreError::backend(e)),
+        }
+    }
+
+    pub async fn get_shift(&self, shift_id: Uuid) -> StoreResult<Option<ShiftRow>> {
+        let row = sqlx::query!(
+            "SELECT id, started_at, ended_at, status
+               FROM shifts WHERE id = $1 AND org_id = $2",
+            shift_id, self.org_id,
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(StoreError::backend)?;
+
+        Ok(row.map(|r| ShiftRow {
+            id: r.id,
+            started_at: r.started_at,
+            ended_at: r.ended_at,
+            status: r.status,
+        }))
+    }
+
+    /// "What am I in the middle of?" — scoped to the caller's own clinician_id,
+    /// which comes from the token and is never a parameter (§C6).
+    pub async fn active_shift(&self, clinician_id: Uuid) -> StoreResult<Option<ShiftRow>> {
+        let row = sqlx::query!(
+            "SELECT id, started_at, ended_at, status
+               FROM shifts
+              WHERE clinician_id = $1 AND org_id = $2 AND status = 'active'",
+            clinician_id, self.org_id,
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(StoreError::backend)?;
+
+        Ok(row.map(|r| ShiftRow {
+            id: r.id,
+            started_at: r.started_at,
+            ended_at: r.ended_at,
+            status: r.status,
+        }))
+    }
+
+    /// End a shift, idempotently. The UPDATE is conditional on `status = 'active'`,
+    /// so a retry matches no row and `ended_at` is stamped exactly once — a second
+    /// call returns the identical body rather than sliding the timestamp forward
+    /// (§C2: every mutation a client might resend answers the same way twice).
+    ///
+    /// `Ok(None)` means missing or another org's — the caller turns that into 404.
+    pub async fn end_shift(&self, shift_id: Uuid) -> StoreResult<Option<ShiftRow>> {
+        let updated = sqlx::query!(
+            r#"UPDATE shifts SET ended_at = now(), status = 'ended'
+                WHERE id = $1 AND org_id = $2 AND status = 'active'
+            RETURNING id, started_at, ended_at, status"#,
+            shift_id, self.org_id,
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(StoreError::backend)?;
+
+        if let Some(r) = updated {
+            return Ok(Some(ShiftRow {
+                id: r.id,
+                started_at: r.started_at,
+                ended_at: r.ended_at,
+                status: r.status,
+            }));
+        }
+        // Matched nothing: either already ended (hand it back unchanged) or
+        // missing/foreign (None). One org-scoped read settles which.
+        self.get_shift(shift_id).await
+    }
+
+    /// The shift's patients in `position` order — ShiftManager's stable-list
+    /// invariant, now enforced by the database rather than by in-memory ordering.
+    pub async fn shift_roster(&self, shift_id: Uuid) -> StoreResult<Vec<RosterEntry>> {
+        let rows = sqlx::query!(
+            "SELECT p.id, p.chief_complaint, p.display_label, p.created_at
+               FROM shift_patients sp
+               JOIN patients p ON p.id = sp.patient_id
+              WHERE sp.shift_id = $1 AND p.org_id = $2
+              ORDER BY sp.position ASC",
+            shift_id, self.org_id,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(StoreError::backend)?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| RosterEntry {
+                patient_id: r.id,
+                chief_complaint: r.chief_complaint,
+                display_label: r.display_label,
+                created_at: r.created_at,
+            })
+            .collect())
     }
 
     /// Idempotent insert + attach to the clinician's active shift, atomically.
