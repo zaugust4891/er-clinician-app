@@ -1,17 +1,20 @@
-//! One test suite, two implementations (deep-dive §6).
+//! One test suite, three implementations (deep-dive §6; S9/S11).
 //!
 //! `suite` holds the pure Repository-contract assertions and takes
 //! `Arc<dyn Repository>`, so it neither knows nor cares which backend it got.
 //! `sqlite_repository_satisfies_contract` runs it against an in-memory SQLite;
 //! `postgres_repository_satisfies_contract` runs it against a pristine,
-//! per-test Postgres database that `#[sqlx::test]` creates from ./migrations.
-//! If a behavior passes on one backend and fails on the other, the trait's
-//! promise of interchangeability is broken — that divergence is what this
-//! file exists to catch.
+//! per-test Postgres database that `#[sqlx::test]` creates from ./migrations;
+//! `remote_repository_satisfies_contract` runs it against a real HTTP server
+//! through `er_api::client::RemoteRepository`. If a behavior passes on one
+//! backend and fails on another, the trait's promise of interchangeability is
+//! broken — that divergence is what this file exists to catch.
 //!
 //! Backend-specific tests (checksum tampering, org isolation) live below the
 //! shared suite; they need raw access to the underlying database.
 
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 
 use chrono::Utc;
@@ -21,11 +24,31 @@ use uuid::Uuid;
 use er_domain::replay::replay;
 use er_domain::{CaptureMode, NoteEvent, NotePhase};
 use er_server::repository::PostgresRepository;
+use er_server::routes;
 use er_store::repository::{Repository, SqliteRepository};
 
+mod common;
+
+/// "How a patient becomes known to this backend."
+///
+/// The remote implementation adds a precondition the raw engines don't have: the
+/// server only accepts writes for a *registered* patient (§C6). The contract was
+/// always implicitly "append for a known patient" — SQLite and Postgres just
+/// treat every UUID as known. Injecting that step is the honest way to state it
+/// without weakening the assertions.
+///
+/// The boxed-pinned future is the standard way to store an async closure in a
+/// value (`futures::future::BoxFuture` is this same type with a shorter name).
+type PatientFactory = Box<dyn Fn() -> Pin<Box<dyn Future<Output = Uuid> + Send>> + Send + Sync>;
+
+/// SQLite and Postgres: any UUID is already a patient.
+fn bare_patient_factory() -> PatientFactory {
+    Box::new(|| Box::pin(async { Uuid::now_v7() }))
+}
+
 /// Pure storage-contract assertions every `Repository` must satisfy.
-async fn suite(repo: Arc<dyn Repository>) {
-    let patient = Uuid::now_v7();
+async fn suite(repo: Arc<dyn Repository>, new_patient: &PatientFactory) {
+    let patient = new_patient().await;
     let encounter = Uuid::now_v7();
 
     // --- append → get_events round-trip, ordering, envelope fields ---
@@ -88,9 +111,10 @@ async fn suite(repo: Arc<dyn Repository>) {
         "a retried append must not store a second row"
     );
 
-    // --- unknown patient reads are empty, not errors ---
-    assert!(repo.get_events(Uuid::now_v7()).await.unwrap().is_empty());
-    assert!(repo.get_latest_snapshot(Uuid::now_v7()).await.unwrap().is_none());
+    // --- a patient nothing has happened to reads empty, not as an error ---
+    let untouched = new_patient().await;
+    assert!(repo.get_events(untouched).await.unwrap().is_empty());
+    assert!(repo.get_latest_snapshot(untouched).await.unwrap().is_none());
 
     // --- snapshot save → load round-trip ---
     let all = repo.get_events(patient).await.unwrap();
@@ -131,13 +155,50 @@ async fn seed_org(pool: &PgPool) -> Uuid {
 #[tokio::test]
 async fn sqlite_repository_satisfies_contract() {
     let conn = er_store::db::open_memory_db().unwrap();
-    suite(Arc::new(SqliteRepository::new(conn))).await;
+    suite(Arc::new(SqliteRepository::new(conn)), &bare_patient_factory()).await;
 }
 
 #[sqlx::test(migrations = "./migrations")]
 async fn postgres_repository_satisfies_contract(pool: PgPool) {
     let org = seed_org(&pool).await;
-    suite(Arc::new(PostgresRepository::for_org(pool, org))).await;
+    suite(
+        Arc::new(PostgresRepository::for_org(pool, org)),
+        &bare_patient_factory(),
+    )
+    .await;
+}
+
+/// The third run, and the point of S9: the same assertions, with a JSON wire, an
+/// HTTP server, an auth middleware, and a tenancy guard between the caller and
+/// Postgres. Nothing in `suite` changes — the swap is the proof the abstraction
+/// held.
+#[sqlx::test(migrations = "./migrations")]
+async fn remote_repository_satisfies_contract(pool: PgPool) {
+    common::seed_org_and_clinician(&pool, common::ORG_A, "remote-doc").await;
+    let base = common::spawn_server(routes::router(common::test_state(pool).await)).await;
+    let token = common::mint("remote-doc");
+
+    // A second client for the factory's registration calls: `RemoteRepository`
+    // deliberately exposes only the seven storage methods, and registration is
+    // not one of them (§C6 — it is an API-layer precondition, not storage).
+    let api = Arc::new(er_api::client::ServerApi::new(base.clone(), token.clone()));
+    let factory: PatientFactory = Box::new(move || {
+        let api = Arc::clone(&api);
+        Box::pin(async move {
+            let patient_id = Uuid::now_v7(); // client-stamped (D5.3)
+            api.register_patient(&er_api::RegisterPatientRequest {
+                patient_id,
+                chief_complaint: "chest pain".to_string(),
+                display_label: None,
+            })
+            .await
+            .expect("register patient");
+            patient_id
+        })
+    });
+
+    let repo: Arc<dyn Repository> = Arc::new(er_api::client::RemoteRepository::new(base, token));
+    suite(repo, &factory).await;
 }
 
 /// A tampered snapshot must be treated as absent so load_patient_note falls

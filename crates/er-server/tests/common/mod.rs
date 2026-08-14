@@ -52,6 +52,42 @@ pub fn mint(sub: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// A live server (S9 — the client needs a real socket)
+// ---------------------------------------------------------------------------
+
+/// Serve `app` on a real TCP port for the rest of the test and return its base
+/// URL. Every other helper here uses `.oneshot`, which calls the router directly
+/// and never opens a socket; `RemoteRepository` speaks actual HTTP, so it needs
+/// somewhere to connect.
+///
+/// `127.0.0.1:0` means "any free port" — the OS picks and `local_addr()` reports
+/// which, so parallel tests never collide. `axum::serve` implements `IntoFuture`,
+/// so it can be spawned as a background task; it dies with the test's runtime.
+pub async fn spawn_server(app: axum::Router) -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind an ephemeral port");
+    let addr = listener.local_addr().expect("listener has a local address");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    format!("http://{addr}")
+}
+
+/// A URL that is syntactically fine and answers nothing: bind a port, learn its
+/// number, then release it. Connecting there is refused, which is how a test
+/// distinguishes "no response at all" (`StoreError::Backend`) from "the server
+/// said no" (`StoreError::Remote`).
+pub async fn unreachable_url() -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind an ephemeral port");
+    let addr = listener.local_addr().expect("listener has a local address");
+    drop(listener);
+    format!("http://{addr}")
+}
+
+// ---------------------------------------------------------------------------
 // Requests
 // ---------------------------------------------------------------------------
 
