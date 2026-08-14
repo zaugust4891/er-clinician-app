@@ -77,9 +77,25 @@ where
     }
 
     pub fn register_patient(&mut self, chief_complaint: &str) -> PatientId {
+        self.register_patient_with_id(Uuid::now_v7(), chief_complaint)
+    }
+
+    /// Register a patient whose id the caller already chose.
+    ///
+    /// Remote mode (S10) needs this: the id is client-stamped and given to the
+    /// server *first*, so by the time the shift hears about the patient the id
+    /// already exists on both sides. Minting a fresh one here would address every
+    /// later event to a patient the server never registered — a 404 per append.
+    pub fn register_patient_with_id(
+        &mut self,
+        patient_id: PatientId,
+        chief_complaint: &str,
+    ) -> PatientId {
         // create PatientRecord
-        let patient_record = PatientRecord::new(chief_complaint);
-        let patient_id = patient_record.id;
+        let patient_record = PatientRecord {
+            id: patient_id,
+            ..PatientRecord::new(chief_complaint)
+        };
         // add patient record to Shift
         self.shift.add_patient(patient_record.id);
         // add patient to shift manager patients map.
@@ -706,5 +722,54 @@ mod tests {
     fn assemble_objective_data_is_empty_for_blank_note() {
         let note = PatientNote::new(Uuid::now_v7());
         assert_eq!(assemble_objective_data(&note), "");
+    }
+
+    /// S10's remote registration hands the shift an id the server already knows.
+    /// If this method invented its own, every subsequent event would be addressed
+    /// to a patient the server never registered.
+    #[test]
+    fn register_patient_with_id_keeps_the_callers_id_everywhere() {
+        let conn = er_store::db::open_memory_db().unwrap();
+        let repo: Arc<dyn Repository> =
+            Arc::new(er_store::repository::SqliteRepository::new(conn));
+        let bus = Arc::new(EventBus::new(32, Some(repo.clone())));
+        let store = crate::load::new_store();
+        let driver = crate::encounter_driver::EncounterDriver::new(
+            er_pipeline::audio::MockAudioCapture::new(),
+            er_pipeline::stt::MockTranscriber,
+            bus.clone(),
+            store.clone(),
+        );
+        let mut manager = ShiftManager::new(
+            Shift::new(),
+            HashMap::new(),
+            driver,
+            bus,
+            store,
+            repo,
+            er_ai::summarizer::MockSummarizer::new(),
+            Arc::new(tokio::runtime::Runtime::new().unwrap()),
+        );
+
+        let server_side_id = Uuid::now_v7();
+        let returned = manager.register_patient_with_id(server_side_id, "chest pain");
+
+        assert_eq!(returned, server_side_id);
+        // The id must be the same one in all three places the shift keeps state:
+        // the roster, the patient map, and the note store.
+        assert_eq!(manager.shift.patient_ids, vec![server_side_id]);
+        assert_eq!(
+            manager.patients[&server_side_id].chief_complaint,
+            "chest pain"
+        );
+        assert_eq!(
+            manager.get_note(server_side_id).map(|n| n.patient_id),
+            Some(server_side_id)
+        );
+
+        // The convenience wrapper still mints its own id, unchanged.
+        let local = manager.register_patient("ankle pain");
+        assert_ne!(local, server_side_id);
+        assert_eq!(manager.shift.patient_ids, vec![server_side_id, local]);
     }
 }

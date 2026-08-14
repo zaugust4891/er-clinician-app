@@ -565,6 +565,7 @@ dependencies = [
  "chrono",
  "dotenvy",
  "er-ai",
+ "er-api",
  "er-app",
  "er-domain",
  "er-pipeline",

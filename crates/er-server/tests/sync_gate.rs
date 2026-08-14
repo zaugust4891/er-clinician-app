@@ -6,10 +6,12 @@
 //! batch validation, the path/payload match check, the S3 ownership guard, and
 //! end-to-end idempotency over the wire.
 
+use std::sync::Arc;
+
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use er_domain::{CaptureMode, NoteEvent};
+use er_domain::{CaptureMode, Disposition, NoteEvent, NotePhase};
 use er_server::repository::PostgresRepository;
 use er_server::routes;
 use er_store::repository::Repository;
@@ -573,4 +575,125 @@ async fn exactly_full_page_does_not_claim_more(pool: PgPool) {
     assert_eq!(status, 200);
     assert_eq!(page_seqs(&body), seqs, "all five fit");
     assert_eq!(body["has_more"], false, "the stream is exhausted, not one-short");
+}
+
+// ---------------------------------------------------------------------------
+// S11 — the Step 5 gate, as a test
+// ---------------------------------------------------------------------------
+
+/// The whole step in one test: a shift and a patient created through the API, a
+/// complete ED visit published by the *unmodified* `EventBus` over HTTP, the
+/// device thrown away, and the note recovered on a second device that has
+/// nothing but a token — then read back in both dialects (structured note and
+/// clipboard text) and the shift closed.
+///
+/// This is `E5`'s two-terminal demo with the terminals replaced by two clients,
+/// and it is the acceptance criterion "CLI-as-client drives full lifecycle
+/// remotely" in executable form. Nothing here is server-test scaffolding: every
+/// call is one a device makes.
+#[sqlx::test]
+async fn full_remote_lifecycle(pool: PgPool) {
+    seed_org_and_clinician(&pool, ORG_A, "doc-joey-a").await;
+    let base = common::spawn_server(routes::router(test_state(pool).await)).await;
+    let token = mint("doc-joey-a");
+
+    // --- Device one: boot (S10's startup path) ---
+    let api = er_api::client::ServerApi::new(base.as_str(), token.as_str());
+    let repo: Arc<dyn Repository> = Arc::new(er_api::client::RemoteRepository::new(
+        base.as_str(),
+        token.as_str(),
+    ));
+
+    assert!(api.active_shift().await.unwrap().is_none(), "first boot of the day");
+    let shift = api.start_shift().await.unwrap();
+
+    let patient = Uuid::now_v7(); // client-stamped (D5.3)
+    api.register_patient(&er_api::RegisterPatientRequest {
+        patient_id: patient,
+        chief_complaint: "chest pain".to_string(),
+        display_label: Some("Room 4".to_string()),
+    })
+    .await
+    .expect("register the patient before any event mentions it (§C6)");
+
+    // --- The visit, through the same EventBus the local CLI uses ---
+    let store = er_app::load::new_store();
+    let bus = er_app::EventBus::new(1024, Some(Arc::clone(&repo)));
+    let events = common::full_visit_events(patient, Uuid::now_v7());
+    for event in &events {
+        bus.publish(event.clone(), &store).await.expect("publish over HTTP");
+    }
+    assert_eq!(store.get(&patient).unwrap().phase, NotePhase::Signed);
+
+    // --- The phone goes in the sharps bin. No local database, no shift.json. ---
+    drop(store);
+    drop(bus);
+
+    // --- Device two: same token, empty everything ---
+    let loaner = er_api::client::ServerApi::new(base.as_str(), token.as_str());
+    let loaner_repo: Arc<dyn Repository> = Arc::new(er_api::client::RemoteRepository::new(
+        base.as_str(),
+        token.as_str(),
+    ));
+
+    let resumed = loaner
+        .active_shift()
+        .await
+        .unwrap()
+        .expect("the shift is still open on the server — that is the resume story");
+    assert_eq!(resumed.shift_id, shift.shift_id);
+    assert_eq!(
+        resumed.patients.iter().map(|p| p.patient_id).collect::<Vec<_>>(),
+        vec![patient],
+        "the roster comes back without any local state"
+    );
+    assert_eq!(resumed.patients[0].chief_complaint, "chest pain");
+    assert_eq!(resumed.patients[0].display_label.as_deref(), Some("Room 4"));
+
+    // The recovery algorithm is untouched application code: snapshot fast-path
+    // plus delta replay, answered over HTTP.
+    let reloaded = er_app::load::load_patient_note(loaner_repo.as_ref(), patient)
+        .await
+        .unwrap()
+        .expect("the note reloads from the server alone");
+    assert_eq!(reloaded.phase, NotePhase::Signed);
+    assert_eq!(
+        reloaded.note_sections.hpi.as_deref(),
+        Some("55yo with substernal chest pressure since 0600.")
+    );
+    assert_eq!(reloaded.encounter_count, 1);
+
+    // --- The server's own read model agrees with the client's replay ---
+    let note = loaner.note(patient).await.unwrap();
+    assert_eq!(note.phase, "Signed");
+    assert_eq!(note.hpi, reloaded.note_sections.hpi);
+    assert_eq!(note.mdm, reloaded.note_sections.mdm);
+    assert_eq!(note.results.len(), 1);
+    assert_eq!(note.medications.len(), 1);
+    assert_eq!(note.diagnoses.len(), 1);
+    assert_eq!(note.data_reviewed.len(), 1);
+    assert!(
+        matches!(note.disposition, Some(Disposition::Admit { .. })),
+        "disposition survived the round trip: {:?}",
+        note.disposition
+    );
+
+    // --- The clipboard dialect: what actually gets pasted into Epic ---
+    let text = loaner.export(patient).await.unwrap();
+    assert!(text.contains("Chief Complaint: chest pain"), "got:\n{text}");
+    assert!(text.contains("55yo with substernal chest pressure"), "got:\n{text}");
+    assert!(text.contains("NSTEMI"), "got:\n{text}");
+    assert!(text.contains("Troponin I"), "got:\n{text}");
+
+    // --- Every event landed exactly once, no matter which client asked ---
+    assert_eq!(
+        loaner_repo.get_events(patient).await.unwrap().len(),
+        events.len(),
+        "the stream holds one row per published event"
+    );
+
+    // --- End of shift, from the loaner ---
+    let ended = loaner.end_shift(shift.shift_id).await.unwrap();
+    assert_eq!(ended.status, "ended");
+    assert!(loaner.active_shift().await.unwrap().is_none());
 }

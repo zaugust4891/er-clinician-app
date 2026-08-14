@@ -5,14 +5,10 @@
 //! through `load_patient_note`, so these tests also exercise the S6 snapshot
 //! fast-path from the server side for the first time.
 
-use chrono::Utc;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use er_domain::{
-    CaptureMode, ClinicalResult, Diagnosis, Disposition, LabResult, Medication, MedicationKind,
-    NoteEvent, NoteSections, ResultSource, ResultType,
-};
+use er_domain::NoteEvent;
 use er_server::repository::PostgresRepository;
 use er_server::routes;
 use er_store::repository::Repository;
@@ -30,95 +26,13 @@ fn export_url(patient: Uuid) -> String {
     format!("/v1/patients/{patient}/note/export")
 }
 
-/// A complete ED visit driven all the way to `Signed`, with every section and
-/// every objective-data list populated. Ordering follows the real pipeline: the
-/// MDM content is persisted while still `Idle`, *then* TriggerMDM advances the
-/// phase (CLAUDE.md's "persist content before advancing state").
+/// A complete ED visit driven all the way to `Signed`, appended straight through
+/// the repository. The event stream itself lives in `common::full_visit_events`
+/// so the remote gate (`sync_gate::full_remote_lifecycle`) can push the *same*
+/// visit through HTTP and assert the two paths agree.
 async fn seed_signed_note(pool: &PgPool, org: Uuid, patient: Uuid) -> Vec<NoteEvent> {
     let repo = PostgresRepository::for_org(pool.clone(), org);
-    let encounter = Uuid::now_v7();
-
-    let events = vec![
-        NoteEvent::audio_started(patient, encounter, CaptureMode::Ambient),
-        NoteEvent::transcript_ready(
-            patient,
-            encounter,
-            "substernal chest pressure since 0600, radiating to the left arm".to_string(),
-            Utc::now(),
-        ),
-        NoteEvent::audio_stopped(patient, encounter),
-        NoteEvent::encounter_summarized(
-            patient,
-            encounter,
-            NoteSections {
-                hpi: Some("55yo with substernal chest pressure since 0600.".to_string()),
-                ros: Some("Positive for chest pain and dyspnea. Negative for fever.".to_string()),
-                exam: Some("Alert, diaphoretic. Lungs clear. Regular rate and rhythm.".to_string()),
-                mdm: None,
-                disposition_text: None,
-            },
-            vec![encounter],
-        ),
-        NoteEvent::result_received(
-            patient,
-            ClinicalResult {
-                id: Uuid::now_v7(),
-                patient_id: patient,
-                source: ResultSource::Manual,
-                timestamp: Utc::now(),
-                result_type: ResultType::Lab(LabResult {
-                    fhir_id: None,
-                    loinc_code: Some("6598-7".to_string()),
-                    display_name: "Troponin I".to_string(),
-                    value: 0.42,
-                    unit: "ng/mL".to_string(),
-                    reference_range: Some((0.0, 0.04)),
-                    is_abnormal: true,
-                }),
-            },
-            Utc::now(),
-        ),
-        NoteEvent::medication_recorded(
-            patient,
-            Medication {
-                id: Uuid::now_v7(),
-                patient_id: patient,
-                name: "Aspirin".to_string(),
-                dose: "324 mg".to_string(),
-                route: Some("PO".to_string()),
-                rxnorm_code: None,
-                kind: MedicationKind::AdministeredInEd,
-                administered_at: Utc::now(),
-                frequency: "once".to_string(),
-            },
-        ),
-        NoteEvent::diagnosis_assigned(
-            patient,
-            Diagnosis {
-                id: Uuid::now_v7(),
-                patient_id: patient,
-                text: "NSTEMI".to_string(),
-                icd10_code: Some("I21.4".to_string()),
-                is_primary: true,
-            },
-        ),
-        NoteEvent::data_reviewed(patient, "Prior ECG from 2025 reviewed.".to_string()),
-        NoteEvent::disposition_set(
-            patient,
-            Disposition::Admit {
-                service: "Cardiology".to_string(),
-                bed: Some("CCU 3".to_string()),
-            },
-        ),
-        NoteEvent::mdm_generated(
-            patient,
-            "Elevated troponin with ischemic chest pain. NSTEMI. Admit to cardiology.".to_string(),
-            vec![encounter],
-        ),
-        NoteEvent::trigger_mdm(patient),
-        NoteEvent::review_ready(patient),
-        NoteEvent::sign(patient),
-    ];
+    let events = common::full_visit_events(patient, Uuid::now_v7());
 
     for e in &events {
         repo.append_event(patient, Uuid::now_v7(), e.clone())

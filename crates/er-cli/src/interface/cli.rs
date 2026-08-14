@@ -6,6 +6,7 @@ use er_app::conversions::diagnosis::parse_diagnosis;
 use er_app::conversions::disposition::{format_disposition_for_cli, parse_disposition};
 use er_app::conversions::labs::parse_string_to_f64;
 use er_app::conversions::medication::parse_medication;
+use er_api::client::ServerApi;
 use er_app::shift_manager::ShiftManager;
 use er_domain::{CaptureMode, ClinicalResult, Disposition, LabResult, MedicationKind};
 use er_app::error::AppError::NoActivePatient;
@@ -13,6 +14,7 @@ use er_app::error::{AppError, AppResult};
 use er_ai::summarizer::Summarizer;
 use er_pipeline::audio::AudioCapture;
 use er_pipeline::stt::Transcriber;
+use tokio::runtime::Runtime;
 
 use chrono::Utc;
 pub enum Command {
@@ -208,9 +210,24 @@ impl Commands {
     }
 }
 
+/// What a command needs to reach the server directly, in remote mode (S10).
+///
+/// Most commands never touch it: they go through `ShiftManager`, whose
+/// `Arc<dyn Repository>` is already a `RemoteRepository`, and so cross the wire
+/// without knowing it. This exists for the handful of operations that are *not*
+/// storage — today, patient registration.
+///
+/// The runtime rides along because the REPL is synchronous and the client is
+/// async; this is the same `block_on` bridge `ShiftManager` uses internally.
+pub struct RemoteContext<'a> {
+    pub api: &'a ServerApi,
+    pub runtime: &'a Runtime,
+}
+
 pub fn handle_command<A, T, S>(
     manager: &mut ShiftManager<A, T, S>,
     command_wrapper: Commands,
+    remote: Option<&RemoteContext<'_>>,
 ) -> AppResult<bool>
 where
     A: AudioCapture,
@@ -219,7 +236,30 @@ where
 {
     match command_wrapper.commands {
         Command::New { chief_complaint } => {
-            let patient_id = manager.register_patient(&chief_complaint);
+            let patient_id = match remote {
+                // SERVER-FIRST on purpose. If registration fails — network down,
+                // token expired — no local ghost patient is created whose every
+                // later event-append would 404. Fail loudly at step one instead of
+                // confusingly at step five. The server's insert is idempotent
+                // (S3), so retrying after a timeout is always safe.
+                Some(ctx) => {
+                    let patient_id = uuid::Uuid::now_v7(); // client-stamped (D5.3)
+                    ctx.runtime
+                        .block_on(ctx.api.register_patient(&er_api::RegisterPatientRequest {
+                            patient_id,
+                            chief_complaint: chief_complaint.clone(),
+                            display_label: None,
+                        }))
+                        .map_err(|e| {
+                            AppError::CliError(format!(
+                                "the server refused to register this patient ({e}); \
+                                 nothing was created locally"
+                            ))
+                        })?;
+                    manager.register_patient_with_id(patient_id, &chief_complaint)
+                }
+                None => manager.register_patient(&chief_complaint),
+            };
             println!(
                 "Registered patient {} with chief complaint '{}'",
                 patient_id, chief_complaint
@@ -418,7 +458,10 @@ where
 
         Command::Reload => {
             let replayed_count = manager.reload_active_patient()?;
-            println!("Reloaded active patient from SQLite. Replayed {replayed_count} events.");
+            // Identical code path either way — only the sentence changes, so the
+            // operator can see which store just answered.
+            let source = if remote.is_some() { "the server" } else { "SQLite" };
+            println!("Reloaded active patient from {source}. Replayed {replayed_count} events.");
             Ok(true)
         }
 
@@ -531,7 +574,9 @@ mod tests {
         ];
         let command = Commands::new(&args).unwrap();
 
-        assert!(handle_command(&mut manager, command).unwrap());
+        // `None` = local mode. Remote mode differs in exactly one arm (`new`),
+        // and that path is covered end to end by er-server's sync_gate tests.
+        assert!(handle_command(&mut manager, command, None).unwrap());
 
         let note = manager.get_note(patient_id).unwrap();
         assert_eq!(
@@ -546,7 +591,7 @@ mod tests {
     fn run(manager: &mut ShiftManager<MockAudioCapture, MockTranscriber, MockSummarizer>, parts: &[&str]) {
         let args: Vec<String> = parts.iter().map(|p| p.to_string()).collect();
         let command = Commands::new(&args).unwrap();
-        assert!(handle_command(manager, command).unwrap());
+        assert!(handle_command(manager, command, None).unwrap());
     }
 
     #[test]
