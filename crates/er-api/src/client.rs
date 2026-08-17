@@ -92,9 +92,9 @@ impl ServerApi {
     // Non-Repository operations — used directly by the CLI (S10)
     // -----------------------------------------------------------------------
 
-    /// Register a client-stamped patient id (D5.3). Retry-safe: the server's
-    /// INSERT is `ON CONFLICT DO NOTHING`, so a resend returns 200, not 409.
-    ///
+    /// Register a client-stampresend returns 200, not 409.
+    ///ed patient id (D5.3). Retry-safe: the server's
+    /// INSERT is `ON CONFLICT DO NOTHING`, so a 
     /// Deviation from the S9 sketch's `StoreResult<()>`: the server already
     /// answers with the full `PatientView`, and S10's roster needs it.
     pub async fn register_patient(

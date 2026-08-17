@@ -38,6 +38,65 @@ pub struct RosterEntry {
     pub created_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct ChunkRow {
+    pub id: Uuid,
+    pub org_id: Uuid,
+    pub patient_id: Uuid,
+    pub encounter_id: Uuid,
+    pub chunk_index: i32,
+    pub is_final: bool,
+    pub content_type: String,
+    pub s3_key: String,
+    pub status: String,
+    pub transcript: Option<String>,
+    pub error: Option<String>,
+    pub duration_ms: Option<i32>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Note: NewChunk does not contain org_id.
+/// The repository already holds the authenticated organization in self.org_id.
+/// Leaving it out prevents a caller from accidentally inserting a row under the wrong organization.
+pub struct NewChunk<'a> {
+    pub id: Uuid,
+    pub patient_id: Uuid,
+    pub encounter_id: Uuid,
+    pub chunk_index: i32,
+    pub is_final: bool,
+    pub content_type: &'a str,
+    pub s3_key: &'a str,
+}
+
+/// Defined possible insert results
+/// The route later translates the last three outcomes into HTTP 409 Conflict responses.
+/// repository.rs should not directly return ApiError, because the repository should remain independent from HTTP.
+#[derive(Debug)]
+pub enum InsertChunkOutcome {
+    Created(ChunkRow), // A new row was inserted
+    Retry(ChunkRow), // The identical chunk request was previously inserted
+    ChunkIndexTaken, // A different chunk already owns that encounter position
+    FinalChunkAlreadySet, // That encounter already has a final chunk
+    ChunkIdMismatch, // The chunk ID exists, but its saved details do not match this request
+}
+
+const AUDIO_CHUNKS_PRIMARY_KEY: &str = "audio_chunks_pkey";
+const CHUNK_POSITION_INDEX: &str = "idx_chunks_encounter_index";
+const FINAL_CHUNK_INDEX: &str = "idx_chunks_one_final";
+
+fn violated_rule(error: &sqlx::Error, rule_name: &str) -> bool {
+    let Some(database_error) = error.as_database_error() else {
+        return false;
+    };
+
+    // PostgreSQL code 23505 means a uniqueness rule was violated.
+    if database_error.code().as_deref() != Some("23505") {
+        return false;
+    }
+
+    database_error.constraint() == Some(rule_name) || database_error.message().contains(rule_name)
+}
+
 /// Name of the partial unique index from the S1 migration. It is the referee for
 /// "one active shift per clinician" — the check is the database's, not ours, so
 /// two simultaneous starts cannot both win.
@@ -280,6 +339,368 @@ impl PostgresRepository {
         tx.commit().await.map_err(StoreError::backend)?;
         Ok(())
     }
+
+    pub async fn insert_chunk(&self, chunk: NewChunk<'_>) -> StoreResult<InsertChunkOutcome> {
+        let result = sqlx::query_as!(
+            ChunkRow,
+            r#"
+            INSERT INTO audio_chunks (
+                id,
+                org_id,
+                patient_id,
+                encounter_id,
+                chunk_index,
+                is_final,
+                content_type,
+                s3_key
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            RETURNING
+                id,
+                org_id,
+                patient_id,
+                encounter_id,
+                chunk_index,
+                is_final,
+                content_type,
+                s3_key,
+                status,
+                transcript,
+                error,
+                duration_ms,
+                created_at
+            "#,
+            chunk.id,
+            self.org_id,
+            chunk.patient_id,
+            chunk.encounter_id,
+            chunk.chunk_index,
+            chunk.is_final,
+            chunk.content_type,
+            chunk.s3_key,
+        )
+        .fetch_one(&self.pool)
+        .await;
+
+        match result {
+            Ok(row) => Ok(InsertChunkOutcome::Created(row)),
+
+            Err(e) if violated_rule(&e, AUDIO_CHUNKS_PRIMARY_KEY) => {
+                // Same chunk ID: determine whether this is a real retry.
+                let Some(existing) = self.chunk_row(chunk.id).await? else {
+                    // The ID may exist under another organization.
+                    // Do not expose that row.
+                    return Err(StoreError::backend(e));
+                };
+
+                let identical_request = existing.patient_id == chunk.patient_id
+                    && existing.encounter_id == chunk.encounter_id
+                    && existing.chunk_index == chunk.chunk_index
+                    && existing.is_final == chunk.is_final
+                    && existing.content_type == chunk.content_type
+                    && existing.s3_key == chunk.s3_key;
+
+                if identical_request {
+                    Ok(InsertChunkOutcome::Retry(existing))
+                } else {
+                    Ok(InsertChunkOutcome::ChunkIdMismatch)
+                }
+            }
+
+            Err(e) if violated_rule(&e, CHUNK_POSITION_INDEX) => {
+                Ok(InsertChunkOutcome::ChunkIndexTaken)
+            }
+
+            Err(e) if violated_rule(&e, FINAL_CHUNK_INDEX) => {
+                Ok(InsertChunkOutcome::FinalChunkAlreadySet)
+            }
+
+            Err(e) => Err(StoreError::backend(e)),
+        }
+    }
+
+    pub async fn chunk_row(&self, chunk_id: Uuid) -> StoreResult<Option<ChunkRow>> {
+        let row = sqlx::query_as::<_, ChunkRow>(
+            r#"
+            SELECT
+                id,
+                org_id,
+                patient_id,
+                encounter_id,
+                chunk_index,
+                is_final,
+                content_type,
+                s3_key,
+                status,
+                transcript,
+                error,
+                duration_ms,
+                created_at
+            FROM audio_chunks
+            WHERE id = $1 AND org_id = $2"#,
+        )
+        .bind(chunk_id)
+        .bind(self.org_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(StoreError::backend)?;
+
+        Ok(row)
+    }
+
+    /// Worker bootstrap lookup for a queue message that contains only a chunk id.
+    ///
+    /// This is deliberately crate-private and is the only chunk read that does
+    /// not require an organization id. Once the row supplies `org_id`, the
+    /// worker must construct `PostgresRepository::for_org` and use the scoped
+    /// status and encounter helpers below.
+    #[allow(dead_code)] // The S7 worker becomes the production caller later in Step 6.
+    pub(crate) async fn chunk_row_any_org(
+        pool: &PgPool,
+        chunk_id: Uuid,
+    ) -> StoreResult<Option<ChunkRow>> {
+        let row = sqlx::query_as::<_, ChunkRow>(
+            r#"
+            SELECT
+                id,
+                org_id,
+                patient_id,
+                encounter_id,
+                chunk_index,
+                is_final,
+                content_type,
+                s3_key,
+                status,
+                transcript,
+                error,
+                duration_ms,
+                created_at
+            FROM audio_chunks
+            WHERE id = $1
+            "#,
+        )
+        .bind(chunk_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(StoreError::backend)?;
+
+        Ok(row)
+    }
+
+    /// Return one organization's chunks for an encounter in transcript order.
+    ///
+    /// The worker learns the organization through `chunk_row_any_org` first;
+    /// keeping this query scoped prevents malformed data from another org from
+    /// being mixed into the assembled transcript.
+    pub async fn encounter_chunks(&self, encounter_id: Uuid) -> StoreResult<Vec<ChunkRow>> {
+        let rows = sqlx::query_as::<_, ChunkRow>(
+            r#"
+            SELECT
+                id,
+                org_id,
+                patient_id,
+                encounter_id,
+                chunk_index,
+                is_final,
+                content_type,
+                s3_key,
+                status,
+                transcript,
+                error,
+                duration_ms,
+                created_at
+            FROM audio_chunks
+            WHERE org_id = $1
+              AND encounter_id = $2
+            ORDER BY chunk_index ASC
+            "#,
+        )
+        .bind(self.org_id)
+        .bind(encounter_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(StoreError::backend)?;
+
+        Ok(rows)
+    }
+
+    /// Record that object storage now contains the chunk's bytes.
+    ///
+    /// Only `pending` moves to `uploaded`. A repeated completion request returns
+    /// the current row without moving `transcribing`, `done`, or `failed`
+    /// backward. `None` means the chunk is missing or belongs to another org.
+    pub async fn mark_chunk_uploaded(&self, chunk_id: Uuid) -> StoreResult<Option<ChunkRow>> {
+        let updated = sqlx::query_as::<_, ChunkRow>(
+            r#"
+            UPDATE audio_chunks
+               SET status = 'uploaded'
+             WHERE id = $1
+               AND org_id = $2
+               AND status = 'pending'
+            RETURNING
+                id,
+                org_id,
+                patient_id,
+                encounter_id,
+                chunk_index,
+                is_final,
+                content_type,
+                s3_key,
+                status,
+                transcript,
+                error,
+                duration_ms,
+                created_at
+            "#,
+        )
+        .bind(chunk_id)
+        .bind(self.org_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(StoreError::backend)?;
+
+        match updated {
+            Some(row) => Ok(Some(row)),
+            None => self.chunk_row(chunk_id).await,
+        }
+    }
+
+    /// Record that a worker has begun transcription.
+    ///
+    /// Re-marking an already-transcribing chunk is harmless after a worker
+    /// retry. Other states are returned unchanged so terminal chunks cannot be
+    /// reopened accidentally.
+    pub async fn mark_chunk_transcribing(&self, chunk_id: Uuid) -> StoreResult<Option<ChunkRow>> {
+        let updated = sqlx::query_as::<_, ChunkRow>(
+            r#"
+            UPDATE audio_chunks
+               SET status = 'transcribing'
+             WHERE id = $1
+               AND org_id = $2
+               AND status IN ('uploaded', 'transcribing')
+            RETURNING
+                id,
+                org_id,
+                patient_id,
+                encounter_id,
+                chunk_index,
+                is_final,
+                content_type,
+                s3_key,
+                status,
+                transcript,
+                error,
+                duration_ms,
+                created_at
+            "#,
+        )
+        .bind(chunk_id)
+        .bind(self.org_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(StoreError::backend)?;
+
+        match updated {
+            Some(row) => Ok(Some(row)),
+            None => self.chunk_row(chunk_id).await,
+        }
+    }
+
+    /// Store a successful per-chunk transcript and make the chunk terminal.
+    ///
+    /// Only a transcribing chunk can become `done`. A repeated or late write
+    /// returns the current row without replacing an already-terminal result.
+    pub async fn store_chunk_transcript(
+        &self,
+        chunk_id: Uuid,
+        transcript: &str,
+        duration_ms: i32,
+    ) -> StoreResult<Option<ChunkRow>> {
+        let updated = sqlx::query_as::<_, ChunkRow>(
+            r#"
+            UPDATE audio_chunks
+               SET status = 'done',
+                   transcript = $3,
+                   duration_ms = $4,
+                   error = NULL
+             WHERE id = $1
+               AND org_id = $2
+               AND status = 'transcribing'
+            RETURNING
+                id,
+                org_id,
+                patient_id,
+                encounter_id,
+                chunk_index,
+                is_final,
+                content_type,
+                s3_key,
+                status,
+                transcript,
+                error,
+                duration_ms,
+                created_at
+            "#,
+        )
+        .bind(chunk_id)
+        .bind(self.org_id)
+        .bind(transcript)
+        .bind(duration_ms)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(StoreError::backend)?;
+
+        match updated {
+            Some(row) => Ok(Some(row)),
+            None => self.chunk_row(chunk_id).await,
+        }
+    }
+
+    /// Store the final, PHI-free failure summary after worker retries are spent.
+    ///
+    /// A successful `done` row is never overwritten by a late failure. Repeated
+    /// failure writes return the first terminal row unchanged.
+    pub async fn mark_chunk_failed(
+        &self,
+        chunk_id: Uuid,
+        error: &str,
+    ) -> StoreResult<Option<ChunkRow>> {
+        let updated = sqlx::query_as::<_, ChunkRow>(
+            r#"
+            UPDATE audio_chunks
+               SET status = 'failed',
+                   error = $3
+             WHERE id = $1
+               AND org_id = $2
+               AND status IN ('uploaded', 'transcribing')
+            RETURNING
+                id,
+                org_id,
+                patient_id,
+                encounter_id,
+                chunk_index,
+                is_final,
+                content_type,
+                s3_key,
+                status,
+                transcript,
+                error,
+                duration_ms,
+                created_at
+            "#,
+        )
+        .bind(chunk_id)
+        .bind(self.org_id)
+        .bind(error)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(StoreError::backend)?;
+
+        match updated {
+            Some(row) => Ok(Some(row)),
+            None => self.chunk_row(chunk_id).await,
+        }
+    }
 }
 
 #[async_trait]
@@ -460,4 +881,51 @@ impl Repository for PostgresRepository {
     }
 
 }
-    
+
+#[cfg(test)]
+mod audio_worker_lookup_tests {
+    use super::*;
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn worker_lookup_discovers_the_owning_org(pool: PgPool) {
+        let org_id = Uuid::now_v7();
+        let other_org_id = Uuid::now_v7();
+        sqlx::query("INSERT INTO orgs (id, name) VALUES ($1, 'worker owner'), ($2, 'other org')")
+            .bind(org_id)
+            .bind(other_org_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let chunk_id = Uuid::now_v7();
+        let repo = PostgresRepository::for_org(pool.clone(), org_id);
+        let outcome = repo
+            .insert_chunk(NewChunk {
+                id: chunk_id,
+                patient_id: Uuid::now_v7(),
+                encounter_id: Uuid::now_v7(),
+                chunk_index: 0,
+                is_final: false,
+                content_type: "audio/wav",
+                s3_key: "org/patient/encounter/chunk.wav",
+            })
+            .await
+            .unwrap();
+        assert!(matches!(outcome, InsertChunkOutcome::Created(_)));
+
+        let discovered = PostgresRepository::chunk_row_any_org(&pool, chunk_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(discovered.org_id, org_id);
+
+        let other_repo = PostgresRepository::for_org(pool.clone(), other_org_id);
+        assert!(other_repo.chunk_row(chunk_id).await.unwrap().is_none());
+        assert!(
+            PostgresRepository::chunk_row_any_org(&pool, Uuid::now_v7())
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+}

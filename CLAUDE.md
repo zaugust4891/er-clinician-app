@@ -364,5 +364,6 @@ by `er-server`'s dev-dependencies for tests, never by the shipped server binary.
 | `crates/er-server/tests/remote_client.rs` | S9 client behavior: error classes, paging, hydrate, shifts |
 | `crates/er-server/tests/common/mod.rs` | Shared fixtures: mint, seeds, spawn_server, full_visit_events |
 | `docs/planning/phase4-step5-implementation-steps.md` | Step 5 S0–S11 with the concepts (§C1–§C9) |
+| `docs/planning/phase4-step6-implementation-steps.md` | Step 6 S0–S9: audio upload, SQS worker, Deepgram STT (§C1–§C8) |
 | `docs/product/doctor-feedback-responses.md` | Responses to ED doctor's questions |
 | `docs/product/product-summary.md` | Product pitch document |
