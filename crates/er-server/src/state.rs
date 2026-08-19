@@ -1,5 +1,5 @@
-use crate::config::{AuthConfig, Config};
 use crate::auth::{self, AuthedClinician};
+use crate::config::{AuthConfig, Config};
 use crate::repository::PostgresRepository;
 
 use std::sync::Arc;
@@ -25,11 +25,11 @@ use std::sync::Arc;
 /// They receive a per-request `PostgresRepository::for_org(pool, authed.org_id)`
 /// built via `AppState::repo_for`. There is no code path that queries without an org.
 #[derive(Clone)]
-pub struct AppState{
+pub struct AppState {
     pub config: Config,
     pool: sqlx::PgPool,
     pub keys: Arc<auth::keys::KeySet>,
-    pub resolver: Arc<auth::resolver::ClinicianResolver>
+    pub resolver: Arc<auth::resolver::ClinicianResolver>,
 }
 
 impl AppState {
@@ -45,13 +45,15 @@ impl AppState {
                 auth::keys::KeySet::from_url(url).await?
             }
         });
-        
+
         let resolver = Arc::new(auth::resolver::ClinicianResolver::new(pool.clone()));
 
-
-
-
-        Ok(AppState { config: config.clone(), pool, keys, resolver  })
+        Ok(AppState {
+            config: config.clone(),
+            pool,
+            keys,
+            resolver,
+        })
     }
 
     pub fn repo_for(&self, authed: &AuthedClinician) -> PostgresRepository {
@@ -66,12 +68,21 @@ impl AppState {
         let resolver = Arc::new(auth::resolver::ClinicianResolver::new(pool.clone()));
         let config = Config {
             bind: "127.0.0.1:0".to_string(),
-            database_url: String::new(),   // unused: the pool is already connected
+            database_url: String::new(), // unused: the pool is already connected
             s3_endpoint_url: String::new(),
             sqs_endpoint_url: String::new(),
-            auth_mode: AuthConfig::Dev { jwks_path: "dev/keys/jwks.json".into() },
+            auth_mode: AuthConfig::Dev {
+                jwks_path: "dev/keys/jwks.json".into(),
+            },
+            audio_bucket: "er-audio-test".to_string(),
+            stt_queue: "stt-jobs-test".to_string(),
+            deepgram_api_key: None,
         };
-        AppState { config, pool, keys, resolver }
+        AppState {
+            config,
+            pool,
+            keys,
+            resolver,
+        }
     }
-
 }

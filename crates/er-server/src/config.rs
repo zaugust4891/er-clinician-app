@@ -10,25 +10,31 @@ pub enum AppEnv {
 
 #[derive(Clone)]
 pub enum AuthConfig {
-    Dev { jwks_path: PathBuf },
-    Cognito { region: String, pool_id: String, client_id: String },
+    Dev {
+        jwks_path: PathBuf,
+    },
+    Cognito {
+        region: String,
+        pool_id: String,
+        client_id: String,
+    },
 }
 
 pub const DEV_ISSUER: &str = "https://dev.local";
 
-
 impl AuthConfig {
     pub fn issuer(&self) -> String {
         match self {
-            Self::Dev{ .. } => DEV_ISSUER.to_string(),
-            Self::Cognito { region, pool_id, .. } => 
-                format!("https://cognito-idp.{region}.amazonaws.com/{pool_id}"),
+            Self::Dev { .. } => DEV_ISSUER.to_string(),
+            Self::Cognito {
+                region, pool_id, ..
+            } => format!("https://cognito-idp.{region}.amazonaws.com/{pool_id}"),
         }
     }
 
     pub fn jwks_url(&self) -> Option<String> {
         match self {
-            Self::Dev{ .. } => None,
+            Self::Dev { .. } => None,
             Self::Cognito { .. } => Some(format!("{}/.well-known/jwks.json", self.issuer())),
         }
     }
@@ -41,6 +47,9 @@ pub struct Config {
     pub s3_endpoint_url: String,
     pub sqs_endpoint_url: String,
     pub auth_mode: AuthConfig,
+    pub audio_bucket: String, // var("AUDIO_BUCKET")?
+    pub stt_queue: String,    // var("STT_QUEUE")?
+    pub deepgram_api_key: Option<String>,
 }
 
 impl Config {
@@ -53,14 +62,21 @@ impl Config {
         let s3_endpoint_url = var("S3_ENDPOINT_URL")?;
         let sqs_endpoint_url = var("SQS_ENDPOINT_URL")?;
         let auth_mode = match var("AUTH_MODE")?.as_str() {
-            "dev" => AuthConfig::Dev { jwks_path: var("DEV_JWKS_PATH")?.into() },
+            "dev" => AuthConfig::Dev {
+                jwks_path: var("DEV_JWKS_PATH")?.into(),
+            },
             "cognito" => AuthConfig::Cognito {
-            region: var("COGNITO_REGION")?,
-            pool_id: var("COGNITO_POOL_ID")?,
-            client_id: var("COGNITO_CLIENT_ID")?,
-        },
-        other => anyhow::bail!("AUTH_MODE must be dev|cognito, got {other}"),
-    };
+                region: var("COGNITO_REGION")?,
+                pool_id: var("COGNITO_POOL_ID")?,
+                client_id: var("COGNITO_CLIENT_ID")?,
+            },
+            other => anyhow::bail!("AUTH_MODE must be dev|cognito, got {other}"),
+        };
+        let audio_bucket = var("AUDIO_BUCKET")?;
+        let stt_queue = var("STT_QUEUE")?;
+        let deepgram_api_key = var("DEEPGRAM_API_KEY")
+            .ok()
+            .filter(|key| !key.trim().is_empty());
 
         Ok(Config {
             bind,
@@ -68,6 +84,15 @@ impl Config {
             s3_endpoint_url,
             sqs_endpoint_url,
             auth_mode,
+            audio_bucket,
+            stt_queue,
+            deepgram_api_key,
         })
+    }
+}
+
+impl Config {
+    pub fn stt_dlq(&self) -> String {
+        format!("{}-dlq", self.stt_queue)
     }
 }

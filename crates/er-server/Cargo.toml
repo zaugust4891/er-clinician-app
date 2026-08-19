@@ -30,6 +30,13 @@ sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio
 er-store = { version = "0.1.0", path = "../er-store" }
 er-domain = { version = "0.1.0", path = "../er-domain" }
 
+
+# er-server/Cargo.toml [dependencies]:
+aws-config.workspace = true
+aws-sdk-s3.workspace = true
+aws-sdk-sqs.workspace = true
+
+
 # Tests drive the server through the real client (S9): `RemoteRepository` runs the
 # same Repository contract suite SQLite and Postgres pass, over HTTP. Only the test
 # build turns on `client`; the server binary still links DTOs only (§C9).
