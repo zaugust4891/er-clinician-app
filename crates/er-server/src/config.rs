@@ -44,11 +44,13 @@ impl AuthConfig {
 pub struct Config {
     pub bind: String,
     pub database_url: String,
-    pub s3_endpoint_url: String,
-    pub sqs_endpoint_url: String,
+    /// Custom service endpoints are present in local development (MinIO and
+    /// ElasticMQ) and absent in AWS, where the SDK resolves the real endpoints.
+    pub s3_endpoint_url: Option<String>,
+    pub sqs_endpoint_url: Option<String>,
     pub auth_mode: AuthConfig,
-    pub audio_bucket: String, // var("AUDIO_BUCKET")?
-    pub stt_queue: String,    // var("STT_QUEUE")?
+    pub audio_bucket: String,
+    pub stt_queue: String,
     pub deepgram_api_key: Option<String>,
 }
 
@@ -57,26 +59,29 @@ impl Config {
         // Load .env if present; missing file is not an error (e.g. prod/ECS).
         let _ = dotenvy::dotenv();
 
-        let bind = var("BIND_ADDR")?;
-        let database_url = var("DATABASE_URL")?;
-        let s3_endpoint_url = var("S3_ENDPOINT_URL")?;
-        let sqs_endpoint_url = var("SQS_ENDPOINT_URL")?;
-        let auth_mode = match var("AUTH_MODE")?.as_str() {
+        let bind = required_var("BIND_ADDR")?;
+        let database_url = required_var("DATABASE_URL")?;
+        let s3_endpoint_url = optional_var("S3_ENDPOINT_URL");
+        let sqs_endpoint_url = optional_var("SQS_ENDPOINT_URL");
+        if s3_endpoint_url.is_some() != sqs_endpoint_url.is_some() {
+            anyhow::bail!(
+                "S3_ENDPOINT_URL and SQS_ENDPOINT_URL must either both be set (local development) or both be absent (AWS)"
+            );
+        }
+        let auth_mode = match required_var("AUTH_MODE")?.as_str() {
             "dev" => AuthConfig::Dev {
-                jwks_path: var("DEV_JWKS_PATH")?.into(),
+                jwks_path: required_var("DEV_JWKS_PATH")?.into(),
             },
             "cognito" => AuthConfig::Cognito {
-                region: var("COGNITO_REGION")?,
-                pool_id: var("COGNITO_POOL_ID")?,
-                client_id: var("COGNITO_CLIENT_ID")?,
+                region: required_var("COGNITO_REGION")?,
+                pool_id: required_var("COGNITO_POOL_ID")?,
+                client_id: required_var("COGNITO_CLIENT_ID")?,
             },
             other => anyhow::bail!("AUTH_MODE must be dev|cognito, got {other}"),
         };
-        let audio_bucket = var("AUDIO_BUCKET")?;
-        let stt_queue = var("STT_QUEUE")?;
-        let deepgram_api_key = var("DEEPGRAM_API_KEY")
-            .ok()
-            .filter(|key| !key.trim().is_empty());
+        let audio_bucket = required_var("AUDIO_BUCKET")?;
+        let stt_queue = required_var("STT_QUEUE")?;
+        let deepgram_api_key = optional_var("DEEPGRAM_API_KEY");
 
         Ok(Config {
             bind,
@@ -95,4 +100,25 @@ impl Config {
     pub fn stt_dlq(&self) -> String {
         format!("{}-dlq", self.stt_queue)
     }
+
+    /// Endpoint overrides are the environment switch between local protocol
+    /// clones and real AWS. Production does not set either override.
+    pub fn uses_aws_endpoint_overrides(&self) -> bool {
+        self.s3_endpoint_url.is_some() && self.sqs_endpoint_url.is_some()
+    }
+}
+
+fn optional_var(name: &str) -> Option<String> {
+    var(name)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+}
+
+fn required_var(name: &str) -> anyhow::Result<String> {
+    let value = var(name)?.trim().to_owned();
+    if value.is_empty() {
+        anyhow::bail!("{name} must not be empty");
+    }
+    Ok(value)
 }

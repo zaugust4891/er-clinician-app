@@ -7,7 +7,6 @@ state_pattern.md
 # PAI hook writes a literal `$HOME/` dir (unexpanded shell var); ignore it anywhere
 **/$HOME/
 .env
-.env.example
 repository_code_to_add.txt
 test_note.txt
 
@@ -31,5 +30,4 @@ docs/planning/*
 
 # LibreOffice lock files
 .~lock.*
-
 
