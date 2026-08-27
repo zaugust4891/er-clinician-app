@@ -24,3 +24,9 @@ uuid.workspace = true
 
 [features]
 client = ["dep:er-store", "dep:reqwest", "dep:async-trait", "dep:serde_json"]
+
+# Tests pin the JSON field names of the wire contract, so they need a JSON codec
+# regardless of which features a consumer turns on. A dev-dependency keeps
+# serde_json out of the shipped (no-feature) dependency graph.
+[dev-dependencies]
+serde_json.workspace = true
