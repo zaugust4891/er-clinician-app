@@ -618,6 +618,8 @@ $ cd ../envs/staging && terraform init && terraform plan
 
 IAM task roles (least privilege, the security-review centerpiece): `api-task-role` → S3 presign-scoped `s3:PutObject/GetObject` on the audio bucket prefix, `sqs:SendMessage`; `worker-task-role` → S3 `GetObject`, `sqs:ReceiveMessage/DeleteMessage`, `bedrock:InvokeModel` on the two model ARNs, `secretsmanager:GetSecretValue` on `/ernote/*`. RDS credentials: Secrets Manager with rotation, injected as ECS secrets.
 
+> **Deployment-safety guard for AWS endpoint overrides:** Step 6 S1 uses the presence of both `S3_ENDPOINT_URL` and `SQS_ENDPOINT_URL` as the local-emulator switch; when present, startup is allowed to create the MinIO bucket and ElasticMQ queues. During Step 8, make `APP_ENV=dev|staging|prod` explicit and authoritative: `dev` may set both overrides, while `staging` and `prod` must fail startup if either override is present. With both overrides absent, the SDK must use normal AWS endpoint/task-role resolution and the application must only resolve Terraform-created resources. This prevents an accidental endpoint variable in an ECS task definition from enabling bootstrap behavior against a non-production endpoint. Keep the existing all-or-neither endpoint validation as an additional configuration check.
+
 ### 8.2 🌐 GitHub Actions OIDC (no AWS keys in GitHub)
 
 ```
@@ -642,6 +644,7 @@ Run `sqlx migrate run` as a one-shot ECS task (same image, command override `er-
 - [ ] Merge to master deploys staging automatically; `scripts/demo-remote.sh --server https://api.staging.<domain>` passes end-to-end (Cognito mode, real Bedrock, real Deepgram with synthetic audio)
 - [ ] ALB is HTTPS-only (HTTP→301), TLS policy ≥ TLS1.2; WAF attached; RDS not publicly accessible (verify: `aws rds describe-db-instances --query '…PubliclyAccessible'` → false)
 - [ ] No long-lived AWS credentials exist in GitHub (`Settings → Secrets` is empty of AWS keys)
+- [ ] ECS task definitions set `APP_ENV=staging|prod`, omit `S3_ENDPOINT_URL`/`SQS_ENDPOINT_URL`, and a startup test proves either override is rejected outside `dev`
 
 ---
 

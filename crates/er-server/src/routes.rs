@@ -3,9 +3,12 @@ use axum::extract::{State, Path, Query};
 
 use er_store::Repository;
 use serde_json::json;
+use std::time::Duration;
 use uuid::Uuid;
 
-use crate::repository::PostgresRepository;
+use aws_sdk_s3::presigning::PresigningConfig;
+
+use crate::repository::{InsertChunkOutcome, NewChunk, PostgresRepository};
 use crate::error::ApiError;
 use crate::{auth::{self, AuthedClinician}, state::AppState};
 
@@ -25,6 +28,10 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/me", get(me))
         .route("/v1/patients", post(register_patient))
         .route("/v1/patients/{id}/note", get(patient_note))
+        .route(
+            "/v1/patients/{id}/encounters/{eid}/audio",
+            post(audio_upload_intent),
+        )
         // Same path, two methods: chain onto ONE MethodRouter. A second `.route()`
         // with an identical path string panics at construction ("Overlapping method route").
         .route("/v1/patients/{id}/events", post(append_events).get(events_since))
@@ -101,6 +108,89 @@ async fn register_patient(
         chief_complaint: body.chief_complaint,
         display_label: body.display_label,
         created_at: chrono::Utc::now(),
+    }))
+}
+
+// ---------------------------------------------------------------------------
+// Step 6 S3 — upload intent
+// ---------------------------------------------------------------------------
+
+const AUDIO_UPLOAD_EXPIRY: Duration = Duration::from_secs(15 * 60);
+const ALLOWED_AUDIO_TYPES: &[&str] =
+    &["audio/wav", "audio/ogg", "audio/mp4", "audio/mpeg"];
+
+/// Authorize one direct-to-S3 audio upload without proxying PHI through axum.
+///
+/// The database row is written before the URL is minted. It is both the durable
+/// audit trail for this permission grant and the source of truth for retries:
+/// an identical request is re-presigned from the stored key/content type, while
+/// uniqueness conflicts become stable 409 responses.
+async fn audio_upload_intent(
+    State(state): State<AppState>,
+    authed: AuthedClinician,
+    Path((patient_id, encounter_id)): Path<(Uuid, Uuid)>,
+    Json(body): Json<er_api::AudioUploadRequest>,
+) -> Result<Json<er_api::AudioUploadResponse>, ApiError> {
+    if !ALLOWED_AUDIO_TYPES.contains(&body.content_type.as_str()) {
+        return Err(ApiError::Validation("content_type_unsupported"));
+    }
+
+    // The wire type rejects negative indexes. This checked conversion closes
+    // the other side of the boundary before the value reaches Postgres INT.
+    let chunk_index = i32::try_from(body.chunk_index)
+        .map_err(|_| ApiError::Validation("chunk_index_too_large"))?;
+
+    let repo = state.repo_for(&authed);
+    ensure_patient_in_org(&repo, patient_id).await?;
+
+    // UUID-only path segments keep filenames, labels, and all other human text
+    // out of object-storage metadata. The org prefix also makes later lifecycle
+    // and audit operations naturally tenant-scoped.
+    let s3_key = format!(
+        "{}/{}/{}/{}-{}",
+        authed.org_id, patient_id, encounter_id, chunk_index, body.chunk_id
+    );
+
+    let row = match repo
+        .insert_chunk(NewChunk {
+            id: body.chunk_id,
+            patient_id,
+            encounter_id,
+            chunk_index,
+            is_final: body.is_final,
+            content_type: &body.content_type,
+            s3_key: &s3_key,
+        })
+        .await?
+    {
+        InsertChunkOutcome::Created(row) | InsertChunkOutcome::Retry(row) => row,
+        InsertChunkOutcome::ChunkIndexTaken => {
+            return Err(ApiError::Conflict("chunk_index_taken"));
+        }
+        InsertChunkOutcome::FinalChunkAlreadySet => {
+            return Err(ApiError::Conflict("final_chunk_already_set"));
+        }
+        InsertChunkOutcome::ChunkIdMismatch => {
+            return Err(ApiError::Conflict("chunk_id_mismatch"));
+        }
+    };
+
+    let presigning = PresigningConfig::expires_in(AUDIO_UPLOAD_EXPIRY)
+        .map_err(|error| ApiError::Internal(anyhow::Error::new(error)))?;
+    let presigned = state
+        .s3
+        .put_object()
+        .bucket(state.audio.bucket.as_str())
+        .key(row.s3_key.as_str())
+        .content_type(row.content_type.as_str())
+        .presigned(presigning)
+        .await
+        .map_err(|error| ApiError::Internal(anyhow::Error::new(error)))?;
+
+    Ok(Json(er_api::AudioUploadResponse {
+        chunk_id: row.id,
+        upload_url: presigned.uri().to_string(),
+        expires_in_secs: AUDIO_UPLOAD_EXPIRY.as_secs(),
     }))
 }
 
