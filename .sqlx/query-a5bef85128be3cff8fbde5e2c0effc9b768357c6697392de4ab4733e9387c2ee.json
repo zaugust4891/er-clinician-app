@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO shift_patients (shift_id, patient_id, position)\n               SELECT s.id, $2,\n                      COALESCE((SELECT MAX(sp.position) + 1\n                                  FROM shift_patients sp WHERE sp.shift_id = s.id), 0)\n                 FROM shifts s\n                WHERE s.clinician_id = $1 AND s.status = 'active'\n               ON CONFLICT DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a5bef85128be3cff8fbde5e2c0effc9b768357c6697392de4ab4733e9387c2ee"
+}

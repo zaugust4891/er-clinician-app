@@ -1,0 +1,101 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO audio_chunks (\n                id,\n                org_id,\n                patient_id,\n                encounter_id,\n                chunk_index,\n                is_final,\n                content_type,\n                s3_key\n            )\n            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)\n            RETURNING\n                id,\n                org_id,\n                patient_id,\n                encounter_id,\n                chunk_index,\n                is_final,\n                content_type,\n                s3_key,\n                status,\n                transcript,\n                error,\n                duration_ms,\n                created_at\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "org_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "patient_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "encounter_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 4,
+        "name": "chunk_index",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 5,
+        "name": "is_final",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 6,
+        "name": "content_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "s3_key",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "transcript",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "error",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "duration_ms",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 12,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Int4",
+        "Bool",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "5f599962c8f27be075d4b6fd19e38d44cf460fae7ce31507d74b0f8acdaf1d40"
+}

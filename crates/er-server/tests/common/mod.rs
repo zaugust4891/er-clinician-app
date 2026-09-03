@@ -22,7 +22,12 @@ use er_domain::{
     NoteEvent, NoteSections, ResultSource, ResultType,
 };
 
-use er_server::{auth::keys::KeySet, config::DEV_ISSUER, repository::PostgresRepository, state::AppState};
+use er_server::{
+    auth::keys::KeySet,
+    config::DEV_ISSUER,
+    repository::PostgresRepository,
+    state::{AppState, AudioConfig},
+};
 
 pub const ORG_A: Uuid = Uuid::from_u128(0x0A);
 pub const ORG_B: Uuid = Uuid::from_u128(0x0B);
@@ -55,6 +60,147 @@ pub fn mint(sub: &str) -> String {
     });
 
     jsonwebtoken::encode(&header, &claims, &key).expect("sign dev jwt")
+}
+
+// ---------------------------------------------------------------------------
+// Real object storage + queues (S4 onward)
+// ---------------------------------------------------------------------------
+
+/// One test's own bucket and queue pair, plus the clients that reach them.
+///
+/// S4 is the first sub-step whose handlers actually *call* S3 and SQS, so these
+/// tests need the compose stack up (`docker compose up -d`) exactly the way every
+/// Postgres test already needs `postgres`. Isolation comes from **names**, not
+/// containers: each fixture creates `er-audio-test-<uuid>` and
+/// `stt-jobs-test-<uuid>`, which is the S3/SQS analog of what `#[sqlx::test]`
+/// does with per-test databases, so tests can run in parallel and one test's
+/// queue traffic can never be counted by another.
+pub struct AudioFixture {
+    pub s3: aws_sdk_s3::Client,
+    pub sqs: aws_sdk_sqs::Client,
+    pub config: AudioConfig,
+}
+
+impl AudioFixture {
+    /// Receive and delete everything currently on the STT queue, decoded as JSON.
+    ///
+    /// Deleting is what makes the count meaningful across successive assertions:
+    /// a received-but-undeleted message would reappear when its visibility lease
+    /// expires (§C2) and turn "one job was enqueued" into a race.
+    pub async fn drain_jobs(&self) -> Vec<serde_json::Value> {
+        let mut jobs = Vec::new();
+        loop {
+            let batch = self
+                .sqs
+                .receive_message()
+                .queue_url(&self.config.stt_queue_url)
+                .max_number_of_messages(10)
+                .wait_time_seconds(1) // long poll: a just-sent message is never missed
+                .send()
+                .await
+                .expect("receive from the test STT queue");
+
+            let messages = batch.messages();
+            if messages.is_empty() {
+                return jobs;
+            }
+
+            for message in messages {
+                jobs.push(
+                    serde_json::from_str(message.body().unwrap_or_default())
+                        .expect("a queue message must be valid JSON"),
+                );
+                if let Some(receipt) = message.receipt_handle() {
+                    self.sqs
+                        .delete_message()
+                        .queue_url(&self.config.stt_queue_url)
+                        .receipt_handle(receipt)
+                        .send()
+                        .await
+                        .expect("delete a drained message");
+                }
+            }
+        }
+    }
+}
+
+/// Create this test's bucket and queue pair and hand back live clients.
+///
+/// Deliberately built through `er_server::aws::clients` — the same constructor
+/// `AppState::build` uses in production — rather than through the credential-free
+/// `lazy_test_clients`, because these calls leave the process: the credentials,
+/// the region, and the path-style switch all have to be the real ones (§C6).
+pub async fn ensure_test_audio_infra() -> AudioFixture {
+    let s3_endpoint = endpoint_from_env("S3_ENDPOINT_URL", "http://localhost:9000");
+    let sqs_endpoint = endpoint_from_env("SQS_ENDPOINT_URL", "http://localhost:9324");
+    let clients = er_server::aws::clients(Some(&s3_endpoint), Some(&sqs_endpoint)).await;
+
+    let suffix = Uuid::now_v7().simple().to_string();
+    let bucket = format!("er-audio-test-{suffix}");
+    let queue = format!("stt-jobs-test-{suffix}");
+    let dlq = format!("{queue}-dlq");
+
+    let queues = er_server::aws::ensure_audio_infra(&clients.s3, &clients.sqs, &bucket, &queue, &dlq)
+        .await
+        .expect(
+            "audio tests need MinIO + ElasticMQ and the dev AWS_* variables: \
+             `docker compose up -d` and `set -a && . ./.env && set +a`",
+        );
+
+    AudioFixture {
+        s3: clients.s3,
+        sqs: clients.sqs,
+        config: AudioConfig::new(bucket, queues),
+    }
+}
+
+fn endpoint_from_env(name: &str, fallback: &str) -> String {
+    std::env::var(name)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| fallback.to_string())
+}
+
+/// `test_state`, but pointed at this test's own bucket and queues.
+pub async fn test_state_with_audio(pool: PgPool, audio: &AudioFixture) -> AppState {
+    let keys = Arc::new(KeySet::from_file(Path::new("../../dev/keys/jwks.json")).expect("dev jwks"));
+    AppState::for_tests_with_audio(
+        pool,
+        keys,
+        audio.s3.clone(),
+        audio.sqs.clone(),
+        audio.config.clone(),
+    )
+}
+
+/// A minimal but structurally valid 16 kHz mono 16-bit RIFF/WAVE file wrapping
+/// `payload` as its sample data.
+///
+/// S4 never decodes audio — `HeadObject` only counts bytes — but feeding the
+/// pipeline the shape it will really carry costs 44 bytes, and S7's echo mock
+/// reads the payload back out so content assertions become possible without a
+/// network call to a transcription provider.
+pub fn tiny_wav(payload: &[u8]) -> Vec<u8> {
+    const SAMPLE_RATE: u32 = 16_000;
+    const CHANNELS: u16 = 1;
+    const BITS: u16 = 16;
+
+    let data_len = payload.len() as u32;
+    let mut wav = Vec::with_capacity(44 + payload.len());
+    wav.extend_from_slice(b"RIFF");
+    wav.extend_from_slice(&(36 + data_len).to_le_bytes()); // size of everything after this field
+    wav.extend_from_slice(b"WAVEfmt ");
+    wav.extend_from_slice(&16u32.to_le_bytes()); // PCM fmt chunk length
+    wav.extend_from_slice(&1u16.to_le_bytes()); // format 1 = uncompressed PCM
+    wav.extend_from_slice(&CHANNELS.to_le_bytes());
+    wav.extend_from_slice(&SAMPLE_RATE.to_le_bytes());
+    wav.extend_from_slice(&(SAMPLE_RATE * CHANNELS as u32 * (BITS as u32 / 8)).to_le_bytes()); // byte rate
+    wav.extend_from_slice(&(CHANNELS * BITS / 8).to_le_bytes()); // block align
+    wav.extend_from_slice(&BITS.to_le_bytes());
+    wav.extend_from_slice(b"data");
+    wav.extend_from_slice(&data_len.to_le_bytes());
+    wav.extend_from_slice(payload);
+    wav
 }
 
 // ---------------------------------------------------------------------------

@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO patients (id, org_id, created_by, chief_complaint, display_label)\n               VALUES ($1, $2, $3, $4, $5)\n               ON CONFLICT (id) DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "85426c395c4eec919703079dd8be6b58bc791a691c96fdd1f1c317e2c9327165"
+}

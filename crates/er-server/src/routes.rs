@@ -8,7 +8,8 @@ use uuid::Uuid;
 
 use aws_sdk_s3::presigning::PresigningConfig;
 
-use crate::repository::{InsertChunkOutcome, NewChunk, PostgresRepository};
+use crate::queue;
+use crate::repository::{ChunkRow, InsertChunkOutcome, NewChunk, PostgresRepository};
 use crate::error::ApiError;
 use crate::{auth::{self, AuthedClinician}, state::AppState};
 
@@ -32,6 +33,11 @@ pub fn router(state: AppState) -> Router {
             "/v1/patients/{id}/encounters/{eid}/audio",
             post(audio_upload_intent),
         )
+        // Chunk ids are globally unique and the row carries its own org, so these
+        // two live at the root rather than under /v1/patients/{id}: the device
+        // holds the chunk id it stamped, and the ledger lookup does the scoping.
+        .route("/v1/audio/{chunk_id}/complete", post(audio_complete))
+        .route("/v1/audio/{chunk_id}", get(audio_status))
         // Same path, two methods: chain onto ONE MethodRouter. A second `.route()`
         // with an identical path string panics at construction ("Overlapping method route").
         .route("/v1/patients/{id}/events", post(append_events).get(events_since))
@@ -194,6 +200,168 @@ async fn audio_upload_intent(
     }))
 }
 
+
+// ---------------------------------------------------------------------------
+// Step 6 S4 — completion + enqueue, and the ledger read the device polls
+// ---------------------------------------------------------------------------
+
+/// Project a ledger row onto the wire shape.
+///
+/// `ChunkRow` is storage vocabulary and `ChunkView` is protocol vocabulary; the
+/// gap between them is deliberate, not laziness. `org_id` (the device already
+/// authenticated as one), `s3_key` (the valet key exists so nobody constructs
+/// their own object requests — §C1), and the per-chunk `transcript` (clinical
+/// content belongs on the event stream, once, assembled — §C3/§C4) all stop
+/// here. The mapping lives in `routes.rs` rather than in `er-api` because
+/// `er-api` cannot depend on `er-server`: arrows point inward only.
+fn chunk_view(row: &ChunkRow) -> Result<er_api::ChunkView, ApiError> {
+    // Every index in this table entered through `audio_upload_intent`, which
+    // takes a `u32` and range-checks it into `INT`, so this cannot fail through
+    // the API. A negative value would mean the ledger was written around the
+    // API; answering 500 says that, where a saturating cast would hand the
+    // device a plausible-looking index for a corrupt row.
+    let chunk_index = u32::try_from(row.chunk_index).map_err(|_| {
+        ApiError::Internal(anyhow::anyhow!("audio chunk {} has a negative index", row.id))
+    })?;
+
+    Ok(er_api::ChunkView {
+        chunk_id: row.id,
+        encounter_id: row.encounter_id,
+        chunk_index,
+        is_final: row.is_final,
+        status: row.status.clone(),
+        duration_ms: row.duration_ms,
+        error: row.error.clone(),
+    })
+}
+
+/// Confirm that object storage really holds this chunk's bytes.
+///
+/// `HeadObject` reads metadata only — no body transfer, no PHI in the API
+/// process — and it is the only evidence the server accepts that a `PUT`
+/// happened. The client's word is not evidence: a device can call complete
+/// without uploading (bug), or crash mid-`PUT` and leave a zero-byte object.
+/// Rejecting at the door beats letting the worker discover it three SQS
+/// deliveries deep.
+async fn verify_chunk_object(state: &AppState, row: &ChunkRow) -> Result<(), ApiError> {
+    let head = state
+        .s3
+        .head_object()
+        .bucket(state.audio.bucket.as_str())
+        .key(row.s3_key.as_str())
+        .send()
+        .await
+        .map_err(|error| {
+            // Two different failures wear the same clothes here, and conflating
+            // them would be a lie in one direction or the other: "the object is
+            // absent" is the caller's problem (re-PUT, then re-complete), while
+            // "object storage is unreachable, misconfigured, or denying us" is
+            // ours and must not be reported as a client mistake.
+            if error
+                .as_service_error()
+                .is_some_and(|service| service.is_not_found())
+            {
+                ApiError::Conflict("chunk_not_uploaded")
+            } else {
+                ApiError::Internal(
+                    anyhow::Error::new(error).context("head_object on an audio chunk"),
+                )
+            }
+        })?;
+
+    // A truncated upload can leave an object that exists and holds nothing.
+    // Transcribing it would burn three worker attempts to learn the same fact.
+    if head.content_length().unwrap_or(0) <= 0 {
+        return Err(ApiError::Conflict("chunk_empty"));
+    }
+
+    Ok(())
+}
+
+/// The device reports that the bytes are up; the server verifies, records, and
+/// hands the work to the queue.
+///
+/// Order is load-bearing: **verify, mark, then enqueue.** Marking before
+/// enqueuing means a failed `SendMessage` leaves an `uploaded` row and a 500,
+/// and the client's retry re-verifies, re-marks (a no-op) and re-sends. The
+/// worst case is a duplicate message, which §C2 already required the worker to
+/// shrug at — at-least-once, all the way down. Enqueuing first would risk the
+/// opposite and worse failure: a job pointing at a row that still says
+/// `pending`.
+async fn audio_complete(
+    State(state): State<AppState>,
+    authed: AuthedClinician,
+    Path(chunk_id): Path<Uuid>,
+) -> Result<Json<er_api::ChunkView>, ApiError> {
+    let repo = state.repo_for(&authed);
+    // The ledger row *is* the tenancy check: `chunk_row` is org-scoped, so
+    // another org's chunk and a chunk that never existed are the same 404 — no
+    // existence oracle, the Step 5 §C6 rule applied to a new resource. No
+    // separate patient guard is needed; `audio_upload_intent` already proved
+    // ownership when it wrote this row.
+    let row = repo.chunk_row(chunk_id).await?.ok_or(ApiError::NotFound)?;
+
+    verify_chunk_object(&state, &row).await?;
+
+    // Forward-only: `pending → uploaded`, and any later state is returned
+    // unchanged, so a late duplicate completion cannot reopen a chunk the
+    // worker has already finished.
+    let row = repo
+        .mark_chunk_uploaded(chunk_id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+
+    // Re-completing a chunk whose work is already done or failed would enqueue a
+    // job the worker can only no-op on, and every wasted delivery is noise in
+    // the DLQ alarm Step 9 builds. This guard is an optimization, not the
+    // correctness mechanism — the worker stays idempotent regardless (§C2) — and
+    // it deliberately does not narrow to "only on transition", because the
+    // marked-but-not-enqueued case above must still be able to recover.
+    if er_api::chunk_status::is_terminal(&row.status) {
+        tracing::info!(
+            chunk_id = %row.id,
+            status = %row.status,
+            "completion re-confirmed for an already-terminal audio chunk; not re-queued"
+        );
+        return Ok(Json(chunk_view(&row)?));
+    }
+
+    queue::send_job(
+        &state.sqs,
+        &state.audio.stt_queue_url,
+        &queue::Job::TranscribeChunk { chunk_id },
+    )
+    .await
+    .map_err(ApiError::Internal)?;
+
+    // Identifiers and state only — never the key, never the presigned URL, and
+    // never a byte of what was said (§C5).
+    tracing::info!(
+        chunk_id = %row.id,
+        encounter_id = %row.encounter_id,
+        chunk_index = row.chunk_index,
+        is_final = row.is_final,
+        "audio chunk queued for transcription"
+    );
+
+    Ok(Json(chunk_view(&row)?))
+}
+
+/// The ledger read the CLI's poll loop lives on (S8).
+///
+/// A pure read: no S3 call, no queue traffic, one org-scoped row lookup. It
+/// answers "where is my audio in the pipeline", not "what did it say" — the
+/// transcript comes back as a `TranscriptReady` event on the Step 5 cursor,
+/// assembled across the whole encounter (§C4).
+async fn audio_status(
+    State(state): State<AppState>,
+    authed: AuthedClinician,
+    Path(chunk_id): Path<Uuid>,
+) -> Result<Json<er_api::ChunkView>, ApiError> {
+    let repo = state.repo_for(&authed);
+    let row = repo.chunk_row(chunk_id).await?.ok_or(ApiError::NotFound)?;
+    Ok(Json(chunk_view(&row)?))
+}
 
 const MAX_EVENT_BATCH: usize = 500; // one shift's worth of taps; far under the body limit
 
