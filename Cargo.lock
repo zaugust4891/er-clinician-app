@@ -1230,7 +1230,10 @@ name = "er-pipeline"
 version = "0.1.0"
 dependencies = [
  "er-domain",
+ "reqwest",
+ "serde_json",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]
