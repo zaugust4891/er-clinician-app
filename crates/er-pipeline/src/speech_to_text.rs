@@ -172,16 +172,15 @@ fn audio_payload(audio: &[u8]) -> &[u8] {
 /// allocation — and it is the shape this codebase already settled on once, for
 /// exactly this reason.
 pub enum AppSpeechToText {
-    // ── S6 socket ───────────────────────────────────────────────────────────
-    // #[cfg(feature = "cloud-stt")]
-    // Deepgram(crate::deepgram::DeepgramTranscriber),
-    //
-    // The `cloud-stt` feature and its optional dependencies are already declared
-    // in Cargo.toml, so the fence can be *proved* empty (`cargo tree -p
-    // er-pipeline` shows no reqwest) before anything hides behind it. The variant
-    // itself lands with the implementation in S6: naming a module that does not
-    // exist yet would break `cargo check --features cloud-stt` for a whole step,
-    // and a feature flag nobody can compile is not a fence, it is a trap.
+    /// Deepgram's pre-recorded endpoint — the real thing (S6). Present only
+    /// when `cloud-stt` is on, which today is exactly one manifest line in
+    /// `er-server`; every other consumer of this crate compiles an enum with a
+    /// single arm and no HTTP client anywhere in its tree (D6.21).
+    #[cfg(feature = "cloud-stt")]
+    Deepgram(crate::deepgram::DeepgramTranscriber),
+
+    /// Deterministic, offline, and what a machine with no `DEEPGRAM_API_KEY`
+    /// boots into — loudly (D6.12).
     Mock(MockSpeechToText),
 }
 
@@ -192,6 +191,8 @@ impl SpeechToText for AppSpeechToText {
         content_type: &str,
     ) -> PipelineResult<TranscriptResult> {
         match self {
+            #[cfg(feature = "cloud-stt")]
+            AppSpeechToText::Deepgram(d) => d.transcribe(audio, content_type).await,
             AppSpeechToText::Mock(m) => m.transcribe(audio, content_type).await,
         }
     }

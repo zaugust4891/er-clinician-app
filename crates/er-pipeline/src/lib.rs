@@ -7,6 +7,11 @@
 //! PCM-shaped, on-device one; `speech_to_text` is the async, file-shaped one the
 //! server's transcription worker calls.
 pub mod audio;
+/// The one real cloud transcriber (Step 6 S6). Behind the default-off
+/// `cloud-stt` feature, which only `er-server` turns on — a device build of
+/// this crate therefore compiles no HTTP client at all (D6.21).
+#[cfg(feature = "cloud-stt")]
+pub mod deepgram;
 pub mod error;
 pub mod speech_to_text;
 pub mod stt;

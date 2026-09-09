@@ -9,17 +9,21 @@ version.workspace = true
 er-domain.workspace = true
 thiserror.workspace = true
 
-# Cloud-only, and only reachable through `cloud-stt`. Both are unused until S6's
-# DeepgramTranscriber arrives; declaring the fence first is what lets the
-# no-feature dependency tree be checked before there is anything to hide.
+# Cloud-only, and only reachable through `cloud-stt`. S5 declared the fence
+# before there was anything behind it, which is what made "no reqwest in the
+# default tree" a check you could see through; S6's deepgram.rs is what now
+# stands behind it. tokio joins them there for one reason — `tokio::time::sleep`
+# between retry attempts (a blocking sleep inside an async worker would park a
+# runtime thread). It stays optional, so the device build is unaffected.
 reqwest = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
 
 [features]
 # The device fence, same shape er-api uses for its `client` half. Default-off:
 # `cargo build -p er-pipeline` compiles no HTTP client at all, which is the
 # property a Phase 5 iOS build depends on.
-cloud-stt = ["dep:reqwest", "dep:serde_json"]
+cloud-stt = ["dep:reqwest", "dep:serde_json", "dep:tokio"]
 
 [dev-dependencies]
 # For #[tokio::test] only — SpeechToText is async. A dev-dependency is compiled
