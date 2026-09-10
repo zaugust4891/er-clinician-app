@@ -454,7 +454,10 @@ impl PostgresRepository {
     /// not require an organization id. Once the row supplies `org_id`, the
     /// worker must construct `PostgresRepository::for_org` and use the scoped
     /// status and encounter helpers below.
-    #[allow(dead_code)] // The S7 worker becomes the production caller later in Step 6.
+    // S7's `worker::handle_transcribe_chunk` is the production caller: a queue
+    // message carries a chunk id and nothing else, so this is the one read that
+    // discovers which tenant the work belongs to. Everything after it goes
+    // through `for_org`.
     pub(crate) async fn chunk_row_any_org(
         pool: &PgPool,
         chunk_id: Uuid,

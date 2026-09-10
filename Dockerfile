@@ -15,5 +15,11 @@ RUN cargo build --release -p er-server
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/target/release/er-server /usr/local/bin/
+# One image, two services (phase4.md §6). `cargo build -p er-server` already
+# compiles every [[bin]] in the crate, so the builder stage above is unchanged —
+# this only carries the second binary into the runtime layer. The ENTRYPOINT stays
+# er-server; Step 8's ECS worker service runs this same image with the command
+# overridden to er-worker.
+COPY --from=builder /app/target/release/er-worker /usr/local/bin/
 USER 65532:65532
 ENTRYPOINT ["er-server"]

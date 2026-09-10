@@ -30,12 +30,27 @@ sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio
 er-store = { version = "0.1.0", path = "../er-store" }
 er-domain = { version = "0.1.0", path = "../er-domain" }
 
+# S7: the transcription worker's STT seam. This is the ONLY line in the workspace
+# that turns the `cloud-stt` fence on — every other consumer of er-pipeline
+# (er-app, er-cli, a future iOS build) takes it default-off and therefore compiles
+# no HTTP client through this crate (§C8, D6.21).
+er-pipeline = { workspace = true, features = ["cloud-stt"] }
+
 
 # er-server/Cargo.toml [dependencies]:
 aws-config.workspace = true
 aws-sdk-s3.workspace = true
 aws-sdk-sqs.workspace = true
 
+
+# One crate, two binaries, one image (phase4.md §6). `cargo build -p er-server`
+# compiles both, and the Step 8 ECS worker service runs the same image with the
+# command overridden — which is why the Dockerfile's builder stage needs no change.
+# The path is declared explicitly so the target is named `er-worker` rather than
+# the `worker` that src/bin/ autodiscovery would infer from the file name.
+[[bin]]
+name = "er-worker"
+path = "src/bin/worker.rs"
 
 # Tests drive the server through the real client (S9): `RemoteRepository` runs the
 # same Repository contract suite SQLite and Postgres pass, over HTTP. Only the test
