@@ -8,8 +8,8 @@
 //! server's transcription worker calls.
 pub mod audio;
 /// The one real cloud transcriber (Step 6 S6). Behind the default-off
-/// `cloud-stt` feature, which only `er-server` turns on — a device build of
-/// this crate therefore compiles no HTTP client at all (D6.21).
+/// `cloud-stt` feature, which S7 will enable in `er-server`. A standalone
+/// default-feature build compiles no HTTP client (D6.21).
 #[cfg(feature = "cloud-stt")]
 pub mod deepgram;
 pub mod error;

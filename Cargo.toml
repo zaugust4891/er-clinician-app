@@ -27,8 +27,11 @@ sha2 = "0.10"
 
 #aws deps
 aws-config = "1"
-aws-sdk-s3 = "1"
-aws-sdk-sqs = "1"
+# Keep the modern TLS client; the SDKs' additional `rustls` default feature
+# enables the obsolete Hyper 0.14 / rustls 0.21 compatibility stack as well.
+# All other S3/SQS defaults are retained. See the S6 security review.
+aws-sdk-s3 = { version = "1", default-features = false, features = ["sigv4a", "http-1x", "default-https-client", "rt-tokio"] }
+aws-sdk-sqs = { version = "1", default-features = false, features = ["default-https-client", "rt-tokio"] }
 
 
 # Internal crates — the dependency graph is the architecture (arrows inward).

@@ -173,9 +173,10 @@ fn audio_payload(audio: &[u8]) -> &[u8] {
 /// exactly this reason.
 pub enum AppSpeechToText {
     /// Deepgram's pre-recorded endpoint — the real thing (S6). Present only
-    /// when `cloud-stt` is on, which today is exactly one manifest line in
-    /// `er-server`; every other consumer of this crate compiles an enum with a
-    /// single arm and no HTTP client anywhere in its tree (D6.21).
+    /// when `cloud-stt` is on. S7 will enable it in `er-server`; a standalone
+    /// device build leaves it off (D6.21). Cargo unifies features within a
+    /// build, so a cloud-enabled workspace build can also enable this arm for
+    /// other workspace consumers.
     #[cfg(feature = "cloud-stt")]
     Deepgram(crate::deepgram::DeepgramTranscriber),
 

@@ -18,23 +18,25 @@
 //!
 //! - The request body is audio bytes; the request *metadata* is model
 //!   parameters. No display label, no chief complaint, no chunk id, no org, no
-//!   patient. A transcriber that is never told who is speaking cannot correlate
-//!   what it hears with anyone.
+//!   patient. This minimizes metadata; names and identifying details can still
+//!   be spoken in the audio. Both the audio and the response remain PHI.
 //! - `mip_opt_out=true` is sent on every call, so the audio is excluded from
 //!   Deepgram's Model Improvement Program by request rather than by somebody
 //!   remembering to tick a box in a console (E2 still signs the BAA — a query
 //!   parameter is not a legal instrument).
-//! - The API key travels in an `Authorization` header, never in the URL, so it
-//!   cannot surface in a `reqwest::Error`'s Display, a redirect log, or a proxy
-//!   access log. [`DeepgramTranscriber`]'s `Debug` redacts it for the same
-//!   reason.
-//! - Errors carry vendor status codes and vendor error bodies, never transcript
-//!   text. `log identifiers, never content` applies here as it does in
-//!   `routes.rs`.
+//! - The API key travels in a sensitive `Authorization` header, never in the
+//!   URL. [`DeepgramTranscriber`]'s `Debug` redacts it. Infrastructure must also
+//!   avoid header/body logging; header sensitivity is not proxy configuration.
+//! - Errors carry status codes and fixed descriptions only. Vendor bodies and
+//!   transport diagnostics are untrusted and may contain PHI or credentials.
+//! - HTTPS is required and redirects are refused: even a 307/308 must not
+//!   replay the audio to another destination. The BAA, project configuration,
+//!   egress/proxy policy, and retention controls still need external evidence.
 
 use std::fmt;
 use std::time::{Duration, Instant};
 
+use reqwest::header::HeaderValue;
 use serde_json::Value;
 
 use crate::error::{PipelineError, PipelineResult};
@@ -65,10 +67,9 @@ const MODEL: &str = "nova-3-medical";
 ///   300 s visibility  −  181.5 s                     =  118.5 s of headroom
 /// ```
 ///
-/// 60 s is ~10× generous for the ~60 s audio chunks §C3 describes; Deepgram's
-/// pre-recorded API returns in a few seconds for those. The guide's original
-/// outline said 300 s, which is exactly the visibility timeout and therefore
-/// leaves no headroom at all — see D6.24.
+/// The detailed S6 plan chose 60 s; the main guide §6.4 says 30 s. Retain the
+/// bounded 60 s policy pending synthetic latency measurements. This calculation
+/// covers STT only, not S3/database work or queue lease renewal in S7.
 const ATTEMPT_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// One call plus two retries (`phase4-implementation-guide.md` §6.4). The
@@ -76,16 +77,21 @@ const ATTEMPT_TIMEOUT: Duration = Duration::from_secs(60);
 /// ones absorb network blips without paying a redelivery round trip (§C2).
 const MAX_ATTEMPTS: u32 = 3;
 
-/// First backoff, doubling per retry: 500 ms, then 1 s. Deterministic rather
-/// than jittered — one worker retrying one chunk is not a thundering herd, and
-/// a fixed schedule is a schedule a test can assert.
+/// First backoff, doubling per retry: 500 ms, then 1 s. A fixed schedule keeps
+/// the existing retry budget predictable. S7's concurrency policy must also
+/// account for provider rate limits when multiple workers are active.
 const BACKOFF_BASE: Duration = Duration::from_millis(500);
 
-/// How much of a vendor error body is worth keeping. Deepgram's failures read
-/// like `{"err_code":"INVALID_AUTH","err_msg":"..."}`; the first couple of
-/// hundred bytes carry the cause, and capping the rest keeps a DLQ message
-/// legible.
-const MAX_ERROR_BODY: usize = 200;
+/// Generous for a ~60 s chunk, including word timestamps and speaker turns.
+/// Bound bytes before JSON parsing, including responses without Content-Length.
+const MAX_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
+
+fn http_client_builder() -> reqwest::ClientBuilder {
+    reqwest::Client::builder()
+        .timeout(ATTEMPT_TIMEOUT)
+        .https_only(true)
+        .redirect(reqwest::redirect::Policy::none())
+}
 
 /// Cloud speech-to-text via Deepgram.
 ///
@@ -93,7 +99,11 @@ const MAX_ERROR_BODY: usize = 200;
 /// and a fresh client per call would mean a fresh TLS handshake per chunk.
 pub struct DeepgramTranscriber {
     http: reqwest::Client,
-    api_key: String,
+    authorization: HeaderValue,
+    // The public constructor always uses LISTEN_URL. Only unit tests can
+    // redirect the request to a loopback fixture; no runtime endpoint override.
+    #[cfg(test)]
+    listen_url: String,
 }
 
 impl DeepgramTranscriber {
@@ -120,16 +130,20 @@ impl DeepgramTranscriber {
             ));
         }
 
-        let http = reqwest::Client::builder()
-            .timeout(ATTEMPT_TIMEOUT)
-            .build()
-            .map_err(|e| {
-                PipelineError::Transcription(format!(
-                    "could not build the Deepgram HTTP client: {e}"
-                ))
-            })?;
+        let mut authorization = HeaderValue::from_str(&format!("Token {api_key}"))
+            .map_err(|_| PipelineError::Transcription("invalid Deepgram API key header".into()))?;
+        authorization.set_sensitive(true);
 
-        Ok(Self { http, api_key })
+        let http = http_client_builder().build().map_err(|_| {
+            PipelineError::Transcription("could not build the Deepgram HTTP client".into())
+        })?;
+
+        Ok(Self {
+            http,
+            authorization,
+            #[cfg(test)]
+            listen_url: LISTEN_URL.to_owned(),
+        })
     }
 
     /// One HTTP attempt: `Ok` with the parsed JSON body on a 2xx, `Err` with a
@@ -139,9 +153,13 @@ impl DeepgramTranscriber {
     /// again" are two separate questions with two separate answers, instead of
     /// one tangled `match` on a `reqwest::Response`.
     async fn send_once(&self, audio: &[u8], content_type: &str) -> Result<Value, Attempt> {
+        #[cfg(not(test))]
+        let listen_url = LISTEN_URL;
+        #[cfg(test)]
+        let listen_url = &self.listen_url;
         let response = self
             .http
-            .post(LISTEN_URL)
+            .post(listen_url)
             .query(&[
                 ("model", MODEL),
                 // Punctuation, capitalisation, and "12 mg" instead of "twelve
@@ -153,16 +171,12 @@ impl DeepgramTranscriber {
                 ("diarize", "true"),
                 ("utterances", "true"),
                 // Keep this audio out of Deepgram's Model Improvement Program
-                // (§C5). Verify the parameter name when the account is created
-                // — vendor privacy flags get renamed.
+                // (§C5); vendor documentation verified in the S6 review.
                 ("mip_opt_out", "true"),
             ])
             // A header, not a query parameter: URLs end up in error strings,
             // proxy logs, and redirect traces. Keys must not.
-            .header(
-                reqwest::header::AUTHORIZATION,
-                format!("Token {}", self.api_key),
-            )
+            .header(reqwest::header::AUTHORIZATION, self.authorization.clone())
             // The ledger's declared type, forwarded verbatim. Deepgram sniffs
             // containers, but an honest Content-Type means it does not have to
             // guess, and a mismatch here is a bug worth seeing as a 400.
@@ -177,37 +191,41 @@ impl DeepgramTranscriber {
             // deadline. `transport_is_retryable` decides which of those is
             // worth a second go.
             Err(e) => {
-                return Err(Attempt {
-                    retryable: transport_is_retryable(&e),
-                    error: PipelineError::Transcription(format!("deepgram request failed: {e}")),
-                });
+                return Err(transport_failure(&e));
             }
         };
 
         let status = response.status();
         if !status.is_success() {
-            // Read the body before deciding anything: Deepgram explains itself
-            // in it, and that explanation is the difference between a DLQ
-            // message someone can act on and one that says "500".
-            let body = response.text().await.unwrap_or_default();
+            // Do not read or retain error bodies. Truncation does not redact
+            // PHI, and waiting for an error body can also exhaust the deadline.
             return Err(Attempt {
                 retryable: is_retryable_status(status.as_u16()),
-                error: PipelineError::Transcription(format!(
-                    "deepgram {}: {}",
-                    status.as_u16(),
-                    truncate(body.trim(), MAX_ERROR_BODY)
-                )),
+                error: PipelineError::Transcription(format!("deepgram HTTP {}", status.as_u16())),
             });
         }
 
-        response.json::<Value>().await.map_err(|e| Attempt {
-            // A 2xx whose body will not parse is not a blip; it is a contract
-            // break or a vendor incident, and hammering it three times only
-            // delays the DLQ message that will bring a human.
+        let mut response = response;
+        if response
+            .content_length()
+            .is_some_and(|len| len > MAX_RESPONSE_BYTES as u64)
+        {
+            return Err(response_too_large());
+        }
+        let mut body = Vec::new();
+        while let Some(chunk) = response.chunk().await.map_err(|e| transport_failure(&e))? {
+            if chunk.len() > MAX_RESPONSE_BYTES - body.len() {
+                return Err(response_too_large());
+            }
+            body.extend_from_slice(&chunk);
+        }
+        // Body transport failures above may recover. A complete but invalid
+        // JSON document is a contract error and must not be retried locally.
+        serde_json::from_slice(&body).map_err(|_| Attempt {
             retryable: false,
-            error: PipelineError::Transcription(format!(
-                "deepgram returned a success status with an unreadable body: {e}"
-            )),
+            error: PipelineError::Transcription(
+                "deepgram returned a success status with an unreadable body".into(),
+            ),
         })
     }
 }
@@ -240,10 +258,8 @@ impl SpeechToText for DeepgramTranscriber {
             ));
         }
 
-        // A zero-byte object is a completed upload of nothing. S4's HeadObject
-        // check proves an object exists, not that it has contents; this is the
-        // second half of that check, and it fails fast rather than paying for a
-        // vendor 400.
+        // Defence in depth: S4 also rejects zero-length objects. Direct library
+        // callers must not pay for a vendor request with no audio either.
         if audio.is_empty() {
             return Err(PipelineError::Transcription(
                 "refusing to transcribe an empty audio buffer".into(),
@@ -297,36 +313,40 @@ fn is_retryable_status(status: u16) -> bool {
     status == 429 || (500..600).contains(&status)
 }
 
-/// A transport failure means no HTTP status ever arrived — DNS, TLS, a reset
-/// connection, a proxy hiccup. Those are the network blips the inner loop
-/// exists for, so they are retryable, with one exception.
-///
-/// **A timeout is not retried.** An attempt that hit [`ATTEMPT_TIMEOUT`] has
-/// already spent 60 s of the 300 s visibility budget; spending it twice more
-/// takes the job to 181 s and leaves the worker racing its own redelivery
-/// (§C2). A request that could not finish in ten times the expected duration is
-/// also, empirically, not a blip. Fail now, let SQS's outer attempt retry the
-/// whole job with a fresh budget.
+/// Retry connection/request/body failures, including a reset during a 2xx body.
+/// Timeouts fail toward the outer SQS retry with a fresh job budget.
 fn transport_is_retryable(err: &reqwest::Error) -> bool {
-    !err.is_timeout() && !err.is_builder()
+    !err.is_timeout()
+        && !err.is_builder()
+        // Response::chunk reports interrupted HTTP frames as Decode errors.
+        // JSON decoding happens separately and never enters this classifier.
+        && (err.is_connect() || err.is_request() || err.is_body() || err.is_decode())
+}
+
+fn transport_failure(err: &reqwest::Error) -> Attempt {
+    let message = if err.is_timeout() {
+        "deepgram request timed out"
+    } else if err.is_builder() {
+        "invalid Deepgram request configuration"
+    } else {
+        "deepgram transport failed"
+    };
+    Attempt {
+        retryable: transport_is_retryable(err),
+        error: PipelineError::Transcription(message.into()),
+    }
+}
+
+fn response_too_large() -> Attempt {
+    Attempt {
+        retryable: false,
+        error: PipelineError::Transcription("deepgram response exceeds size limit".into()),
+    }
 }
 
 /// 500 ms, then 1 s. `attempt` is zero-based.
 fn backoff_for(attempt: u32) -> Duration {
     BACKOFF_BASE * 2u32.pow(attempt)
-}
-
-/// Cap a vendor error body, on a character boundary so a multi-byte glyph
-/// cannot panic the error path.
-fn truncate(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        return s.to_string();
-    }
-    let end = (0..=max)
-        .rev()
-        .find(|i| s.is_char_boundary(*i))
-        .unwrap_or(0);
-    format!("{}…", &s[..end])
 }
 
 /// Turn Deepgram's response tree into a [`TranscriptResult`] (§C7).
@@ -346,12 +366,9 @@ fn truncate(s: &str, max: usize) -> String {
 ///     "utterances": [ { "speaker": 0, "transcript": "What brings you in today?" } ] } }
 /// ```
 ///
-/// Everything is read defensively — `get(...).and_then(...)` rather than a
-/// `#[derive(Deserialize)]` struct — because a strict struct would reject the
-/// *whole* response over one added or renamed field, and a vendor is free to
-/// add fields. `serde_json::Value` here is not laziness; it is the same
-/// forward-compatibility argument D6.16 makes for keeping `ChunkView::status` a
-/// wire `String`.
+/// Unknown fields are ignored. Known transcript fields are validated so schema
+/// errors cannot silently remove clinical text. Serde structs also ignore
+/// unknown fields by default; Value is retained to keep this small parser local.
 fn parse_deepgram_response(v: &Value) -> PipelineResult<TranscriptResult> {
     let results = v.get("results");
 
@@ -372,12 +389,20 @@ fn parse_deepgram_response(v: &Value) -> PipelineResult<TranscriptResult> {
     // Prefer speaker turns when they are there. `utterances=true` is requested
     // on every call, but some model/parameter combinations return none, and a
     // transcript is more useful flat than missing.
+    let flat = alternative
+        .and_then(|alt| alt.get("transcript"))
+        .and_then(Value::as_str);
     let text = match utterances {
-        Some(utterances) if !utterances.is_empty() => Some(format_utterances(utterances)),
-        _ => alternative
-            .and_then(|alt| alt.get("transcript"))
-            .and_then(Value::as_str)
-            .map(str::to_owned),
+        Some(utterances) if !utterances.is_empty() => match format_utterances(utterances) {
+            Some(turns) if !turns.is_empty() => Some(turns),
+            Some(turns) => Some(flat.map(str::to_owned).unwrap_or(turns)),
+            // An incomplete array is never accepted as a partial transcript or
+            // silence. Prefer a complete, nonblank flat fallback or fail.
+            None => flat
+                .filter(|text| !text.trim().is_empty())
+                .map(str::to_owned),
+        },
+        _ => flat.map(str::to_owned),
     };
 
     // Neither shape present. A 200 that carries no transcript field at all is
@@ -393,8 +418,8 @@ fn parse_deepgram_response(v: &Value) -> PipelineResult<TranscriptResult> {
     // and a dead-letter message.
     let Some(text) = text else {
         return Err(PipelineError::Transcription(
-            "deepgram returned a success status with no transcript: neither \
-             results.utterances nor results.channels[0].alternatives[0].transcript was present"
+            "deepgram returned a success status with no transcript: \
+             missing or malformed transcript fields"
                 .into(),
         ));
     };
@@ -404,16 +429,18 @@ fn parse_deepgram_response(v: &Value) -> PipelineResult<TranscriptResult> {
         confidence: alternative
             .and_then(|alt| alt.get("confidence"))
             .and_then(Value::as_f64)
+            .filter(|c| (0.0..=1.0).contains(c))
             .map(|c| c as f32),
         // metadata.duration is Deepgram's own measurement of the audio, and it
-        // is the value the worker writes to `audio_chunks.duration_ms` — the
-        // column Step 7's usage log will bill from (D6.13). Absent, it is 0.0
-        // rather than an error: a missing meter reading is not a reason to
-        // throw away a good transcript.
+        // is the value S7's worker will write to `audio_chunks.duration_ms` — the
+        // column Step 7's usage log will bill from (D6.13). Absent or invalid,
+        // it is 0.0 rather than an error: a missing meter reading is not a
+        // reason to throw away a good transcript.
         audio_duration_secs: v
             .get("metadata")
             .and_then(|m| m.get("duration"))
             .and_then(Value::as_f64)
+            .filter(|d| *d >= 0.0 && (*d as f32).is_finite())
             .unwrap_or(0.0) as f32,
         // Filled in by `transcribe`, which is the only thing holding a clock.
         processing_duration_secs: 0.0,
@@ -430,22 +457,29 @@ fn parse_deepgram_response(v: &Value) -> PipelineResult<TranscriptResult> {
 /// Blank turns are dropped (a bare `"Speaker 1:"` line teaches the summarizer
 /// nothing), and a turn with no `speaker` field keeps its text without a label
 /// rather than being attributed to an invented speaker 0.
-fn format_utterances(utterances: &[Value]) -> String {
-    utterances
+fn format_utterances(utterances: &[Value]) -> Option<String> {
+    let lines = utterances
         .iter()
-        .filter_map(|utterance| {
-            let text = utterance.get("transcript").and_then(Value::as_str)?.trim();
-            if text.is_empty() {
-                return None;
-            }
-            Some(match utterance.get("speaker").and_then(Value::as_u64) {
+        .map(|utterance| {
+            let text = utterance.get("transcript").and_then(Value::as_str)?;
+            Some((utterance, text.trim()))
+        })
+        .collect::<Option<Vec<_>>>()?
+        .into_iter()
+        .filter(|(_, text)| !text.is_empty())
+        .map(
+            |(utterance, text)| match utterance.get("speaker").and_then(Value::as_u64) {
                 Some(speaker) => format!("Speaker {speaker}: {text}"),
                 None => text.to_string(),
-            })
-        })
+            },
+        )
         .collect::<Vec<_>>()
-        .join("\n")
+        .join("\n");
+    Some(lines)
 }
+
+#[cfg(test)]
+mod http_tests;
 
 #[cfg(test)]
 mod tests {
@@ -557,6 +591,70 @@ mod tests {
     }
 
     #[test]
+    fn unusable_or_partial_utterances_preserve_the_complete_flat_transcript() {
+        for utterances in [
+            serde_json::json!([{}]),
+            serde_json::json!([{ "transcript": null }]),
+            serde_json::json!([{ "transcript": "  " }]),
+            serde_json::json!([{ "transcript": "Only part of the answer." }, {}]),
+        ] {
+            let mut response = flat_response();
+            response["results"]["utterances"] = utterances;
+            let result = parse_deepgram_response(&response).unwrap();
+            assert_eq!(
+                result.text,
+                "Patient reports chest pain radiating to the left arm."
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_utterances_without_a_flat_fallback_are_not_silence() {
+        for utterances in [
+            serde_json::json!([{}]),
+            serde_json::json!([{ "transcript": 12 }]),
+            serde_json::json!([{ "transcript": "Valid turn." }, {}]),
+        ] {
+            assert!(
+                parse_deepgram_response(&serde_json::json!({
+                    "results": { "utterances": utterances }
+                }))
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn incomplete_turns_cannot_hide_behind_an_empty_flat_transcript() {
+        let response = serde_json::json!({ "results": {
+            "utterances": [{ "transcript": "Synthetic speech." }, {}],
+            "channels": [{ "alternatives": [{ "transcript": "" }] }]
+        } });
+        assert!(parse_deepgram_response(&response).is_err());
+    }
+
+    #[test]
+    fn well_formed_blank_turns_are_silence() {
+        let response = serde_json::json!({ "results": {
+            "utterances": [{ "speaker": 0, "transcript": "  " }]
+        } });
+        assert_eq!(parse_deepgram_response(&response).unwrap().text, "");
+    }
+
+    #[test]
+    fn invalid_numeric_metadata_cannot_escape_into_persistence() {
+        for invalid in [-1.0, 1e100] {
+            let mut response = flat_response();
+            response["metadata"]["duration"] = serde_json::json!(invalid);
+            response["results"]["channels"][0]["alternatives"][0]["confidence"] =
+                serde_json::json!(invalid);
+            let result = parse_deepgram_response(&response).unwrap();
+            assert_eq!(result.audio_duration_secs, 0.0);
+            assert_eq!(result.confidence, None);
+        }
+    }
+
+    #[test]
     fn blank_turns_are_dropped_and_unlabelled_turns_keep_their_text() {
         let response = serde_json::json!({
             "metadata": { "duration": 3.0 },
@@ -607,11 +705,9 @@ mod tests {
 
     #[test]
     fn the_retry_budget_fits_inside_the_sqs_visibility_timeout() {
-        // The invariant that makes the inner loop safe (§C2): if a single job's
-        // work could outlast the 300 s visibility timeout, SQS would hand the
-        // message to a second worker mid-flight. This is that arithmetic,
-        // asserted — so raising ATTEMPT_TIMEOUT or MAX_ATTEMPTS without raising
-        // the queue attribute fails here rather than in production at 2 a.m.
+        // Pin the STT budget against the documented queue lease. This copied
+        // constant does not inspect the configured queue or budget S3/DB work;
+        // S7 must test those together and handle at-least-once delivery.
         const SQS_VISIBILITY_TIMEOUT: Duration = Duration::from_secs(300);
 
         let backoff: Duration = (0..MAX_ATTEMPTS - 1).map(backoff_for).sum();
@@ -663,7 +759,10 @@ mod tests {
             .await
             .expect_err("the chunk row always carries a content type");
 
-        assert!(matches!(error, PipelineError::Transcription(_)));
+        assert_eq!(
+            error.to_string(),
+            "transcription error: no content type supplied for the audio"
+        );
     }
 
     #[tokio::test]
@@ -675,15 +774,17 @@ mod tests {
             .await
             .expect_err("a zero-byte object is a completed upload of nothing");
 
-        assert!(matches!(error, PipelineError::Transcription(_)));
+        assert_eq!(
+            error.to_string(),
+            "transcription error: refusing to transcribe an empty audio buffer"
+        );
     }
 
     #[tokio::test]
     async fn the_deepgram_arm_of_the_dispatch_enum_is_reachable() {
         // The enum's Deepgram variant exists and satisfies the trait. The
-        // happy path needs a live key and is exercised manually (E4), exactly
-        // as `AppSummarizer::Claude` is; what is proved here is that the
-        // variant routes and that its preconditions travel with it.
+        // loopback HTTP suite covers successful dispatch without a live key;
+        // this test proves its preconditions travel through the enum too.
         use crate::speech_to_text::AppSpeechToText;
 
         let stt = AppSpeechToText::Deepgram(DeepgramTranscriber::new("dg_not_a_real_key").unwrap());
@@ -707,27 +808,16 @@ mod tests {
     }
 
     #[test]
-    fn a_long_vendor_error_body_is_truncated_on_a_character_boundary() {
-        // A multi-byte glyph straddling the cap must not panic the error path —
-        // the error path is what carries the cause to the DLQ.
-        //
-        // The 3-byte "€" is chosen so that MAX_ERROR_BODY is *not* a multiple of
-        // the character width: 200 % 3 == 2, so byte 200 lands mid-character and
-        // a naive `&s[..max]` panics. A 2-byte glyph would have landed exactly on
-        // a boundary and let that mutation through.
-        let body = "€".repeat(MAX_ERROR_BODY);
-
-        let capped = truncate(&body, MAX_ERROR_BODY);
-
-        assert!(capped.ends_with('…'));
-        assert!(capped.len() <= MAX_ERROR_BODY + '…'.len_utf8());
-    }
-
-    #[test]
-    fn a_short_error_body_is_left_alone() {
-        assert_eq!(
-            truncate("{\"err_code\":\"INVALID_AUTH\"}", MAX_ERROR_BODY),
-            "{\"err_code\":\"INVALID_AUTH\"}"
+    fn malformed_key_headers_are_rejected_without_disclosing_the_key() {
+        let error = DeepgramTranscriber::new("synthetic-secret\r\nInjected: value").unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("invalid Deepgram API key header")
         );
+        assert!(!format!("{error:?}").contains("synthetic-secret"));
+        let stt = DeepgramTranscriber::new("synthetic-secret").unwrap();
+        assert!(stt.authorization.is_sensitive());
+        assert!(!format!("{:?}", stt.authorization).contains("synthetic-secret"));
     }
 }

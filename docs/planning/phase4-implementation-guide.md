@@ -544,6 +544,14 @@ $ cargo add -p er-server aws-config aws-sdk-s3 aws-sdk-sqs
 
 Wrap with: 30s timeout, 2 retries with backoff on 429/5xx, and **log duration + cost into `usage_log`** (`kind='stt'`, `stt_seconds`, `cost_micros = seconds/60 * rate`).
 
+S6 implementation review: the detailed substep retains a **60s per-attempt** deadline
+(at most 181.5s including two backoffs), a deviation from the 30s outline above.
+This bounds STT only; S7 must budget the complete job against the actual SQS lease.
+`usage_log` remains deferred to Step 7; the returned duration is not yet a billing log.
+The client now refuses redirects, omits vendor bodies from errors, caps response bytes,
+and rejects incomplete transcripts unless a usable flat fallback exists. See the
+[S6 review and requirement matrix](../reviews/phase4-step6-s6-review.md).
+
 > 🌐 **Deepgram checklist before any real-patient audio:** BAA signed (Part 0.5) · project configured for no-storage/no-training · key stored in AWS Secrets Manager (`/ernote/staging/deepgram`) and injected into the worker task as an ECS secret (Step 8) — never baked into the image.
 
 ### 6.5 Gate — Step 6
