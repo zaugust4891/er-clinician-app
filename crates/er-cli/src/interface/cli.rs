@@ -1,4 +1,9 @@
-use std::io::Write;
+use std::{
+    future::Future,
+    io::Write,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use uuid::Uuid;
 
@@ -14,6 +19,7 @@ use er_app::error::{AppError, AppResult};
 use er_ai::summarizer::Summarizer;
 use er_pipeline::audio::AudioCapture;
 use er_pipeline::stt::Transcriber;
+use er_store::{StoreError, StoreResult};
 use tokio::runtime::Runtime;
 
 use chrono::Utc;
@@ -29,6 +35,9 @@ pub enum Command {
         mode: CaptureMode,
     }, // start_encounter on active patient
     Stop, // stop_encounter
+    Audio {
+        path: PathBuf,
+    }, // upload one final chunk for the active encounter (remote mode)
     Lab {
         name: String,
         value: String,
@@ -55,6 +64,7 @@ pub enum Command {
     Review,
     Sign,
     Note, // print formatted note
+    Transcript, // print raw encounter transcripts
     Export,
     Reload, // rehydrate from repository
     Status,
@@ -116,6 +126,15 @@ impl Commands {
 
             "stop" => Command::Stop,
 
+            "audio" => {
+                if args.len() < 2 {
+                    return Err(AppError::CliError("Usage: audio <path>".to_string()));
+                }
+                Command::Audio {
+                    path: PathBuf::from(args[1..].join(" ")),
+                }
+            }
+
             "lab" => {
                 if args.len() < 4 {
                     return Err(AppError::CliError(
@@ -164,6 +183,7 @@ impl Commands {
             "review" => Command::Review,
             "sign" => Command::Sign,
             "note" => Command::Note,
+            "transcript" => Command::Transcript,
             "export" => Command::Export,
             "reload" => Command::Reload,
             "status" => Command::Status,
@@ -188,6 +208,7 @@ impl Commands {
         println!("  switch <index>");
         println!("  start <ambient|dictation>");
         println!("  stop");
+        println!("  audio <path.wav|path.ogg|path.m4a|path.mp3>");
         println!("  lab <name> <value> <unit>");
         println!("  dispo discharge <instructions> [<follow-up>]");
         println!("  dispo admit <service> [<bed>]");
@@ -202,6 +223,7 @@ impl Commands {
         println!("  review");
         println!("  sign");
         println!("  note");
+        println!("  transcript");
         println!("  export");
         println!("  reload");
         println!("  status");
@@ -210,12 +232,253 @@ impl Commands {
     }
 }
 
+#[derive(Clone, Copy)]
+struct ObservationPolicy {
+    budget: Duration,
+    poll_delay: Duration,
+    request_timeout: Duration,
+}
+
+impl ObservationPolicy {
+    const CLI: Self = Self {
+        budget: Duration::from_secs(30),
+        poll_delay: Duration::from_secs(2),
+        request_timeout: Duration::from_secs(5),
+    };
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ObservationUnavailableReason {
+    Authentication,
+    NotFound,
+    TemporarilyUnavailable,
+    RequestTimedOut,
+    InvalidResponse,
+    Rejected(u16),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ObservationOutcome {
+    Done,
+    Failed,
+    PendingAtDeadline {
+        last_status: String,
+    },
+    ObservationUnavailable {
+        reason: ObservationUnavailableReason,
+        last_status: String,
+    },
+}
+
+/// The narrow read seam used by the polling policy.
+///
+/// Keeping the helper generic lets tests supply deterministic responses and a
+/// paused Tokio clock. Production implements the same seam with ServerApi and
+/// therefore reuses its one reqwest connection pool.
+trait ChunkStatusSource {
+    fn audio_chunk(
+        &self,
+        chunk_id: Uuid,
+    ) -> impl Future<Output = StoreResult<er_api::ChunkView>> + Send;
+}
+
+impl ChunkStatusSource for ServerApi {
+    fn audio_chunk(
+        &self,
+        chunk_id: Uuid,
+    ) -> impl Future<Output = StoreResult<er_api::ChunkView>> + Send {
+        ServerApi::audio_chunk(self, chunk_id)
+    }
+}
+
+fn terminal_outcome(status: &str) -> Option<ObservationOutcome> {
+    if !er_api::chunk_status::is_terminal(status) {
+        return None;
+    }
+
+    Some(if status == er_api::chunk_status::DONE {
+        ObservationOutcome::Done
+    } else {
+        ObservationOutcome::Failed
+    })
+}
+
+fn unavailable_reason(error: &StoreError) -> ObservationUnavailableReason {
+    match error {
+        StoreError::Remote { status, .. } => match *status {
+            401 | 403 => ObservationUnavailableReason::Authentication,
+            404 => ObservationUnavailableReason::NotFound,
+            429 | 500..=599 => ObservationUnavailableReason::TemporarilyUnavailable,
+            status => ObservationUnavailableReason::Rejected(status),
+        },
+        StoreError::Backend(_)
+        | StoreError::Db(_)
+        | StoreError::Serialization(_)
+        | StoreError::Parse { .. } => ObservationUnavailableReason::TemporarilyUnavailable,
+    }
+}
+
+/// Observe one completed chunk without changing the server-side job.
+///
+/// The completion response is observation zero. Every later read begins after
+/// the previous response plus poll_delay, so requests never overlap and a slow
+/// response cannot cause an interval catch-up burst. Both the delay and each
+/// request are clipped to one monotonic overall deadline.
+async fn observe_audio_chunk<C, F>(
+    source: &C,
+    chunk_id: Uuid,
+    initial: er_api::ChunkView,
+    policy: ObservationPolicy,
+    mut status_changed: F,
+) -> ObservationOutcome
+where
+    C: ChunkStatusSource,
+    F: FnMut(&str),
+{
+    let deadline = tokio::time::Instant::now() + policy.budget;
+    let mut last_status = initial.status;
+    status_changed(&last_status);
+
+    if initial.chunk_id != chunk_id {
+        return ObservationOutcome::ObservationUnavailable {
+            reason: ObservationUnavailableReason::InvalidResponse,
+            last_status,
+        };
+    }
+    if let Some(outcome) = terminal_outcome(&last_status) {
+        return outcome;
+    }
+
+    loop {
+        let now = tokio::time::Instant::now();
+        if now >= deadline {
+            return ObservationOutcome::PendingAtDeadline { last_status };
+        }
+
+        tokio::time::sleep_until(std::cmp::min(now + policy.poll_delay, deadline)).await;
+        if tokio::time::Instant::now() >= deadline {
+            return ObservationOutcome::PendingAtDeadline { last_status };
+        }
+
+        let request_deadline = std::cmp::min(
+            tokio::time::Instant::now() + policy.request_timeout,
+            deadline,
+        );
+        let observed =
+            tokio::time::timeout_at(request_deadline, source.audio_chunk(chunk_id)).await;
+
+        let view = match observed {
+            Ok(Ok(view)) => view,
+            Ok(Err(error)) => {
+                return ObservationOutcome::ObservationUnavailable {
+                    reason: unavailable_reason(&error),
+                    last_status,
+                };
+            }
+            Err(_) if tokio::time::Instant::now() >= deadline => {
+                return ObservationOutcome::PendingAtDeadline { last_status };
+            }
+            Err(_) => {
+                return ObservationOutcome::ObservationUnavailable {
+                    reason: ObservationUnavailableReason::RequestTimedOut,
+                    last_status,
+                };
+            }
+        };
+
+        if view.chunk_id != chunk_id {
+            return ObservationOutcome::ObservationUnavailable {
+                reason: ObservationUnavailableReason::InvalidResponse,
+                last_status,
+            };
+        }
+
+        if view.status != last_status {
+            last_status = view.status;
+            status_changed(&last_status);
+        }
+        if let Some(outcome) = terminal_outcome(&last_status) {
+            return outcome;
+        }
+    }
+}
+
+fn observation_message(outcome: &ObservationOutcome) -> String {
+    match outcome {
+        ObservationOutcome::Done => concat!(
+            "Chunk transcription is done; encounter assembly may still be finishing. ",
+            "Run 'reload', then 'transcript' to read any published transcript."
+        )
+        .to_string(),
+        ObservationOutcome::Failed => {
+            "Chunk transcription failed on the server; the failure is terminal.".to_string()
+        }
+        ObservationOutcome::PendingAtDeadline { last_status } => format!(
+            "Observation ended after 30 seconds at status '{last_status}'; processing continues \
+             independently. Run 'reload' later, then 'transcript'."
+        ),
+        ObservationOutcome::ObservationUnavailable {
+            reason,
+            last_status,
+        } => {
+            let category = match reason {
+                ObservationUnavailableReason::Authentication => {
+                    "authentication or access was rejected"
+                }
+                ObservationUnavailableReason::NotFound => "chunk status is unavailable",
+                ObservationUnavailableReason::TemporarilyUnavailable => {
+                    "status could not be checked; the server may still be processing"
+                }
+                ObservationUnavailableReason::RequestTimedOut => {
+                    "the status request timed out; the server may still be processing"
+                }
+                ObservationUnavailableReason::InvalidResponse => {
+                    "the status response did not identify the requested chunk"
+                }
+                ObservationUnavailableReason::Rejected(status) => {
+                    return format!(
+                        "Observation stopped at status '{last_status}': status read was rejected \
+                         (HTTP {status}); processing may continue."
+                    );
+                }
+            };
+            format!("Observation stopped at status '{last_status}': {category}.")
+        }
+    }
+}
+
+fn content_type_for_audio_path(path: &Path) -> AppResult<&'static str> {
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(str::to_ascii_lowercase);
+
+    match extension.as_deref() {
+        Some("wav") => Ok("audio/wav"),
+        Some("ogg") => Ok("audio/ogg"),
+        Some("m4a" | "mp4") => Ok("audio/mp4"),
+        Some("mp3" | "mpeg") => Ok("audio/mpeg"),
+        _ => Err(AppError::CliError(
+            "Unsupported audio type. Use wav, ogg, m4a, mp4, mp3, or mpeg.".to_string(),
+        )),
+    }
+}
+
+fn safe_request_error(action: &str, error: &StoreError) -> AppError {
+    let detail = match error {
+        StoreError::Remote { status, .. } => format!("server returned HTTP {status}"),
+        _ => "the service could not be reached or returned an invalid response".to_string(),
+    };
+    AppError::CliError(format!("{action} failed: {detail}"))
+}
+
 /// What a command needs to reach the server directly, in remote mode (S10).
 ///
 /// Most commands never touch it: they go through `ShiftManager`, whose
 /// `Arc<dyn Repository>` is already a `RemoteRepository`, and so cross the wire
 /// without knowing it. This exists for the handful of operations that are *not*
-/// storage — today, patient registration.
+/// Repository storage — patient registration and the direct-to-object-storage
+/// audio protocol.
 ///
 /// The runtime rides along because the REPL is synchronous and the client is
 /// async; this is the same `block_on` bridge `ShiftManager` uses internally.
@@ -326,10 +589,74 @@ where
 
         Command::Stop => {
             let encounter_id = manager.stop_encounter()?;
-            println!(
-                "Stopped encounter {}. Transcript captured.",
-                short_id(encounter_id)
-            );
+            println!("Stopped encounter {}.", short_id(encounter_id));
+            Ok(true)
+        }
+
+        Command::Audio { path } => {
+            let Some(ctx) = remote else {
+                println!(
+                    "The audio upload command is available in remote mode; \
+                     local mode transcribes captured mock audio when you run 'stop'."
+                );
+                return Ok(true);
+            };
+
+            let (patient_id, encounter_id) = manager.active_encounter().ok_or_else(|| {
+                AppError::Audio(
+                    "No encounter is recording. Select a patient and run 'start' first."
+                        .to_string(),
+                )
+            })?;
+            let content_type = content_type_for_audio_path(&path)?;
+            let bytes = std::fs::read(&path).map_err(|error| {
+                AppError::CliError(format!("Could not read the audio file: {error}"))
+            })?;
+            if bytes.is_empty() {
+                return Err(AppError::CliError(
+                    "The audio file is empty; choose a file containing audio.".to_string(),
+                ));
+            }
+
+            let chunk_id = Uuid::now_v7();
+            let request = er_api::AudioUploadRequest {
+                chunk_id,
+                chunk_index: 0,
+                is_final: true,
+                content_type: content_type.to_string(),
+            };
+            let intent = ctx
+                .runtime
+                .block_on(
+                    ctx.api
+                        .request_audio_upload(patient_id, encounter_id, &request),
+                )
+                .map_err(|error| safe_request_error("Requesting an audio upload", &error))?;
+            ctx.runtime
+                .block_on(
+                    ctx.api
+                        .put_presigned(&intent.upload_url, bytes, content_type),
+                )
+                .map_err(|error| safe_request_error("Uploading audio", &error))?;
+            let initial = ctx
+                .runtime
+                .block_on(ctx.api.complete_audio(chunk_id))
+                .map_err(|error| safe_request_error("Completing the audio upload", &error))?;
+
+            // Completion acknowledged durable server work. Mark ownership before
+            // observation so a timeout, 404, disconnect, or Ctrl-C cannot bring
+            // the device mock-transcript path back.
+            manager.mark_encounter_server_stt(encounter_id)?;
+            println!("Uploaded audio chunk {}.", short_id(chunk_id));
+
+            let outcome = ctx.runtime.block_on(observe_audio_chunk(
+                ctx.api,
+                chunk_id,
+                initial,
+                ObservationPolicy::CLI,
+                |status| println!("Audio chunk {} status: {status}", short_id(chunk_id)),
+            ));
+            println!("{}", observation_message(&outcome));
             Ok(true)
         }
 
@@ -450,6 +777,33 @@ where
             Ok(true)
         }
 
+        Command::Transcript => {
+            let patient_id = manager
+                .active_patient_id()
+                .ok_or(NoActivePatient("No active patient found".into()))?;
+            let note = manager
+                .get_note(patient_id)
+                .ok_or(AppError::NoteError("No note found".into()))?;
+
+            if note.encounters.is_empty() {
+                println!("No encounters recorded for the active patient.");
+                return Ok(true);
+            }
+
+            for encounter in &note.encounters {
+                let text = encounter
+                    .transcript
+                    .as_deref()
+                    .filter(|text| !text.trim().is_empty())
+                    .unwrap_or("‹none›");
+                println!(
+                    "Encounter {} [{:?}]: {}",
+                    encounter.encounter_number, encounter.capture_mode, text
+                );
+            }
+            Ok(true)
+        }
+
         Command::Export => {
             let exported = manager.export_active_note()?;
             println!("{exported}");
@@ -520,8 +874,11 @@ fn mdm_preview(mdm: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
-    use std::sync::Arc;
+    use std::collections::{HashMap, VecDeque};
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    };
 
     use er_app::EventBus;
     use er_app::encounter_driver::EncounterDriver;
@@ -555,6 +912,108 @@ mod tests {
             MockSummarizer::new(),
             runtime,
         )
+    }
+
+    #[derive(Debug)]
+    enum FakeReply {
+        Status {
+            status: &'static str,
+            delay: Duration,
+        },
+        Remote(u16),
+        Backend(&'static str),
+        WrongChunk,
+        Hang,
+    }
+
+    struct FakeStatusSource {
+        replies: Mutex<VecDeque<FakeReply>>,
+        calls: AtomicUsize,
+        in_flight: AtomicUsize,
+        max_in_flight: AtomicUsize,
+        starts: Mutex<Vec<tokio::time::Instant>>,
+    }
+
+    impl FakeStatusSource {
+        fn new(replies: impl IntoIterator<Item = FakeReply>) -> Self {
+            Self {
+                replies: Mutex::new(replies.into_iter().collect()),
+                calls: AtomicUsize::new(0),
+                in_flight: AtomicUsize::new(0),
+                max_in_flight: AtomicUsize::new(0),
+                starts: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    struct InFlight<'a>(&'a AtomicUsize);
+
+    impl Drop for InFlight<'_> {
+        fn drop(&mut self) {
+            self.0.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+
+    impl ChunkStatusSource for FakeStatusSource {
+        // Preserve the trait's explicit `Send` bound for the returned future.
+        #[allow(clippy::manual_async_fn)]
+        fn audio_chunk(
+            &self,
+            chunk_id: Uuid,
+        ) -> impl Future<Output = StoreResult<er_api::ChunkView>> + Send {
+            async move {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                let current = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+                self.max_in_flight.fetch_max(current, Ordering::SeqCst);
+                self.starts
+                    .lock()
+                    .unwrap()
+                    .push(tokio::time::Instant::now());
+                let _in_flight = InFlight(&self.in_flight);
+                let reply = self
+                    .replies
+                    .lock()
+                    .unwrap()
+                    .pop_front()
+                    .unwrap_or(FakeReply::Hang);
+
+                match reply {
+                    FakeReply::Status { status, delay } => {
+                        tokio::time::sleep(delay).await;
+                        Ok(chunk_view(chunk_id, status))
+                    }
+                    FakeReply::Remote(status) => Err(StoreError::Remote {
+                        status,
+                        message: "secret backend response".to_string(),
+                    }),
+                    FakeReply::Backend(message) => {
+                        Err(StoreError::backend(std::io::Error::other(message)))
+                    }
+                    FakeReply::WrongChunk => Ok(chunk_view(Uuid::now_v7(), "transcribing")),
+                    FakeReply::Hang => std::future::pending().await,
+                }
+            }
+        }
+    }
+
+    fn chunk_view(chunk_id: Uuid, status: &str) -> er_api::ChunkView {
+        er_api::ChunkView {
+            chunk_id,
+            encounter_id: Uuid::nil(),
+            chunk_index: 0,
+            is_final: true,
+            status: status.to_string(),
+            duration_ms: None,
+            error: None,
+        }
+    }
+
+    fn policy(budget_secs: u64, delay_secs: u64, request_timeout_secs: u64) -> ObservationPolicy {
+        ObservationPolicy {
+            budget: Duration::from_secs(budget_secs),
+            poll_delay: Duration::from_secs(delay_secs),
+            request_timeout: Duration::from_secs(request_timeout_secs),
+        }
     }
 
     #[test]
@@ -666,5 +1125,292 @@ mod tests {
         let preview = mdm_preview(&multibyte);
         assert_eq!(preview.chars().count(), 401); // 400 'é' + '…'
         assert!(preview.ends_with('…'));
+    }
+
+    #[test]
+    fn audio_and_transcript_commands_parse_and_local_audio_is_explanatory() {
+        let audio = Commands::new(&[
+            "audio".to_string(),
+            "fixtures/tiny".to_string(),
+            "recording.wav".to_string(),
+        ])
+        .unwrap();
+        assert!(matches!(
+            audio.commands,
+            Command::Audio { path } if path.as_path() == Path::new("fixtures/tiny recording.wav")
+        ));
+        assert!(matches!(
+            Commands::new(&["transcript".to_string()]).unwrap().commands,
+            Command::Transcript
+        ));
+        assert!(Commands::new(&["audio".to_string()]).is_err());
+
+        let mut manager = test_manager();
+        let local_audio = Commands::new(&[
+            "audio".to_string(),
+            "does-not-need-to-exist.wav".to_string(),
+        ])
+        .unwrap();
+        assert!(
+            handle_command(&mut manager, local_audio, None).unwrap(),
+            "local mode explains the command without touching the filesystem"
+        );
+    }
+
+    #[test]
+    fn audio_extensions_map_to_the_server_allowlist() {
+        for (path, expected) in [
+            ("a.WAV", "audio/wav"),
+            ("a.ogg", "audio/ogg"),
+            ("a.m4a", "audio/mp4"),
+            ("a.mp4", "audio/mp4"),
+            ("a.mp3", "audio/mpeg"),
+            ("a.mpeg", "audio/mpeg"),
+        ] {
+            assert_eq!(
+                content_type_for_audio_path(Path::new(path)).unwrap(),
+                expected
+            );
+        }
+        assert!(content_type_for_audio_path(Path::new("a.flac")).is_err());
+        assert!(content_type_for_audio_path(Path::new("no-extension")).is_err());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_initial_terminal_status_returns_without_a_get() {
+        for (status, expected) in [
+            (er_api::chunk_status::DONE, ObservationOutcome::Done),
+            (er_api::chunk_status::FAILED, ObservationOutcome::Failed),
+        ] {
+            let chunk_id = Uuid::now_v7();
+            let source = FakeStatusSource::new([]);
+            let mut printed = Vec::new();
+
+            let outcome = observe_audio_chunk(
+                &source,
+                chunk_id,
+                chunk_view(chunk_id, status),
+                policy(30, 2, 5),
+                |value| printed.push(value.to_string()),
+            )
+            .await;
+
+            assert_eq!(outcome, expected);
+            assert_eq!(source.calls.load(Ordering::SeqCst), 0);
+            assert_eq!(printed, vec![status]);
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn observation_prints_transitions_only_and_stops_on_done() {
+        let chunk_id = Uuid::now_v7();
+        let source = FakeStatusSource::new([
+            FakeReply::Status {
+                status: "uploaded",
+                delay: Duration::ZERO,
+            },
+            FakeReply::Status {
+                status: "transcribing",
+                delay: Duration::ZERO,
+            },
+            FakeReply::Status {
+                status: "transcribing",
+                delay: Duration::ZERO,
+            },
+            FakeReply::Status {
+                status: "done",
+                delay: Duration::ZERO,
+            },
+        ]);
+        let mut printed = Vec::new();
+
+        let outcome = observe_audio_chunk(
+            &source,
+            chunk_id,
+            chunk_view(chunk_id, "uploaded"),
+            policy(30, 2, 5),
+            |value| printed.push(value.to_string()),
+        )
+        .await;
+
+        assert_eq!(outcome, ObservationOutcome::Done);
+        assert_eq!(source.calls.load(Ordering::SeqCst), 4);
+        assert_eq!(printed, vec!["uploaded", "transcribing", "done"]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn unknown_status_and_a_stalled_get_are_bounded_by_the_overall_deadline() {
+        let chunk_id = Uuid::now_v7();
+        let source = FakeStatusSource::new([
+            FakeReply::Status {
+                status: "vendor_queued",
+                delay: Duration::ZERO,
+            },
+            FakeReply::Hang,
+        ]);
+        let started = tokio::time::Instant::now();
+        let mut printed = Vec::new();
+
+        let outcome = observe_audio_chunk(
+            &source,
+            chunk_id,
+            chunk_view(chunk_id, "uploaded"),
+            policy(6, 2, 100),
+            |value| printed.push(value.to_string()),
+        )
+        .await;
+
+        assert_eq!(
+            outcome,
+            ObservationOutcome::PendingAtDeadline {
+                last_status: "vendor_queued".to_string(),
+            }
+        );
+        assert_eq!(
+            tokio::time::Instant::now().duration_since(started),
+            Duration::from_secs(6)
+        );
+        assert_eq!(printed, vec!["uploaded", "vendor_queued"]);
+        assert_eq!(source.in_flight.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_per_request_timeout_stops_observation_before_the_overall_deadline() {
+        let chunk_id = Uuid::now_v7();
+        let source = FakeStatusSource::new([FakeReply::Hang]);
+        let started = tokio::time::Instant::now();
+
+        let outcome = observe_audio_chunk(
+            &source,
+            chunk_id,
+            chunk_view(chunk_id, "uploaded"),
+            policy(30, 2, 5),
+            |_| {},
+        )
+        .await;
+
+        assert_eq!(
+            outcome,
+            ObservationOutcome::ObservationUnavailable {
+                reason: ObservationUnavailableReason::RequestTimedOut,
+                last_status: "uploaded".to_string(),
+            }
+        );
+        assert_eq!(
+            tokio::time::Instant::now().duration_since(started),
+            Duration::from_secs(7)
+        );
+        assert_eq!(source.in_flight.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn slow_responses_never_overlap_or_trigger_catch_up_requests() {
+        let chunk_id = Uuid::now_v7();
+        let source = FakeStatusSource::new([
+            FakeReply::Status {
+                status: "transcribing",
+                delay: Duration::from_secs(3),
+            },
+            FakeReply::Status {
+                status: "done",
+                delay: Duration::from_secs(3),
+            },
+        ]);
+
+        let outcome = observe_audio_chunk(
+            &source,
+            chunk_id,
+            chunk_view(chunk_id, "uploaded"),
+            policy(30, 2, 10),
+            |_| {},
+        )
+        .await;
+
+        assert_eq!(outcome, ObservationOutcome::Done);
+        assert_eq!(source.max_in_flight.load(Ordering::SeqCst), 1);
+        let starts = source.starts.lock().unwrap();
+        assert_eq!(starts.len(), 2);
+        assert_eq!(starts[1].duration_since(starts[0]), Duration::from_secs(5));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn status_failures_are_categorized_without_raw_diagnostics() {
+        for (status, reason) in [
+            (401, ObservationUnavailableReason::Authentication),
+            (403, ObservationUnavailableReason::Authentication),
+            (404, ObservationUnavailableReason::NotFound),
+            (429, ObservationUnavailableReason::TemporarilyUnavailable),
+            (500, ObservationUnavailableReason::TemporarilyUnavailable),
+            (503, ObservationUnavailableReason::TemporarilyUnavailable),
+            (409, ObservationUnavailableReason::Rejected(409)),
+        ] {
+            let chunk_id = Uuid::now_v7();
+            let source = FakeStatusSource::new([FakeReply::Remote(status)]);
+            let outcome = observe_audio_chunk(
+                &source,
+                chunk_id,
+                chunk_view(chunk_id, "uploaded"),
+                policy(30, 1, 5),
+                |_| {},
+            )
+            .await;
+            assert_eq!(
+                outcome,
+                ObservationOutcome::ObservationUnavailable {
+                    reason,
+                    last_status: "uploaded".to_string(),
+                }
+            );
+            let rendered = observation_message(&outcome);
+            assert!(!rendered.contains("secret backend response"));
+        }
+
+        for diagnostic in [
+            "malformed JSON containing patient speech",
+            "disconnect at https://presigned.example/?secret=credential",
+        ] {
+            let chunk_id = Uuid::now_v7();
+            let source = FakeStatusSource::new([FakeReply::Backend(diagnostic)]);
+            let outcome = observe_audio_chunk(
+                &source,
+                chunk_id,
+                chunk_view(chunk_id, "uploaded"),
+                policy(30, 1, 5),
+                |_| {},
+            )
+            .await;
+            let rendered = observation_message(&outcome);
+            assert_eq!(
+                outcome,
+                ObservationOutcome::ObservationUnavailable {
+                    reason: ObservationUnavailableReason::TemporarilyUnavailable,
+                    last_status: "uploaded".to_string(),
+                }
+            );
+            assert!(!rendered.contains(diagnostic));
+            assert!(!rendered.contains("presigned"));
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_response_for_another_chunk_is_rejected_safely() {
+        let chunk_id = Uuid::now_v7();
+        let source = FakeStatusSource::new([FakeReply::WrongChunk]);
+        let outcome = observe_audio_chunk(
+            &source,
+            chunk_id,
+            chunk_view(chunk_id, "uploaded"),
+            policy(30, 1, 5),
+            |_| {},
+        )
+        .await;
+
+        assert_eq!(
+            outcome,
+            ObservationOutcome::ObservationUnavailable {
+                reason: ObservationUnavailableReason::InvalidResponse,
+                last_status: "uploaded".to_string(),
+            }
+        );
     }
 }

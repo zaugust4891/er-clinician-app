@@ -53,6 +53,82 @@ async fn register(api: &ServerApi, chief_complaint: &str) -> Uuid {
 }
 
 // ---------------------------------------------------------------------------
+// Presigned upload boundary (Step 6 S8)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn presigned_put_sends_only_the_signed_content_type_and_scrubs_failures() {
+    let upload = axum::Router::new().route(
+        "/upload",
+        axum::routing::put(
+            |headers: axum::http::HeaderMap, body: axum::body::Bytes| async move {
+                assert!(
+                    headers.get(axum::http::header::AUTHORIZATION).is_none(),
+                    "the clinician token must not cross into object storage"
+                );
+                assert_eq!(
+                    headers
+                        .get(axum::http::header::CONTENT_TYPE)
+                        .and_then(|value| value.to_str().ok()),
+                    Some("audio/wav")
+                );
+                assert_eq!(body.as_ref(), b"RIFF synthetic audio");
+                axum::http::StatusCode::NO_CONTENT
+            },
+        ),
+    );
+    let upload_base = common::spawn_server(upload).await;
+    let api = ServerApi::new("http://api.invalid", "clinician-secret");
+    api.put_presigned(
+        &format!("{upload_base}/upload?X-Amz-Signature=upload-secret"),
+        b"RIFF synthetic audio".to_vec(),
+        "audio/wav",
+    )
+    .await
+    .expect("the exact signed request succeeds");
+
+    let rejected = axum::Router::new().route(
+        "/upload",
+        axum::routing::put(|| async {
+            (
+                axum::http::StatusCode::FORBIDDEN,
+                "secret object-store diagnostic",
+            )
+        }),
+    );
+    let rejected_base = common::spawn_server(rejected).await;
+    let rejection = api
+        .put_presigned(
+            &format!("{rejected_base}/upload?X-Amz-Signature=upload-secret"),
+            vec![1],
+            "audio/wav",
+        )
+        .await
+        .expect_err("a rejected upload must fail");
+    let rendered = rejection.to_string();
+    assert!(matches!(
+        rejection,
+        StoreError::Remote { status: 403, .. }
+    ));
+    assert!(!rendered.contains("secret object-store diagnostic"));
+    assert!(!rendered.contains("upload-secret"));
+
+    let unreachable = common::unreachable_url().await;
+    let transport = api
+        .put_presigned(
+            &format!("{unreachable}/upload?X-Amz-Signature=transport-secret"),
+            vec![1],
+            "audio/wav",
+        )
+        .await
+        .expect_err("a disconnected object store must fail");
+    let rendered = transport.to_string();
+    assert!(matches!(transport, StoreError::Backend(_)));
+    assert!(!rendered.contains("transport-secret"));
+    assert!(!rendered.contains(&unreachable));
+}
+
+// ---------------------------------------------------------------------------
 // Failure classification (§C8, flow D)
 // ---------------------------------------------------------------------------
 

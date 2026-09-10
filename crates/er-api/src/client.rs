@@ -164,6 +164,86 @@ impl ServerApi {
         let resp = self.send(self.http.get(self.url("/v1/stats"))).await?;
         decode(resp).await
     }
+
+    // -----------------------------------------------------------------------
+    // Audio upload + transcription observation (Step 6 S8)
+    // -----------------------------------------------------------------------
+
+    /// Ask the API for a short-lived, single-object upload URL.
+    pub async fn request_audio_upload(
+        &self,
+        patient_id: Uuid,
+        encounter_id: Uuid,
+        req: &crate::AudioUploadRequest,
+    ) -> StoreResult<crate::AudioUploadResponse> {
+        let resp = self
+            .send(
+                self.http
+                    .post(self.url(&format!(
+                        "/v1/patients/{patient_id}/encounters/{encounter_id}/audio"
+                    )))
+                    .json(req),
+            )
+            .await?;
+        decode(resp).await
+    }
+
+    /// Confirm that object storage holds a chunk and enqueue its transcription.
+    pub async fn complete_audio(&self, chunk_id: Uuid) -> StoreResult<crate::ChunkView> {
+        let resp = self
+            .send(
+                self.http
+                    .post(self.url(&format!("/v1/audio/{chunk_id}/complete"))),
+            )
+            .await?;
+        decode(resp).await
+    }
+
+    /// Read the server-side ledger state for one audio chunk.
+    pub async fn audio_chunk(&self, chunk_id: Uuid) -> StoreResult<crate::ChunkView> {
+        let resp = self
+            .send(self.http.get(self.url(&format!("/v1/audio/{chunk_id}"))))
+            .await?;
+        decode(resp).await
+    }
+
+    /// Upload bytes through a presigned URL.
+    ///
+    /// This deliberately bypasses the authenticated request helper: the URL is
+    /// its own authorization, so attaching the clinician's bearer token would
+    /// cross an authentication boundary unnecessarily. The content type is
+    /// signed and therefore must match the upload intent exactly.
+    pub async fn put_presigned(
+        &self,
+        url: &str,
+        bytes: Vec<u8>,
+        content_type: &str,
+    ) -> StoreResult<()> {
+        let response = self
+            .http
+            .put(url)
+            .header(reqwest::header::CONTENT_TYPE, content_type)
+            .body(bytes)
+            .send()
+            .await
+            // A reqwest transport error can include the complete presigned URL.
+            // Replace it at this boundary so the credential never reaches a CLI
+            // error, log line, or crash report.
+            .map_err(|_| {
+                StoreError::backend(std::io::Error::other("presigned upload transport failure"))
+            })?;
+
+        if response.status().is_success() {
+            return Ok(());
+        }
+
+        Err(StoreError::Remote {
+            status: response.status().as_u16(),
+            // S3-compatible stores return XML bodies that may contain request
+            // metadata. The status is enough for the caller's safe category.
+            message: "object_storage_rejected_upload".to_string(),
+        })
+    }
 }
 
 /// The storage trait, served over HTTP. Interchangeable with `SqliteRepository`

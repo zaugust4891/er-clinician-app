@@ -31,3 +31,7 @@ docs/planning/*
 # LibreOffice lock files
 .~lock.*
 
+
+# Claude Code worktrees live INSIDE the working tree here, so `git add .`
+# would otherwise stage them as embedded-repo gitlinks.
+.claude/

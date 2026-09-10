@@ -104,6 +104,32 @@ impl<A: AudioCapture, T: Transcriber> EncounterDriver<A, T> {
         Ok(active.encounter_id)
     }
 
+    /// Stop capture and publish AudioStopped while leaving transcription to the
+    /// server-side worker.
+    ///
+    /// Once a completed upload has queued server work, publishing the device
+    /// mock as well would create two TranscriptReady events whose replay order
+    /// decides which clinical text wins. The server-owned path still calls
+    /// AudioCapture::stop so capture resources are released, but intentionally
+    /// discards those local bytes.
+    pub async fn stop_encounter_audio_only(&mut self) -> AppResult<EncounterId> {
+        let active = self
+            .active_encounter
+            .take()
+            .ok_or_else(|| AppError::Audio("no encounter in progress".to_string()))?;
+
+        let _ = self.audio.stop()?;
+
+        self.bus
+            .publish(
+                NoteEvent::audio_stopped(active.patient_id, active.encounter_id),
+                &self.store,
+            )
+            .await?;
+
+        Ok(active.encounter_id)
+    }
+
     /// This will be used for Active patient context + 'switch_patient`
     /// When the clinician taps the Apple Watch/Iphone to switch patients
     /// the system needs to:
@@ -124,6 +150,16 @@ impl<A: AudioCapture, T: Transcriber> EncounterDriver<A, T> {
 
     pub fn has_active_encounter(&self) -> bool {
         self.active_encounter.is_some()
+    }
+
+    /// The encounter currently holding the capture device, if any.
+    ///
+    /// ShiftManager uses both ids to authorize an upload against the active
+    /// patient and to remember which encounter the server now owns.
+    pub fn active_encounter(&self) -> Option<(PatientId, EncounterId)> {
+        self.active_encounter
+            .as_ref()
+            .map(|encounter| (encounter.patient_id, encounter.encounter_id))
     }
 
     pub fn active_patient_id(&self) -> Option<PatientId> {
@@ -232,6 +268,47 @@ mod tests {
         assert_eq!(note.encounters.len(), 1);
         assert!(note.encounters[0].ended_at.is_some());
         assert!(note.encounters[0].transcript.is_some());
+    }
+
+    #[tokio::test]
+    async fn audio_only_stop_publishes_no_device_transcript() {
+        let (mut driver, mut receiver, store) = test_driver();
+        let patient_id = Uuid::now_v7();
+
+        let encounter_id = driver
+            .start_encounter(patient_id, CaptureMode::Ambient)
+            .await
+            .unwrap();
+        assert_eq!(driver.active_encounter(), Some((patient_id, encounter_id)));
+        let _started = receiver.try_recv().unwrap();
+
+        let stopped_id = driver.stop_encounter_audio_only().await.unwrap();
+        assert_eq!(stopped_id, encounter_id);
+        assert_eq!(driver.active_encounter(), None);
+
+        assert!(matches!(
+            receiver.try_recv().unwrap(),
+            NoteEvent::AudioStopped {
+                patient_id: event_patient_id,
+                encounter_id: event_encounter_id,
+                ..
+            } if event_patient_id == patient_id && event_encounter_id == encounter_id
+        ));
+        assert!(
+            matches!(
+                receiver.try_recv(),
+                Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+            ),
+            "the server-owned path must not publish TranscriptReady"
+        );
+
+        let note = store.get(&patient_id).unwrap();
+        assert_eq!(note.phase, NotePhase::Idle);
+        assert!(note.encounters[0].ended_at.is_some());
+        assert!(
+            note.encounters[0].transcript.is_none(),
+            "the worker is the only transcript author on this path"
+        );
     }
 
     #[tokio::test]

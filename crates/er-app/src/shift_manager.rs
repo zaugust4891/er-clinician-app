@@ -23,7 +23,7 @@ use er_domain::note::format_result_line;
 use crate::shift_manager::disposition::format_disposition_for_mdm;
 
 use chrono::{DateTime, Utc};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::runtime::Runtime;
 use uuid::Uuid;
@@ -44,6 +44,7 @@ where
     summarizer: S,
     runtime: Arc<Runtime>,
     deidentifier: Deidentifier,
+    server_stt_encounters: HashSet<EncounterId>,
 }
 
 impl<A, T, S> ShiftManager<A, T, S>
@@ -73,6 +74,7 @@ where
             summarizer,
             runtime,
             deidentifier: Deidentifier::new(),
+            server_stt_encounters: HashSet::new(),
         }
     }
 
@@ -115,19 +117,49 @@ where
     }
 
     pub fn stop_encounter(&mut self) -> AppResult<EncounterId> {
-        // 1. Driver publishes AudioStopped + TranscriptReady 
-        // (state  Idle, snapshot).
-        let encounter_id = self.runtime.block_on(self.driver.stop_encounter())?;
+        let (encounter_id, server_owns_transcript) = self.stop_active_capture()?;
 
-        // 2. Summarize and persist. 
-        //      Best-effort: a summarization failure must NOT lose the encounter
-        //          — the transcript is already durably persisted.
-        let _ = self.summarize_encounter_deidentify_persist(encounter_id)
-            .inspect_err(|e| tracing::warn!(error = %e, %encounter_id,
-            "summarization failed; transcript retained."
-        ));
+        // Local mode still owns the synchronous transcript and summary. Once a
+        // completed upload has queued server work, both are server concerns:
+        // publishing the mock here would race the worker's real transcript, and
+        // there is no real transcript in the device store to summarize yet.
+        if !server_owns_transcript {
+            let _ = self
+                .summarize_encounter_deidentify_persist(encounter_id)
+                .inspect_err(|e| {
+                    tracing::warn!(
+                        error = %e,
+                        %encounter_id,
+                        "summarization failed; transcript retained."
+                    )
+                });
+        }
 
         Ok(encounter_id)
+    }
+
+    /// The active patient/encounter pair that an upload intent must name.
+    pub fn active_encounter(&self) -> Option<(PatientId, EncounterId)> {
+        self.driver.active_encounter()
+    }
+
+    /// Transfer transcript authorship for the active encounter to the server.
+    ///
+    /// Called only after the completion endpoint acknowledges the chunk and
+    /// queues work. Keeping this marker in application orchestration makes every
+    /// way of stopping capture obey the same no-mock rule.
+    pub fn mark_encounter_server_stt(&mut self, encounter_id: EncounterId) -> AppResult<()> {
+        let (_, active_id) = self
+            .driver
+            .active_encounter()
+            .ok_or_else(|| AppError::Audio("no encounter in progress".to_string()))?;
+        if active_id != encounter_id {
+            return Err(AppError::Audio(
+                "cannot assign server transcription to an inactive encounter".to_string(),
+            ));
+        }
+        self.server_stt_encounters.insert(encounter_id);
+        Ok(())
     }
 
     /// Called by stop_encounter - preserves re-eval if network or claude api error
@@ -189,7 +221,8 @@ where
 
     pub fn stop_active_encounter_for_shutdown(&mut self) -> AppResult<Option<EncounterId>> {
         if self.driver.has_active_encounter() {
-            self.runtime.block_on(self.driver.stop_encounter()).map(Some)
+            self.stop_active_capture()
+                .map(|(encounter_id, _)| Some(encounter_id))
         } else {
             Ok(None)
         }
@@ -208,7 +241,7 @@ where
 
         // If an encounter is in progress (for the OLD patient), close it cleanly.
         if self.driver.has_active_encounter() {
-            self.runtime.block_on(self.driver.stop_encounter())?;
+            self.stop_active_capture()?;
         }
 
         // Switch context. We do NOT auto-start a new encounter - that's a separate clinician action.
@@ -537,6 +570,28 @@ where
         Ok(())
     }
 
+    /// Stop the driver through the path selected when completion was accepted.
+    ///
+    /// This is shared by the explicit stop command, patient switching, and
+    /// shutdown so none of those paths can accidentally restore a device mock
+    /// after the server has taken ownership.
+    fn stop_active_capture(&mut self) -> AppResult<(EncounterId, bool)> {
+        let (_, encounter_id) = self
+            .driver
+            .active_encounter()
+            .ok_or_else(|| AppError::Audio("no encounter in progress".to_string()))?;
+        let server_owns_transcript = self.server_stt_encounters.remove(&encounter_id);
+
+        let stopped_id = if server_owns_transcript {
+            self.runtime
+                .block_on(self.driver.stop_encounter_audio_only())?
+        } else {
+            self.runtime.block_on(self.driver.stop_encounter())?
+        };
+
+        Ok((stopped_id, server_owns_transcript))
+    }
+
 }
 
 fn sections_are_empty(sections: &NoteSections) -> bool {
@@ -771,5 +826,130 @@ mod tests {
         let local = manager.register_patient("ankle pain");
         assert_ne!(local, server_side_id);
         assert_eq!(manager.shift.patient_ids, vec![server_side_id, local]);
+    }
+
+    #[test]
+    fn server_owned_stop_publishes_only_audio_stopped_and_skips_summary() {
+        let conn = er_store::db::open_memory_db().unwrap();
+        let repo: Arc<dyn Repository> = Arc::new(er_store::repository::SqliteRepository::new(conn));
+        let bus = Arc::new(EventBus::new(32, Some(repo.clone())));
+        let store = crate::load::new_store();
+        let driver = crate::encounter_driver::EncounterDriver::new(
+            er_pipeline::audio::MockAudioCapture::new(),
+            er_pipeline::stt::MockTranscriber,
+            bus.clone(),
+            store.clone(),
+        );
+        let mut manager = ShiftManager::new(
+            Shift::new(),
+            HashMap::new(),
+            driver,
+            bus,
+            store,
+            repo.clone(),
+            er_ai::summarizer::MockSummarizer::new(),
+            Arc::new(tokio::runtime::Runtime::new().unwrap()),
+        );
+
+        let patient_id = manager.register_patient("chest pain");
+        manager.set_active_patient(patient_id).unwrap();
+        let encounter_id = manager.start_encounter(CaptureMode::Ambient).unwrap();
+        assert_eq!(manager.active_encounter(), Some((patient_id, encounter_id)));
+        manager.mark_encounter_server_stt(encounter_id).unwrap();
+        assert_eq!(manager.stop_encounter().unwrap(), encounter_id);
+
+        let events = manager
+            .runtime
+            .block_on(repo.get_events(patient_id))
+            .unwrap();
+        let event_types: Vec<_> = events
+            .iter()
+            .map(|stored| stored.event.event_type())
+            .collect();
+        assert_eq!(event_types, vec!["AudioStarted", "AudioStopped"]);
+
+        let note = manager.get_note(patient_id).unwrap();
+        assert!(note.encounters[0].transcript.is_none());
+        assert!(
+            note.note_sections.hpi.is_none(),
+            "server-side summarization is a future step"
+        );
+    }
+
+    #[test]
+    fn implicit_stops_preserve_server_transcript_ownership() {
+        let conn = er_store::db::open_memory_db().unwrap();
+        let repo: Arc<dyn Repository> = Arc::new(er_store::repository::SqliteRepository::new(conn));
+        let bus = Arc::new(EventBus::new(32, Some(repo.clone())));
+        let store = crate::load::new_store();
+        let driver = crate::encounter_driver::EncounterDriver::new(
+            er_pipeline::audio::MockAudioCapture::new(),
+            er_pipeline::stt::MockTranscriber,
+            bus.clone(),
+            store.clone(),
+        );
+        let mut manager = ShiftManager::new(
+            Shift::new(),
+            HashMap::new(),
+            driver,
+            bus,
+            store,
+            repo.clone(),
+            er_ai::summarizer::MockSummarizer::new(),
+            Arc::new(tokio::runtime::Runtime::new().unwrap()),
+        );
+
+        let switched_patient = manager.register_patient("chest pain");
+        let shutdown_patient = manager.register_patient("ankle pain");
+
+        manager.set_active_patient(switched_patient).unwrap();
+        let switched_encounter = manager.start_encounter(CaptureMode::Ambient).unwrap();
+        manager
+            .mark_encounter_server_stt(switched_encounter)
+            .unwrap();
+        manager.set_active_patient(shutdown_patient).unwrap();
+
+        let switched_events = manager
+            .runtime
+            .block_on(repo.get_events(switched_patient))
+            .unwrap();
+        assert_eq!(
+            switched_events
+                .iter()
+                .map(|stored| stored.event.event_type())
+                .collect::<Vec<_>>(),
+            vec!["AudioStarted", "AudioStopped"]
+        );
+        assert!(
+            manager.get_note(switched_patient).unwrap().encounters[0]
+                .transcript
+                .is_none()
+        );
+
+        let shutdown_encounter = manager.start_encounter(CaptureMode::Ambient).unwrap();
+        manager
+            .mark_encounter_server_stt(shutdown_encounter)
+            .unwrap();
+        assert_eq!(
+            manager.stop_active_encounter_for_shutdown().unwrap(),
+            Some(shutdown_encounter)
+        );
+
+        let shutdown_events = manager
+            .runtime
+            .block_on(repo.get_events(shutdown_patient))
+            .unwrap();
+        assert_eq!(
+            shutdown_events
+                .iter()
+                .map(|stored| stored.event.event_type())
+                .collect::<Vec<_>>(),
+            vec!["AudioStarted", "AudioStopped"]
+        );
+        assert!(
+            manager.get_note(shutdown_patient).unwrap().encounters[0]
+                .transcript
+                .is_none()
+        );
     }
 }

@@ -19,17 +19,21 @@
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use er_domain::NoteEvent;
+use er_api::client::{RemoteRepository, ServerApi};
+use er_domain::{CaptureMode, NoteEvent};
 use er_pipeline::speech_to_text::{AppSpeechToText, MockSpeechToText};
 use er_server::queue::{self, Job};
 use er_server::repository::{ChunkRow, NewChunk, PostgresRepository};
-use er_server::worker::{self, WorkerCtx};
+use er_server::{
+    routes,
+    worker::{self, WorkerCtx},
+};
 use er_store::repository::Repository;
 
 mod common;
 use common::{
-    AudioFixture, ORG_A, ensure_test_audio_infra, seed_org_and_clinician, seed_registered_patient,
-    tiny_wav,
+    AudioFixture, ORG_A, ensure_test_audio_infra, mint, seed_org_and_clinician,
+    seed_registered_patient, spawn_server, test_state_with_audio, tiny_wav,
 };
 
 /// A worker wired to this test's infrastructure, echoing whatever it is fed.
@@ -176,6 +180,33 @@ async fn queue_depth(audio: &AudioFixture) -> i64 {
         + read(QueueAttributeName::ApproximateNumberOfMessagesNotVisible)
 }
 
+/// Read one poison job after the main queue's redrive policy moves it.
+async fn receive_dlq_job(audio: &AudioFixture) -> Option<serde_json::Value> {
+    let received = audio
+        .sqs
+        .receive_message()
+        .queue_url(&audio.config.stt_dlq_url)
+        .max_number_of_messages(1)
+        .wait_time_seconds(1)
+        .send()
+        .await
+        .expect("read the test DLQ");
+    let message = received.messages().first()?;
+    let body = serde_json::from_str(message.body().unwrap_or_default())
+        .expect("the dead-lettered job remains valid JSON");
+    if let Some(receipt) = message.receipt_handle() {
+        audio
+            .sqs
+            .delete_message()
+            .queue_url(&audio.config.stt_dlq_url)
+            .receipt_handle(receipt)
+            .send()
+            .await
+            .expect("delete the observed DLQ job");
+    }
+    Some(body)
+}
+
 /// Make failed messages reappear immediately so a test can walk the three-strike
 /// path in milliseconds instead of waiting out three 300 s visibility timeouts.
 ///
@@ -200,7 +231,128 @@ async fn make_retries_immediate(audio: &AudioFixture) {
 async fn seed(pool: &PgPool) -> (Uuid, Uuid) {
     seed_org_and_clinician(pool, ORG_A, "worker-sub").await;
     let patient_id = seed_registered_patient(pool, ORG_A).await;
-    (patient_id, Uuid::now_v7())
+    let encounter_id = Uuid::now_v7();
+    PostgresRepository::for_org(pool.clone(), ORG_A)
+        .append_event(
+            patient_id,
+            Uuid::now_v7(),
+            NoteEvent::audio_started(patient_id, encounter_id, CaptureMode::Ambient),
+        )
+        .await
+        .expect("seed AudioStarted before a worker-authored transcript");
+    (patient_id, encounter_id)
+}
+
+/// The literal Step 6 gate through the same client methods the CLI uses:
+/// authenticated intent, direct presigned PUT, completion, queue worker, cursor
+/// replay, and a transcript on the encounter.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_wav_uploaded_through_the_client_lands_on_the_replayed_note(pool: PgPool) {
+    let audio = ensure_test_audio_infra().await;
+    seed_org_and_clinician(&pool, ORG_A, "worker-e2e").await;
+    let token = mint("worker-e2e");
+    let base = spawn_server(routes::router(
+        test_state_with_audio(pool.clone(), &audio).await,
+    ))
+    .await;
+    let api = ServerApi::new(&base, &token);
+    let remote = RemoteRepository::new(&base, &token);
+
+    let patient_id = Uuid::now_v7();
+    api.register_patient(&er_api::RegisterPatientRequest {
+        patient_id,
+        chief_complaint: "synthetic chest pain".to_string(),
+        display_label: Some("Test Room".to_string()),
+    })
+    .await
+    .expect("register through ServerApi");
+
+    let encounter_id = Uuid::now_v7();
+    remote
+        .append_event(
+            patient_id,
+            Uuid::now_v7(),
+            NoteEvent::audio_started(patient_id, encounter_id, CaptureMode::Ambient),
+        )
+        .await
+        .expect("publish AudioStarted through the remote repository");
+
+    let chunk_id = Uuid::now_v7();
+    let intent = api
+        .request_audio_upload(
+            patient_id,
+            encounter_id,
+            &er_api::AudioUploadRequest {
+                chunk_id,
+                chunk_index: 0,
+                is_final: true,
+                content_type: "audio/wav".to_string(),
+            },
+        )
+        .await
+        .expect("request an upload intent through ServerApi");
+    api.put_presigned(
+        &intent.upload_url,
+        tiny_wav(b"synthetic substernal pressure"),
+        "audio/wav",
+    )
+    .await
+    .expect("PUT through the presigned URL");
+    let completed = api
+        .complete_audio(chunk_id)
+        .await
+        .expect("complete and enqueue through ServerApi");
+    assert_eq!(completed.status, er_api::chunk_status::UPLOADED);
+
+    // A device may stop before the async worker gets the message. The worker's
+    // TranscriptReady must follow AudioStarted in the stream; it does not depend
+    // on whether AudioStopped has already arrived.
+    remote
+        .append_event(
+            patient_id,
+            Uuid::now_v7(),
+            NoteEvent::audio_stopped(patient_id, encounter_id),
+        )
+        .await
+        .expect("publish AudioStopped through the remote repository");
+
+    let ctx = echo_worker(pool.clone(), &audio);
+    assert_eq!(drain(&ctx).await, 1);
+    let finished = api.audio_chunk(chunk_id).await.expect("read final status");
+    assert_eq!(finished.status, er_api::chunk_status::DONE);
+    assert_eq!(finished.duration_ms, Some(30_000));
+
+    let note = er_app::load::load_patient_note(&remote, patient_id)
+        .await
+        .expect("replay through RemoteRepository")
+        .expect("the event stream creates a note");
+    assert_eq!(note.phase, er_domain::NotePhase::Idle);
+    let encounter = note
+        .encounters
+        .iter()
+        .find(|encounter| encounter.id == encounter_id)
+        .expect("the encounter survives replay");
+    assert_eq!(
+        encounter.transcript.as_deref(),
+        Some("synthetic substernal pressure")
+    );
+
+    let events = remote.get_events(patient_id).await.expect("read event ids");
+    let transcript = events
+        .iter()
+        .find(|stored| matches!(stored.event, NoteEvent::TranscriptReady { .. }))
+        .expect("one worker-authored transcript event");
+    assert_eq!(
+        transcript.event_id,
+        worker::transcript_event_id(encounter_id)
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|stored| matches!(stored.event, NoteEvent::TranscriptReady { .. }))
+            .count(),
+        1
+    );
 }
 
 /// The S7 gate in one test: three chunks uploaded **out of order**, one job each,
@@ -455,6 +607,38 @@ async fn a_chunk_whose_audio_is_missing_becomes_a_visible_gap(pool: PgPool) {
     assert_eq!(
         events[0].1,
         "good audio.\n\n[segment 1 audio unavailable — transcription failed]"
+    );
+
+    let repo = PostgresRepository::for_org(pool.clone(), ORG_A);
+    let note = er_app::load::load_patient_note(&repo, patient_id)
+        .await
+        .expect("replay the salvaged note")
+        .expect("AudioStarted and TranscriptReady produce a note");
+    assert_eq!(
+        note.encounters[0].transcript.as_deref(),
+        Some("good audio.\n\n[segment 1 audio unavailable — transcription failed]"),
+        "the usable segment and visible gap survive full replay"
+    );
+
+    // The fourth receive attempt is where SQS applies maxReceiveCount=3 and
+    // moves the still-undeleted message instead of handing it to the worker.
+    assert_eq!(
+        worker::poll_once(&ctx)
+            .await
+            .expect("trigger queue redrive"),
+        0,
+        "the poison message must leave the main queue after three deliveries"
+    );
+    let dead_letter = receive_dlq_job(&audio)
+        .await
+        .expect("the poison job must be retained in the dead-letter queue");
+    assert_eq!(
+        dead_letter,
+        serde_json::json!({
+            "kind": "TranscribeChunk",
+            "chunk_id": missing,
+        }),
+        "the DLQ retains the opaque job for operator diagnosis"
     );
 }
 
