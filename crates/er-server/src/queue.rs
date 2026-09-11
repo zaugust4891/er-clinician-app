@@ -28,6 +28,9 @@ pub enum Job {
     /// Fetch one uploaded chunk from S3, transcribe it, and — when the whole
     /// encounter is terminal — assemble and publish `TranscriptReady` (S7).
     TranscribeChunk { chunk_id: Uuid },
+    /// Generate and persist the MDM for a patient. The organization is derived
+    /// from the authenticated receipt row, never trusted from the queue.
+    GenerateMdm { patient_id: Uuid, job_id: Uuid },
 }
 
 /// Put one job on a queue.
@@ -83,8 +86,24 @@ mod tests {
     /// A worker must refuse a job kind it does not understand instead of
     /// guessing — the reason the enum is tagged rather than untagged.
     #[test]
+    fn generate_mdm_is_tagged_and_carries_only_opaque_ids() {
+        let patient_id = Uuid::parse_str("0198f1c0-0000-7000-8000-000000000001").unwrap();
+        let job_id = Uuid::parse_str("0198f1c0-0000-7000-8000-000000000002").unwrap();
+        let encoded = serde_json::to_value(Job::GenerateMdm { patient_id, job_id }).unwrap();
+        assert_eq!(
+            encoded,
+            serde_json::json!({
+                "kind": "GenerateMdm",
+                "patient_id": patient_id,
+                "job_id": job_id,
+            })
+        );
+        assert_eq!(encoded.as_object().unwrap().len(), 3);
+    }
+
+    #[test]
     fn an_unknown_job_kind_fails_to_decode() {
-        let future_job = serde_json::json!({ "kind": "GenerateMdm", "patient_id": "x" });
+        let future_job = serde_json::json!({ "kind": "FutureJob", "job_id": "x" });
         assert!(serde_json::from_value::<Job>(future_job).is_err());
     }
 }

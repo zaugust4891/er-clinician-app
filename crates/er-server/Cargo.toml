@@ -29,6 +29,7 @@ uuid.workspace = true
 sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "chrono", "json", "macros", "migrate"] }
 er-store = { version = "0.1.0", path = "../er-store" }
 er-domain = { version = "0.1.0", path = "../er-domain" }
+er-ai = { workspace = true, features = ["bedrock"] }
 
 # S7: the transcription worker's STT seam. This is the ONLY line in the workspace
 # that turns the `cloud-stt` fence on — every other consumer of er-pipeline
@@ -39,6 +40,7 @@ er-pipeline = { workspace = true, features = ["cloud-stt"] }
 
 # er-server/Cargo.toml [dependencies]:
 aws-config.workspace = true
+aws-sdk-bedrockruntime.workspace = true
 aws-sdk-s3.workspace = true
 aws-sdk-sqs.workspace = true
 
@@ -57,4 +59,3 @@ path = "src/bin/worker.rs"
 # build turns on `client`; the server binary still links DTOs only (§C9).
 [dev-dependencies]
 er-api = { workspace = true, features = ["client"] }
-

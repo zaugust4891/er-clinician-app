@@ -261,6 +261,42 @@ pub struct ChunkView {
     pub error: Option<String>,
 }
 
+/// Request server-owned MDM generation. The client stamps the id so a timed-out
+/// POST can be retried without creating or billing a second job.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MdmRequest {
+    pub job_id: Uuid,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MdmAccepted {
+    pub job_id: Uuid,
+    pub status: String,
+}
+
+/// PHI-free status projection for asynchronous work. Generated clinical content
+/// is delivered only through the event stream.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JobView {
+    pub job_id: Uuid,
+    pub kind: String,
+    pub status: String,
+    pub error: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+pub mod job_status {
+    pub const QUEUED: &str = "queued";
+    pub const RUNNING: &str = "running";
+    pub const DONE: &str = "done";
+    pub const FAILED: &str = "failed";
+
+    pub fn is_terminal(status: &str) -> bool {
+        status == DONE || status == FAILED
+    }
+}
+
 #[cfg(test)]
 mod audio_wire_tests {
     use super::*;
@@ -347,5 +383,30 @@ mod audio_wire_tests {
         // A status from a newer server: unknown means "still moving", never a panic
         // and never an accidental "finished" that would cut assembly short.
         assert!(!chunk_status::is_terminal("some_future_status"));
+    }
+}
+
+#[cfg(test)]
+mod job_wire_tests {
+    use super::*;
+
+    #[test]
+    fn job_status_treats_unknown_values_as_non_terminal() {
+        assert!(job_status::is_terminal(job_status::DONE));
+        assert!(job_status::is_terminal(job_status::FAILED));
+        assert!(!job_status::is_terminal(job_status::QUEUED));
+        assert!(!job_status::is_terminal(job_status::RUNNING));
+        assert!(!job_status::is_terminal("future_status"));
+    }
+
+    #[test]
+    fn mdm_request_contains_only_the_client_stamped_id() {
+        let job_id = Uuid::parse_str("0198f1c0-0000-7000-8000-000000000001").unwrap();
+        assert_eq!(
+            serde_json::to_value(MdmRequest { job_id }).unwrap(),
+            serde_json::json!({
+                "job_id": "0198f1c0-0000-7000-8000-000000000001"
+            })
+        );
     }
 }

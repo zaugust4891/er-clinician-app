@@ -4,6 +4,7 @@ pub mod error;
 pub mod event_bus;
 pub mod export;
 pub mod load;
+pub mod objective_data;
 pub mod shift_manager;
 pub mod shift_snapshot;
 

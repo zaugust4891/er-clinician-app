@@ -220,6 +220,7 @@ fn main() -> AppResult<()> {
         }
     }
 
+    let generation_is_remote = server.is_some();
     let mut manager = ShiftManager::new(
         shift,
         patients,
@@ -229,6 +230,7 @@ fn main() -> AppResult<()> {
         repo.clone(),
         summarizer,
         threaded_rt.clone(),
+        generation_is_remote,
     );
     let patient_record_count = manager.list_patients().len();
 

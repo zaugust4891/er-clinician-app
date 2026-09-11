@@ -165,6 +165,31 @@ impl ServerApi {
         decode(resp).await
     }
 
+    /// Create or retrieve the idempotent server-side MDM job.
+    pub async fn request_mdm(
+        &self,
+        patient_id: Uuid,
+        job_id: Uuid,
+    ) -> StoreResult<crate::MdmAccepted> {
+        let resp = self
+            .send(
+                self.http
+                    .post(self.url(&format!("/v1/patients/{patient_id}/mdm")))
+                    .json(&crate::MdmRequest { job_id }),
+            )
+            .await?;
+        decode(resp).await
+    }
+
+    /// Observe a job. The body contains status metadata only; note prose arrives
+    /// through the normal event replay path after completion.
+    pub async fn job(&self, job_id: Uuid) -> StoreResult<crate::JobView> {
+        let resp = self
+            .send(self.http.get(self.url(&format!("/v1/jobs/{job_id}"))))
+            .await?;
+        decode(resp).await
+    }
+
     // -----------------------------------------------------------------------
     // Audio upload + transcription observation (Step 6 S8)
     // -----------------------------------------------------------------------

@@ -447,6 +447,147 @@ fn observation_message(outcome: &ObservationOutcome) -> String {
     }
 }
 
+trait JobStatusSource {
+    fn job(
+        &self,
+        job_id: Uuid,
+    ) -> impl Future<Output = StoreResult<er_api::JobView>> + Send;
+}
+
+impl JobStatusSource for ServerApi {
+    fn job(
+        &self,
+        job_id: Uuid,
+    ) -> impl Future<Output = StoreResult<er_api::JobView>> + Send {
+        ServerApi::job(self, job_id)
+    }
+}
+
+fn terminal_job_outcome(status: &str) -> Option<ObservationOutcome> {
+    if !er_api::job_status::is_terminal(status) {
+        return None;
+    }
+    Some(if status == er_api::job_status::DONE {
+        ObservationOutcome::Done
+    } else {
+        ObservationOutcome::Failed
+    })
+}
+
+async fn observe_mdm_job<C, F>(
+    source: &C,
+    job_id: Uuid,
+    initial: er_api::MdmAccepted,
+    policy: ObservationPolicy,
+    mut status_changed: F,
+) -> ObservationOutcome
+where
+    C: JobStatusSource,
+    F: FnMut(&str),
+{
+    let deadline = tokio::time::Instant::now() + policy.budget;
+    let mut last_status = initial.status;
+    status_changed(&last_status);
+
+    if initial.job_id != job_id {
+        return ObservationOutcome::ObservationUnavailable {
+            reason: ObservationUnavailableReason::InvalidResponse,
+            last_status,
+        };
+    }
+    if let Some(outcome) = terminal_job_outcome(&last_status) {
+        return outcome;
+    }
+
+    loop {
+        let now = tokio::time::Instant::now();
+        if now >= deadline {
+            return ObservationOutcome::PendingAtDeadline { last_status };
+        }
+        tokio::time::sleep_until(std::cmp::min(now + policy.poll_delay, deadline)).await;
+        if tokio::time::Instant::now() >= deadline {
+            return ObservationOutcome::PendingAtDeadline { last_status };
+        }
+
+        let request_deadline = std::cmp::min(
+            tokio::time::Instant::now() + policy.request_timeout,
+            deadline,
+        );
+        let observed = tokio::time::timeout_at(request_deadline, source.job(job_id)).await;
+        let view = match observed {
+            Ok(Ok(view)) => view,
+            Ok(Err(error)) => {
+                return ObservationOutcome::ObservationUnavailable {
+                    reason: unavailable_reason(&error),
+                    last_status,
+                };
+            }
+            Err(_) if tokio::time::Instant::now() >= deadline => {
+                return ObservationOutcome::PendingAtDeadline { last_status };
+            }
+            Err(_) => {
+                return ObservationOutcome::ObservationUnavailable {
+                    reason: ObservationUnavailableReason::RequestTimedOut,
+                    last_status,
+                };
+            }
+        };
+
+        if view.job_id != job_id {
+            return ObservationOutcome::ObservationUnavailable {
+                reason: ObservationUnavailableReason::InvalidResponse,
+                last_status,
+            };
+        }
+        if view.status != last_status {
+            last_status = view.status;
+            status_changed(&last_status);
+        }
+        if let Some(outcome) = terminal_job_outcome(&last_status) {
+            return outcome;
+        }
+    }
+}
+
+fn mdm_observation_message(outcome: &ObservationOutcome) -> String {
+    match outcome {
+        ObservationOutcome::Done => {
+            "MDM generation is done; the note was reloaded from the event stream.".to_string()
+        }
+        ObservationOutcome::Failed => {
+            "MDM generation failed on the server; the job is terminal.".to_string()
+        }
+        ObservationOutcome::PendingAtDeadline { last_status } => format!(
+            "MDM observation ended after 30 seconds at status '{last_status}'; generation \
+             continues independently. Run 'reload' later."
+        ),
+        ObservationOutcome::ObservationUnavailable {
+            reason,
+            last_status,
+        } => {
+            let category = match reason {
+                ObservationUnavailableReason::Authentication => "authentication was rejected",
+                ObservationUnavailableReason::NotFound => "job status is unavailable",
+                ObservationUnavailableReason::TemporarilyUnavailable => {
+                    "status could not be checked; the server may still be processing"
+                }
+                ObservationUnavailableReason::RequestTimedOut => {
+                    "the status request timed out; the server may still be processing"
+                }
+                ObservationUnavailableReason::InvalidResponse => {
+                    "the server returned a mismatched job id"
+                }
+                ObservationUnavailableReason::Rejected(status) => {
+                    return format!(
+                        "MDM observation stopped after HTTP {status} at status '{last_status}'."
+                    );
+                }
+            };
+            format!("MDM observation stopped: {category} (last status '{last_status}').")
+        }
+    }
+}
+
 fn content_type_for_audio_path(path: &Path) -> AppResult<&'static str> {
     let extension = path
         .extension()
@@ -590,6 +731,11 @@ where
         Command::Stop => {
             let encounter_id = manager.stop_encounter()?;
             println!("Stopped encounter {}.", short_id(encounter_id));
+            if remote.is_some() {
+                println!(
+                    "Transcribing and summarizing on the server — run 'reload' in a few seconds."
+                );
+            }
             Ok(true)
         }
 
@@ -736,7 +882,34 @@ where
         }
 
         Command::Mdm => {
-            manager.trigger_mdm()?;
+            if let Some(ctx) = remote {
+                let patient_id = manager
+                    .active_patient_id()
+                    .ok_or(NoActivePatient("No active patient found".into()))?;
+                let job_id = Uuid::now_v7();
+                let accepted = ctx
+                    .runtime
+                    .block_on(ctx.api.request_mdm(patient_id, job_id))
+                    .map_err(|error| safe_request_error("Requesting MDM generation", &error))?;
+                println!("MDM queued ({}). Generating…", short_id(accepted.job_id));
+
+                let outcome = ctx.runtime.block_on(observe_mdm_job(
+                    ctx.api,
+                    job_id,
+                    accepted,
+                    ObservationPolicy::CLI,
+                    |status| println!("MDM job {} status: {status}", short_id(job_id)),
+                ));
+                if outcome == ObservationOutcome::Done {
+                    manager.reload_active_patient()?;
+                }
+                println!("{}", mdm_observation_message(&outcome));
+                if outcome != ObservationOutcome::Done {
+                    return Ok(true);
+                }
+            } else {
+                manager.trigger_mdm()?;
+            }
 
             println!("MDM generated and note moved to Finalizing.");
             println!("── MDM ──────────────────────────────────────");
@@ -911,6 +1084,7 @@ mod tests {
             repo,
             MockSummarizer::new(),
             runtime,
+            false,
         )
     }
 
@@ -992,6 +1166,41 @@ mod tests {
                     FakeReply::WrongChunk => Ok(chunk_view(Uuid::now_v7(), "transcribing")),
                     FakeReply::Hang => std::future::pending().await,
                 }
+            }
+        }
+    }
+
+    struct FakeJobStatusSource {
+        statuses: Mutex<VecDeque<&'static str>>,
+        calls: AtomicUsize,
+    }
+
+    impl FakeJobStatusSource {
+        fn new(statuses: impl IntoIterator<Item = &'static str>) -> Self {
+            Self {
+                statuses: Mutex::new(statuses.into_iter().collect()),
+                calls: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    impl JobStatusSource for FakeJobStatusSource {
+        #[allow(clippy::manual_async_fn)]
+        fn job(
+            &self,
+            job_id: Uuid,
+        ) -> impl Future<Output = StoreResult<er_api::JobView>> + Send {
+            async move {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                let status = self.statuses.lock().unwrap().pop_front().unwrap();
+                Ok(er_api::JobView {
+                    job_id,
+                    kind: "mdm".to_string(),
+                    status: status.to_string(),
+                    error: None,
+                    created_at: Utc::now(),
+                    updated_at: Utc::now(),
+                })
             }
         }
     }
@@ -1199,6 +1408,29 @@ mod tests {
             assert_eq!(source.calls.load(Ordering::SeqCst), 0);
             assert_eq!(printed, vec![status]);
         }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn mdm_observation_polls_transitions_then_stops_on_done() {
+        let job_id = Uuid::now_v7();
+        let source =
+            FakeJobStatusSource::new([er_api::job_status::RUNNING, er_api::job_status::DONE]);
+        let mut printed = Vec::new();
+        let outcome = observe_mdm_job(
+            &source,
+            job_id,
+            er_api::MdmAccepted {
+                job_id,
+                status: er_api::job_status::QUEUED.to_string(),
+            },
+            policy(30, 2, 5),
+            |status| printed.push(status.to_string()),
+        )
+        .await;
+
+        assert_eq!(outcome, ObservationOutcome::Done);
+        assert_eq!(source.calls.load(Ordering::SeqCst), 2);
+        assert_eq!(printed, vec!["queued", "running", "done"]);
     }
 
     #[tokio::test(start_paused = true)]

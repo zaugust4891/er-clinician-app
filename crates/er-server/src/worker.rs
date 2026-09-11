@@ -34,12 +34,15 @@ use aws_sdk_sqs::types::{Message, MessageSystemAttributeName};
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
-use er_domain::NoteEvent;
+use er_ai::deidentify::Deidentifier;
+use er_ai::error::AiError;
+use er_ai::summarizer::{AppSummarizer, Summarizer};
+use er_domain::{NoteEvent, NotePhase};
 use er_pipeline::speech_to_text::{AppSpeechToText, SpeechToText};
 use er_store::repository::Repository;
 
 use crate::queue::Job;
-use crate::repository::{ChunkRow, PostgresRepository};
+use crate::repository::{ChunkRow, NewUsage, PostgresRepository};
 
 /// The namespace for [`transcript_event_id`].
 ///
@@ -81,6 +84,7 @@ pub struct WorkerCtx {
     pub bucket: String,
     pub queue_url: String,
     pub stt: AppSpeechToText,
+    pub summarizer: AppSummarizer,
     /// SQS long-poll duration. The binary sets 20 s — one held connection instead
     /// of a busy loop of empty receives, which is both cheaper and lower latency
     /// (§C2). Tests set 0–1 s so a suite is not paced by a network wait.
@@ -172,6 +176,28 @@ async fn handle_message(ctx: &WorkerCtx, message: &Message) {
                 Ok(()) => {
                     delete_message(ctx, message, chunk_id).await;
                 }
+                Err(error) if non_retryable_ai_error(&error).is_some() => {
+                    tracing::error!(
+                        %chunk_id,
+                        delivery,
+                        error_kind = non_retryable_ai_error(&error).unwrap_or("unknown"),
+                        "encounter summarization failed permanently; transcript retained"
+                    );
+                    delete_message(ctx, message, chunk_id).await;
+                }
+                Err(error) if delivery >= MAX_DELIVERIES && retryable_ai_error(&error) => {
+                    // The audio row is already terminal and the transcript is
+                    // durable. Preserve it as done and let only the summary
+                    // message move to the DLQ; routing this through
+                    // record_failure would re-enter assembly and pay for a
+                    // second provider call on the final delivery.
+                    tracing::error!(
+                        %chunk_id,
+                        delivery,
+                        error = %format!("{error:#}"),
+                        "encounter summarization exhausted retries; transcript retained"
+                    );
+                }
                 Err(error) if delivery >= MAX_DELIVERIES => {
                     // Last delivery. Two obligations before letting go, in this
                     // order: record why (the row is the autopsy), then salvage
@@ -206,6 +232,37 @@ async fn handle_message(ctx: &WorkerCtx, message: &Message) {
                 }
             }
         }
+        Job::GenerateMdm { patient_id, job_id } => {
+            match handle_generate_mdm(ctx, patient_id, job_id).await {
+                Ok(()) => delete_message(ctx, message, job_id).await,
+                Err(error) if delivery >= MAX_DELIVERIES => {
+                    tracing::error!(
+                        %job_id,
+                        %patient_id,
+                        delivery,
+                        error = %format!("{error:#}"),
+                        "MDM generation failed on its final delivery"
+                    );
+                    if let Err(mark_error) = record_mdm_terminal_failure(ctx, job_id).await {
+                        tracing::error!(
+                            %job_id,
+                            error = %format!("{mark_error:#}"),
+                            "could not record terminal MDM job failure"
+                        );
+                    }
+                    // Leave the message for the queue's redrive policy and DLQ.
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        %job_id,
+                        %patient_id,
+                        delivery,
+                        error = %format!("{error:#}"),
+                        "MDM generation failed transiently; leaving for redelivery"
+                    );
+                }
+            }
+        }
     }
 }
 
@@ -231,7 +288,7 @@ pub async fn handle_transcribe_chunk(ctx: &WorkerCtx, chunk_id: Uuid) -> anyhow:
             status = %row.status,
             "duplicate delivery for an already-terminal chunk; nothing to do"
         );
-        return Ok(());
+        return try_assemble(ctx, &row).await;
     }
 
     let repo = ctx.repo_for_chunk(&row);
@@ -352,7 +409,7 @@ pub async fn try_assemble(ctx: &WorkerCtx, row: &ChunkRow) -> anyhow::Result<()>
         .append_event(
             row.patient_id,
             event_id,
-            NoteEvent::transcript_ready(row.patient_id, row.encounter_id, text, occurred),
+            NoteEvent::transcript_ready(row.patient_id, row.encounter_id, text.clone(), occurred),
         )
         .await
         .context("append the TranscriptReady event")?;
@@ -366,12 +423,297 @@ pub async fn try_assemble(ctx: &WorkerCtx, row: &ChunkRow) -> anyhow::Result<()>
         "encounter transcript assembled and published"
     );
 
-    // ── Step 7 socket ────────────────────────────────────────────────────────
-    // Server-side summarization bolts on exactly here: de-identify `text` and
-    // enqueue summarize → EncounterSummarized (Haiku), per phase4.md §5. Step 6
-    // ends at TranscriptReady on purpose — that event is the handoff artifact.
+    summarize_encounter_for(ctx, row, &text).await
+}
 
+/// Produce one summary for an assembled encounter.
+///
+/// The transaction-scoped advisory lock covers the existence check, provider
+/// call, and event append. Duplicate chunk deliveries therefore wait and then
+/// observe the first summary instead of paying for a competing call.
+async fn summarize_encounter_for(
+    ctx: &WorkerCtx,
+    row: &ChunkRow,
+    transcript: &str,
+) -> anyhow::Result<()> {
+    if transcript.trim().is_empty() {
+        return Ok(());
+    }
+
+    let repo = ctx.repo_for_chunk(row);
+    let lock_key = format!("summary:{}", row.encounter_id);
+    let mut lock = ctx.pool.begin().await.context("begin summary lock")?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(&lock_key)
+        .execute(&mut *lock)
+        .await
+        .context("acquire summary lock")?;
+
+    let events = repo
+        .get_events(row.patient_id)
+        .await
+        .context("check for an existing encounter summary")?;
+    if events.iter().any(|stored| {
+        matches!(
+            &stored.event,
+            NoteEvent::EncounterSummarized { encounter_id, .. }
+                if *encounter_id == row.encounter_id
+        )
+    }) {
+        lock.commit().await.context("release summary lock")?;
+        return Ok(());
+    }
+
+    let note = er_app::load_patient_note(&repo, row.patient_id)
+        .await
+        .context("replay note before summarization")?
+        .ok_or_else(|| anyhow!("patient note has no events"))?;
+    let encounter_number = note
+        .encounters
+        .iter()
+        .position(|encounter| encounter.id == row.encounter_id)
+        .map(|index| index as u32 + 1)
+        .ok_or_else(|| anyhow!("encounter is absent from the replayed note"))?;
+    let safe_transcript = Deidentifier::scrub(transcript);
+
+    let generated = ctx
+        .summarizer
+        .summarize_encounter(&safe_transcript, &note.note_sections, encounter_number)
+        .await
+        .context("summarize the assembled encounter")?;
+
+    repo.append_event(
+        row.patient_id,
+        Uuid::now_v7(),
+        NoteEvent::encounter_summarized(
+            row.patient_id,
+            row.encounter_id,
+            generated.value,
+            vec![row.encounter_id],
+        ),
+    )
+    .await
+    .context("append EncounterSummarized")?;
+
+    if let Err(error) = repo
+        .record_usage(NewUsage {
+            clinician_id: None,
+            patient_id: Some(row.patient_id),
+            job_id: None,
+            kind: "summarize",
+            model: &generated.model,
+            usage: &generated.usage,
+        })
+        .await
+    {
+        tracing::error!(
+            encounter_id = %row.encounter_id,
+            error = %error,
+            "summary succeeded but its usage row could not be recorded"
+        );
+    }
+
+    lock.commit().await.context("release summary lock")?;
     Ok(())
+}
+
+/// Generate an MDM from the durable note, preserving Phase 3's content-before-
+/// state ordering. The patient lock also turns duplicate SQS deliveries into a
+/// terminal-status read instead of a second provider call.
+pub async fn handle_generate_mdm(
+    ctx: &WorkerCtx,
+    patient_id: Uuid,
+    job_id: Uuid,
+) -> anyhow::Result<()> {
+    let discovered = PostgresRepository::job_row_any_org(&ctx.pool, job_id)
+        .await
+        .context("look up the MDM job")?
+        .ok_or_else(|| anyhow!("no jobs row for job {job_id}"))?;
+    if discovered.patient_id != patient_id || discovered.kind != "mdm" {
+        return Err(anyhow!("queue identifiers do not match the MDM receipt"));
+    }
+    if er_api::job_status::is_terminal(&discovered.status) {
+        return Ok(());
+    }
+
+    let repo = PostgresRepository::for_org(ctx.pool.clone(), discovered.org_id);
+    let lock_key = format!("mdm:{patient_id}");
+    let mut lock = ctx.pool.begin().await.context("begin MDM lock")?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(&lock_key)
+        .execute(&mut *lock)
+        .await
+        .context("acquire MDM lock")?;
+
+    let current = repo
+        .job_row(job_id)
+        .await
+        .context("re-read the MDM job")?
+        .ok_or_else(|| anyhow!("MDM job disappeared"))?;
+    if er_api::job_status::is_terminal(&current.status) {
+        lock.commit().await.context("release MDM lock")?;
+        return Ok(());
+    }
+    repo.mark_job_running(job_id)
+        .await
+        .context("mark MDM job running")?;
+
+    let note = match er_app::load_patient_note(&repo, patient_id)
+        .await
+        .context("replay note for MDM")?
+    {
+        Some(note) => note,
+        None => {
+            repo.mark_job_failed(job_id, "note_not_found").await?;
+            lock.commit().await?;
+            return Ok(());
+        }
+    };
+
+    // Recover the two content-before-state crash windows without regenerating.
+    if note
+        .note_sections
+        .mdm
+        .as_deref()
+        .is_some_and(|mdm| !mdm.trim().is_empty())
+    {
+        if note.phase == NotePhase::Idle {
+            repo.append_event(
+                patient_id,
+                Uuid::now_v7(),
+                NoteEvent::trigger_mdm(patient_id),
+            )
+            .await
+            .context("complete recovered MDM phase transition")?;
+        }
+        if matches!(note.phase, NotePhase::Idle | NotePhase::Finalizing) {
+            repo.mark_job_done(job_id).await?;
+            lock.commit().await?;
+            return Ok(());
+        }
+    }
+
+    if note.phase != NotePhase::Idle {
+        repo.mark_job_failed(job_id, "note_not_idle").await?;
+        lock.commit().await?;
+        return Ok(());
+    }
+
+    let objective = er_app::objective_data::assemble_objective_data(&note);
+    let has_hpi = note
+        .note_sections
+        .hpi
+        .as_deref()
+        .is_some_and(|hpi| !hpi.trim().is_empty());
+    if !has_hpi && objective.trim().is_empty() && note.disposition.is_none() {
+        repo.mark_job_failed(job_id, "nothing_to_generate_from")
+            .await?;
+        lock.commit().await?;
+        return Ok(());
+    }
+
+    let disposition = note
+        .disposition
+        .as_ref()
+        .map(er_app::conversions::disposition::format_disposition_for_mdm)
+        .unwrap_or_else(|| "Disposition not yet determined".to_string());
+    let source_ids = note
+        .encounters
+        .iter()
+        .map(|encounter| encounter.id)
+        .collect::<Vec<_>>();
+
+    let generated = match ctx
+        .summarizer
+        .generate_mdm(
+            &note.note_sections,
+            &Deidentifier::scrub(&objective),
+            &Deidentifier::scrub(&disposition),
+        )
+        .await
+    {
+        Ok(generated) => generated,
+        Err(error) if !error.is_retryable() => {
+            repo.mark_job_failed(job_id, permanent_ai_code(&error))
+                .await?;
+            lock.commit().await?;
+            return Ok(());
+        }
+        Err(error) => return Err(error).context("generate MDM"),
+    };
+
+    // Clinical content first, state transition second. A crash between these
+    // writes is repaired by the recovery branch above.
+    repo.append_event(
+        patient_id,
+        Uuid::now_v7(),
+        NoteEvent::mdm_generated(patient_id, generated.value, source_ids),
+    )
+    .await
+    .context("append MdmGenerated")?;
+    repo.append_event(
+        patient_id,
+        Uuid::now_v7(),
+        NoteEvent::trigger_mdm(patient_id),
+    )
+    .await
+    .context("append TriggerMDM")?;
+
+    if let Err(error) = repo
+        .record_usage(NewUsage {
+            clinician_id: Some(discovered.clinician_id),
+            patient_id: Some(patient_id),
+            job_id: Some(job_id),
+            kind: "mdm",
+            model: &generated.model,
+            usage: &generated.usage,
+        })
+        .await
+    {
+        tracing::error!(
+            %job_id,
+            error = %error,
+            "MDM succeeded but its usage row could not be recorded"
+        );
+    }
+    repo.mark_job_done(job_id)
+        .await
+        .context("mark MDM job done")?;
+    lock.commit().await.context("release MDM lock")?;
+    Ok(())
+}
+
+async fn record_mdm_terminal_failure(ctx: &WorkerCtx, job_id: Uuid) -> anyhow::Result<()> {
+    let row = PostgresRepository::job_row_any_org(&ctx.pool, job_id)
+        .await?
+        .ok_or_else(|| anyhow!("no jobs row for job {job_id}"))?;
+    let repo = PostgresRepository::for_org(ctx.pool.clone(), row.org_id);
+    repo.mark_job_failed(job_id, "generation_failed_after_retries")
+        .await?;
+    Ok(())
+}
+
+fn permanent_ai_code(error: &AiError) -> &'static str {
+    match error {
+        AiError::Refused { .. } => "provider_refused",
+        AiError::Summarization(_) => "invalid_model_output",
+        _ => "generation_failed",
+    }
+}
+
+fn non_retryable_ai_error(error: &anyhow::Error) -> Option<&'static str> {
+    error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<AiError>())
+        .filter(|error| !error.is_retryable())
+        .map(permanent_ai_code)
+}
+
+fn retryable_ai_error(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<AiError>())
+        .is_some_and(AiError::is_retryable)
 }
 
 /// The index of the chunk the device marked final, if one has arrived.
@@ -753,5 +1095,21 @@ mod tests {
         assert!(capped.ends_with('…'));
         assert!(capped.len() <= 500 + '…'.len_utf8());
         assert_eq!(truncate_error("short"), "short");
+    }
+
+    #[test]
+    fn wrapped_ai_errors_keep_their_retry_classification() {
+        let transient = anyhow::Error::new(AiError::Transport("temporary".to_string()))
+            .context("summarize the assembled encounter");
+        assert!(retryable_ai_error(&transient));
+        assert_eq!(non_retryable_ai_error(&transient), None);
+
+        let permanent = anyhow::Error::new(AiError::Refused {
+            status: 400,
+            message: "refused".to_string(),
+        })
+        .context("summarize the assembled encounter");
+        assert!(!retryable_ai_error(&permanent));
+        assert_eq!(non_retryable_ai_error(&permanent), Some("provider_refused"));
     }
 }

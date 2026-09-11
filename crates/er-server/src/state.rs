@@ -143,6 +143,9 @@ impl AppState {
             audio_bucket: audio.bucket.clone(),
             stt_queue: "stt-jobs-test".to_string(),
             deepgram_api_key: None,
+            ai_transport: crate::config::AiTransportMode::Direct,
+            anthropic_api_key: None,
+            summarizer: er_ai::model::SummarizerConfig::default(),
         };
         AppState {
             config,

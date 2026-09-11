@@ -9,12 +9,12 @@ use uuid::Uuid;
 use aws_sdk_s3::presigning::PresigningConfig;
 
 use crate::queue;
-use crate::repository::{ChunkRow, InsertChunkOutcome, NewChunk, PostgresRepository};
+use crate::repository::{ChunkRow, InsertChunkOutcome, JobRow, NewChunk, PostgresRepository};
 use crate::error::ApiError;
 use crate::{auth::{self, AuthedClinician}, state::AppState};
 
-/// log identifiers, never content.
-/// patient_id = %id is always fine; payload = ?event never is — an event payload can contain a full transcript. 
+// Log identifiers, never content.
+// patient_id = %id is safe; payload = ?event is not because an event can contain a transcript.
 
 /// Map from (path, method) -> handler
 /// caputre state clone so Middleware's State(state) parameter can be injected as require_auth's State<AppState> first argument.
@@ -29,6 +29,8 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/me", get(me))
         .route("/v1/patients", post(register_patient))
         .route("/v1/patients/{id}/note", get(patient_note))
+        .route("/v1/patients/{id}/mdm", post(request_mdm))
+        .route("/v1/jobs/{job_id}", get(job_status))
         .route(
             "/v1/patients/{id}/encounters/{eid}/audio",
             post(audio_upload_intent),
@@ -115,6 +117,81 @@ async fn register_patient(
         display_label: body.display_label,
         created_at: chrono::Utc::now(),
     }))
+}
+
+// ---------------------------------------------------------------------------
+// Step 7 — asynchronous, server-owned MDM generation
+// ---------------------------------------------------------------------------
+
+async fn request_mdm(
+    State(state): State<AppState>,
+    authed: AuthedClinician,
+    Path(patient_id): Path<Uuid>,
+    Json(body): Json<er_api::MdmRequest>,
+) -> Result<(StatusCode, Json<er_api::MdmAccepted>), ApiError> {
+    let repo = state.repo_for(&authed);
+    ensure_patient_in_org(&repo, patient_id).await?;
+
+    // The receipt is durable before the queue send. enqueued_at closes the
+    // request-timeout gap: a retry can enqueue a receipt whose first send never
+    // completed, while a completed request enqueues nothing twice.
+    let inserted = repo
+        .insert_job(body.job_id, patient_id, authed.clinician_id, "mdm")
+        .await?;
+    let should_enqueue = inserted.row.status == er_api::job_status::QUEUED
+        && inserted.row.enqueued_at.is_none();
+
+    if should_enqueue {
+        queue::send_job(
+            &state.sqs,
+            &state.audio.stt_queue_url,
+            &queue::Job::GenerateMdm {
+                patient_id,
+                job_id: inserted.row.id,
+            },
+        )
+        .await
+        .map_err(ApiError::Internal)?;
+        repo.mark_job_enqueued(inserted.row.id).await?;
+    }
+
+    tracing::info!(
+        job_id = %inserted.row.id,
+        %patient_id,
+        created = inserted.created,
+        enqueued = should_enqueue,
+        status = %inserted.row.status,
+        "MDM generation request accepted"
+    );
+
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(er_api::MdmAccepted {
+            job_id: inserted.row.id,
+            status: inserted.row.status,
+        }),
+    ))
+}
+
+async fn job_status(
+    State(state): State<AppState>,
+    authed: AuthedClinician,
+    Path(job_id): Path<Uuid>,
+) -> Result<Json<er_api::JobView>, ApiError> {
+    let repo = state.repo_for(&authed);
+    let row = repo.job_row(job_id).await?.ok_or(ApiError::NotFound)?;
+    Ok(Json(job_view(row)))
+}
+
+fn job_view(row: JobRow) -> er_api::JobView {
+    er_api::JobView {
+        job_id: row.id,
+        kind: row.kind,
+        status: row.status,
+        error: row.error,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+    }
 }
 
 // ---------------------------------------------------------------------------

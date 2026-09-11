@@ -4,6 +4,10 @@ edition.workspace = true
 version.workspace = true
 
 # AI layer: Summarizer trait, ClaudeSummarizer, AppSummarizer, Deidentifier.
+[features]
+default = []
+bedrock = ["dep:aws-sdk-bedrockruntime"]
+
 [dependencies]
 er-domain.workspace = true
 reqwest.workspace = true
@@ -11,6 +15,7 @@ serde.workspace = true
 serde_json.workspace = true
 regex.workspace = true
 thiserror.workspace = true
+aws-sdk-bedrockruntime = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio.workspace = true

@@ -1,7 +1,7 @@
 use crate::EventBus;
-use crate::conversions::disposition;
 use crate::encounter_driver::EncounterDriver;
 use crate::load::PatientNoteStore;
+use crate::objective_data::assemble_objective_data;
 use crate::shift_snapshot::ShiftSnapshot;
 use er_domain::NoteEvent;
 use er_domain::NoteSections;
@@ -19,8 +19,7 @@ use er_pipeline::audio::AudioCapture;
 use er_store::repository::Repository;
 use er_pipeline::stt::Transcriber;
 use crate::export::format_note;
-use er_domain::note::format_result_line;
-use crate::shift_manager::disposition::format_disposition_for_mdm;
+use crate::conversions::disposition::format_disposition_for_mdm;
 
 use chrono::{DateTime, Utc};
 use std::collections::{HashMap, HashSet};
@@ -45,6 +44,7 @@ where
     runtime: Arc<Runtime>,
     deidentifier: Deidentifier,
     server_stt_encounters: HashSet<EncounterId>,
+    generation_is_remote: bool,
 }
 
 impl<A, T, S> ShiftManager<A, T, S>
@@ -62,6 +62,7 @@ where
         repo: Arc<dyn Repository>,
         summarizer: S,
         runtime: Arc<Runtime>,
+        generation_is_remote: bool,
     ) -> Self {
         Self {
             shift,
@@ -75,6 +76,7 @@ where
             runtime,
             deidentifier: Deidentifier::new(),
             server_stt_encounters: HashSet::new(),
+            generation_is_remote,
         }
     }
 
@@ -123,7 +125,7 @@ where
         // completed upload has queued server work, both are server concerns:
         // publishing the mock here would race the worker's real transcript, and
         // there is no real transcript in the device store to summarize yet.
-        if !server_owns_transcript {
+        if self.generates_locally() && !server_owns_transcript {
             let _ = self
                 .summarize_encounter_deidentify_persist(encounter_id)
                 .inspect_err(|e| {
@@ -136,6 +138,10 @@ where
         }
 
         Ok(encounter_id)
+    }
+
+    fn generates_locally(&self) -> bool {
+        !self.generation_is_remote
     }
 
     /// The active patient/encounter pair that an upload intent must name.
@@ -203,7 +209,7 @@ where
         let safe_transcript = self.deidentifier.deidentify(&transcript, &patient);
 
         // Bridge sync -> async
-        let sections = self.runtime.block_on(
+        let generated = self.runtime.block_on(
             self.summarizer.summarize_encounter(&safe_transcript, &prior, encounter_number)
         )?;
 
@@ -211,7 +217,7 @@ where
         self.runtime.block_on(self.bus.publish(NoteEvent::encounter_summarized(
             patient_id, 
             encounter_id, 
-            sections, 
+            generated.value,
             vec![encounter_id]),
             &self.store, 
         ))?;
@@ -340,6 +346,11 @@ where
     }
 
     pub fn trigger_mdm(&mut self) -> AppResult<()> {
+        if !self.generates_locally() {
+            return Err(AppError::CliError(
+                "remote mode generates MDM through the server job API".to_string(),
+            ));
+        }
         let patient_id = self.check_active_patient_id()?;
         self.ensure_no_active_encounter("trigger MDM")?;
         self.ensure_active_phase(NotePhase::Idle, "TriggerMDM")?;
@@ -383,14 +394,14 @@ where
         let safe_disposition = self.deidentifier.deidentify(&disposition_str, &patient);
 
         // 3. Generate (sync → async bridge).
-        let mdm = self.runtime.block_on(
+        let generated = self.runtime.block_on(
             self.summarizer.generate_mdm(&sections, &safe_objective_data, &safe_disposition,)
         )?;
         
 
         // 4. Persist the MDM, THEN drive the state transition.
         self.runtime.block_on(self.bus.publish(
-            NoteEvent::mdm_generated(patient_id, mdm, source_ids), &self.store))?; 
+            NoteEvent::mdm_generated(patient_id, generated.value, source_ids), &self.store))?;
 
         self.runtime.block_on(self.bus.publish(NoteEvent::trigger_mdm(patient_id), &self.store))?;
         // Idle -> Finalizing
@@ -629,48 +640,6 @@ fn results_text(note: &PatientNote) -> Option<String> {
     )
 }
 
-/// Render the note's structured facts into the plain-text "data reviewed"
-/// blob that generate_mdm() consumes as `results_summary`
-fn assemble_objective_data(note: &PatientNote) -> String {
-    let mut out = String::new();
-    if !note.results.is_empty() {
-        out.push_str("Results:\n");
-        for r in &note.results {
-            out.push_str(&format!("- {}\n", format_result_line(r)
-        )); 
-        
-        } 
-    }
-    if !note.medication.is_empty() {
-        out.push_str("Medications:\n");
-        for m in &note.medication {
-            out.push_str(&format!(
-                "- {}\n", m.summary_line()
-            ));
-        }
-
-    }
-
-    if !note.diagnoses.is_empty() {
-        out.push_str("Diagnoses:\n");
-        for d in &note.diagnoses {
-            out.push_str(&format!("- {}{}\n", d.text, if d.is_primary {
-                " (primary)"
-            } else { "" }
-            ));
-        }
-    }
-
-    if !note.data_reviewed.is_empty() {
-        out.push_str("Other data reviewed (orders/consults):\n");
-        for s in &note.data_reviewed {
-            out.push_str(&format!("- {s}\n"));
-        }
-    }
-    out    
-}
-
-
 /// Phase 3 Step 0a test
 /// The test should construct a ShiftManager with MockSummarizer,
 /// use its runtime to block_on a summarize_encounter call,
@@ -679,6 +648,28 @@ fn assemble_objective_data(note: &PatientNote) -> String {
 
 mod tests {
     use super::*;
+
+    struct PanicSummarizer;
+
+    impl Summarizer for PanicSummarizer {
+        async fn summarize_encounter(
+            &self,
+            _transcript: &str,
+            _prior_sections: &NoteSections,
+            _encounter_number: u32,
+        ) -> er_ai::AiResult<er_ai::summarizer::Generated<NoteSections>> {
+            panic!("remote mode must not summarize in the client process")
+        }
+
+        async fn generate_mdm(
+            &self,
+            _sections: &NoteSections,
+            _results_summary: &str,
+            _disposition: &str,
+        ) -> er_ai::AiResult<er_ai::summarizer::Generated<String>> {
+            panic!("remote mode must not generate MDM in the client process")
+        }
+    }
 
     // NOT #[tokio::test]: this test deliberately drives the ShiftManager's
     // sync→async `block_on` bridge (the exact path the CLI uses). `block_on`
@@ -718,6 +709,7 @@ mod tests {
             sql_lite_repo.clone(),
             summarizer,
             rt.clone(),
+            false,
         );
 
         let result = shift_manager
@@ -728,7 +720,7 @@ mod tests {
                 1,
             ));
 
-        let sections = result.unwrap();
+        let sections = result.unwrap().value;
         assert_eq!(
             sections.hpi.as_deref(),
             Some("[mock HPI from encounter transcript]")
@@ -737,46 +729,38 @@ mod tests {
     }
 
     #[test]
-    fn assemble_objective_data_renders_all_sections() {
-        let mut note = PatientNote::new(Uuid::now_v7());
-        let patient_id = note.patient_id;
-
-        note.diagnoses.push(Diagnosis {
-            id: Uuid::now_v7(),
-            patient_id,
-            text: "Acute PE".into(),
-            icd10_code: Some("I26.99".into()),
-            is_primary: true,
-        });
-        note.diagnoses.push(Diagnosis {
-            id: Uuid::now_v7(),
-            patient_id,
-            text: "Hypoxia".into(),
-            icd10_code: None,
-            is_primary: false,
-        });
-        note.data_reviewed.push("CTA chest: PE in RLL".into());
-
-        let blob = assemble_objective_data(&note);
-
-        // Primary diagnosis gets a space before "(primary)"; non-primary gets nothing.
-        assert!(
-            blob.contains("- Acute PE (primary)"),
-            "primary dx should read 'Acute PE (primary)', got:\n{blob}"
+    fn remote_mode_makes_no_local_model_calls() {
+        let conn = er_store::db::open_memory_db().unwrap();
+        let repo: Arc<dyn Repository> =
+            Arc::new(er_store::repository::SqliteRepository::new(conn));
+        let bus = Arc::new(EventBus::new(32, Some(repo.clone())));
+        let store = crate::load::new_store();
+        let driver = crate::encounter_driver::EncounterDriver::new(
+            er_pipeline::audio::MockAudioCapture::new(),
+            er_pipeline::stt::MockTranscriber,
+            bus.clone(),
+            store.clone(),
         );
-        assert!(
-            blob.contains("- Hypoxia\n"),
-            "non-primary dx should have no suffix, got:\n{blob}"
+        let mut manager = ShiftManager::new(
+            Shift::new(),
+            HashMap::new(),
+            driver,
+            bus,
+            store,
+            repo,
+            PanicSummarizer,
+            Arc::new(tokio::runtime::Runtime::new().unwrap()),
+            true,
         );
-        assert!(blob.contains("Diagnoses:"));
-        assert!(blob.contains("Other data reviewed (orders/consults):"));
-        assert!(blob.contains("- CTA chest: PE in RLL"));
-    }
+        let patient_id = manager.register_patient("synthetic chest pain");
+        manager.set_active_patient(patient_id).unwrap();
+        manager.start_encounter(CaptureMode::Ambient).unwrap();
 
-    #[test]
-    fn assemble_objective_data_is_empty_for_blank_note() {
-        let note = PatientNote::new(Uuid::now_v7());
-        assert_eq!(assemble_objective_data(&note), "");
+        manager.stop_encounter().unwrap();
+        assert!(
+            manager.trigger_mdm().is_err(),
+            "remote MDM must be delegated to the server route"
+        );
     }
 
     /// S10's remote registration hands the shift an id the server already knows.
@@ -804,6 +788,7 @@ mod tests {
             repo,
             er_ai::summarizer::MockSummarizer::new(),
             Arc::new(tokio::runtime::Runtime::new().unwrap()),
+            false,
         );
 
         let server_side_id = Uuid::now_v7();
@@ -849,6 +834,7 @@ mod tests {
             repo.clone(),
             er_ai::summarizer::MockSummarizer::new(),
             Arc::new(tokio::runtime::Runtime::new().unwrap()),
+            false,
         );
 
         let patient_id = manager.register_patient("chest pain");
@@ -897,6 +883,7 @@ mod tests {
             repo.clone(),
             er_ai::summarizer::MockSummarizer::new(),
             Arc::new(tokio::runtime::Runtime::new().unwrap()),
+            false,
         );
 
         let switched_patient = manager.register_patient("chest pain");

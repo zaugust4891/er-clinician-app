@@ -22,6 +22,7 @@ use uuid::Uuid;
 use er_api::client::{RemoteRepository, ServerApi};
 use er_domain::{CaptureMode, NoteEvent};
 use er_pipeline::speech_to_text::{AppSpeechToText, MockSpeechToText};
+use er_ai::summarizer::{AppSummarizer, MockSummarizer};
 use er_server::queue::{self, Job};
 use er_server::repository::{ChunkRow, NewChunk, PostgresRepository};
 use er_server::{
@@ -45,6 +46,7 @@ fn echo_worker(pool: PgPool, audio: &AudioFixture) -> WorkerCtx {
         bucket: audio.config.bucket.clone(),
         queue_url: audio.config.stt_queue_url.clone(),
         stt: AppSpeechToText::Mock(MockSpeechToText { echo: true }),
+        summarizer: AppSummarizer::Mock(MockSummarizer::new()),
         // 0 keeps the suite snappy; the binary uses 20 (§C2).
         wait_time_seconds: 0,
     }
@@ -353,6 +355,74 @@ async fn a_wav_uploaded_through_the_client_lands_on_the_replayed_note(pool: PgPo
             .count(),
         1
     );
+    let transcript_position = events
+        .iter()
+        .position(|stored| matches!(stored.event, NoteEvent::TranscriptReady { .. }))
+        .unwrap();
+    let summary_position = events
+        .iter()
+        .position(|stored| matches!(stored.event, NoteEvent::EncounterSummarized { .. }))
+        .expect("the worker publishes a summary");
+    assert!(
+        transcript_position < summary_position,
+        "the durable source transcript must precede generated prose"
+    );
+    assert_eq!(
+        note.note_sections.hpi.as_deref(),
+        Some("[mock HPI from encounter transcript]")
+    );
+
+    let usage = sqlx::query_as::<_, (String, Option<String>, i64)>(
+        "SELECT kind, model, cost_micros FROM usage_log WHERE org_id = $1",
+    )
+    .bind(ORG_A)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(usage, vec![("summarize".into(), Some("mock".into()), 0)]);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn the_transcript_is_scrubbed_before_the_model_sees_it(pool: PgPool) {
+    let audio = ensure_test_audio_infra().await;
+    let (patient_id, encounter_id) = seed(&pool).await;
+    let mock = MockSummarizer::new();
+    let captured = mock.captured_transcripts();
+    let ctx = WorkerCtx {
+        pool: pool.clone(),
+        s3: audio.s3.clone(),
+        sqs: audio.sqs.clone(),
+        bucket: audio.config.bucket.clone(),
+        queue_url: audio.config.stt_queue_url.clone(),
+        stt: AppSpeechToText::Mock(MockSpeechToText { echo: true }),
+        summarizer: AppSummarizer::Mock(mock),
+        wait_time_seconds: 0,
+    };
+    let raw = b"Mrs. Alvarez MRN 12345678 SSN 111-22-3333 phone 510-555-1234";
+    let chunk_id = upload_chunk(
+        &pool,
+        &audio,
+        patient_id,
+        encounter_id,
+        0,
+        true,
+        raw,
+    )
+    .await;
+    enqueue(&audio, chunk_id).await;
+    assert_eq!(drain(&ctx).await, 1);
+
+    let seen = captured.lock().unwrap();
+    assert_eq!(seen.len(), 1);
+    assert!(!seen[0].contains("12345678"));
+    assert!(!seen[0].contains("111-22-3333"));
+    assert!(!seen[0].contains("510-555-1234"));
+    assert!(seen[0].contains("[MRN]"));
+    assert!(seen[0].contains("[SSN]"));
+    assert!(seen[0].contains("[PHONE]"));
+    // The server stores no name field, so regex-only scrubbing cannot honestly
+    // promise to remove a spoken surname. The provider BAA is the pilot control.
+    assert!(seen[0].contains("Mrs. Alvarez"));
 }
 
 /// The S7 gate in one test: three chunks uploaded **out of order**, one job each,
@@ -496,6 +566,24 @@ async fn a_replayed_job_changes_nothing(pool: PgPool) {
         Some("only one."),
         "a duplicate must not blank an already-stored transcript"
     );
+    let all = PostgresRepository::for_org(pool.clone(), ORG_A)
+        .get_events(patient_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        all.iter()
+            .filter(|stored| matches!(stored.event, NoteEvent::EncounterSummarized { .. }))
+            .count(),
+        1,
+        "duplicate deliveries must not call or persist a second summary"
+    );
+    let metered: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM usage_log WHERE org_id = $1 AND kind = 'summarize'")
+            .bind(ORG_A)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(metered, 1);
 }
 
 /// The event id is computable from outside the worker — which is what makes the

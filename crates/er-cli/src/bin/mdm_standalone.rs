@@ -113,7 +113,7 @@ async fn main() -> AppResult<()> {
         .generate_mdm(&sections, &data_text, &dispo)
         .await?;
 
-    println!("\n===== GENERATED MDM =====\n{mdm}");
+    println!("\n===== GENERATED MDM =====\n{}", mdm.value);
     Ok(())
 }
 

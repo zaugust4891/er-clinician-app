@@ -1,113 +1,81 @@
-use reqwest::Client;
-use serde::{Deserialize, Serialize};
-
 use er_domain::NoteSections;
+
 use crate::error::{AiError, AiResult};
-use crate::summarizer::Summarizer;
+use crate::model::{ModelId, SummarizerConfig};
+use crate::summarizer::{Generated, Summarizer};
+use crate::transport::{CacheControl, ClaudeTransport, Message, MessagesRequest, SystemBlock};
 
-// Request and response structs for Claude API.
-#[derive(Serialize)]
-struct MessagesRequest {
-    model: String,
-    max_tokens: u32,
-    system: String,
-    messages: Vec<Message>,
-}
+pub const SUMMARY_SYSTEM_PROMPT: &str = include_str!("../prompts/summarize_system.md");
+pub const MDM_SYSTEM_PROMPT: &str = include_str!("../prompts/mdm_system.md");
 
-#[derive(Serialize)]
-struct Message {
-    role: String,
-    content: String,
-}
-
-#[derive(Deserialize)]
-struct MessagesResponse {
-    content: Vec<ContentBlock>,
-}
-
-#[derive(Deserialize)]
-struct ContentBlock {
-    text: Option<String>,
-}
-
-/// ClaudeSummarizer is the API client for note summarization.
-///
-///   Why these fields:
-/// - client: Client — reuse a single reqwest client across calls (connection
-/// pooling)
-/// - api_key: String — your ANTHROPIC_API_KEY. Read from env at construction
-/// time, not at call time.
-/// - model: String — lets you swap between claude-sonnet-4-20250514 (quality)
-/// and claude-haiku-4-5-20251001 (speed/cost) without changing code.
+/// Builds clinical requests while [`ClaudeTransport`] owns authentication and
+/// provider-specific wire differences.
+#[derive(Debug)]
 pub struct ClaudeSummarizer {
-    client: Client,
-    api_key: String,
-    model: String,
+    transport: ClaudeTransport,
+    config: SummarizerConfig,
 }
 
 impl ClaudeSummarizer {
+    /// Local-development constructor retained for the CLI and standalone tool.
     pub fn new() -> AiResult<Self> {
         let api_key = std::env::var("ANTHROPIC_KEY")
             .map_err(|_| AiError::Summarization("ANTHROPIC_KEY not set in env file.".into()))?;
+        Ok(Self::from_transport(
+            ClaudeTransport::direct(api_key)?,
+            SummarizerConfig::default(),
+        ))
+    }
 
-        Ok(Self {
-            client: Client::new(),
-            api_key,
-            model: "claude-sonnet-4-6".into(),
+    pub fn from_transport(transport: ClaudeTransport, config: SummarizerConfig) -> Self {
+        Self { transport, config }
+    }
+
+    async fn call_claude(
+        &self,
+        model: &ModelId,
+        system: &'static str,
+        user_message: String,
+    ) -> AiResult<Generated<String>> {
+        let resolved_model = model.for_transport(&self.transport).to_string();
+        let request = messages_request(system, user_message);
+        let response = self.transport.messages(&resolved_model, request).await?;
+        let text = response
+            .first_text()
+            .ok_or_else(|| AiError::Summarization("empty response from Claude".into()))?;
+
+        Ok(Generated {
+            value: strip_json_fences(text).to_string(),
+            usage: response.usage,
+            model: resolved_model,
         })
     }
 }
 
-impl ClaudeSummarizer {
-    async fn call_claude(&self, system: &str, user_message: &str) -> AiResult<String> {
-        let request = MessagesRequest {
-            model: self.model.clone(),
-            max_tokens: 2048,
-            system: system.into(),
-            messages: vec![Message {
-                role: "user".into(),
-                content: user_message.into(),
-            }],
-        };
-
-        let response = self
-            .client
-            .post("https://api.anthropic.com/v1/messages")
-            .header("x-api-key", &self.api_key)
-            .header("anthropic-version", "2023-06-01")
-            .header("content-type", "application/json")
-            .json(&request)
-            .send()
-            .await
-            .map_err(AiError::Api)?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return Err(AiError::Summarization(format!(
-                "Claude API {status}: {body}"
-            )));
-        }
-
-        let body: MessagesResponse = response.json().await.map_err(AiError::Api)?;
-        let text = body
-            .content
-            .first()
-            .and_then(|block| block.text.clone())
-            .ok_or_else(|| AiError::Summarization("empty response from Claude".into()))?;
-
-        Ok(strip_json_fences(&text).to_string())
+fn messages_request(system: &'static str, user_message: String) -> MessagesRequest {
+    MessagesRequest {
+        model: None,
+        anthropic_version: None,
+        max_tokens: 4_096,
+        system: vec![SystemBlock {
+            kind: "text",
+            text: system.to_string(),
+            cache_control: Some(CacheControl { kind: "ephemeral" }),
+        }],
+        messages: vec![Message {
+            role: "user",
+            content: user_message,
+        }],
     }
 }
 
 /// Remove markdown code fences Claude sometimes adds despite being told not to.
-/// Handles ```json, ```, and plain whitespace. Safe no-op if fences aren't present.
-fn strip_json_fences(s: &str) -> &str {
-    let s = s.trim();
-    let s = s.strip_prefix("```json").unwrap_or(s);
-    let s = s.strip_prefix("```").unwrap_or(s);
-    let s = s.strip_suffix("```").unwrap_or(s);
-    s.trim()
+fn strip_json_fences(value: &str) -> &str {
+    let value = value.trim();
+    let value = value.strip_prefix("```json").unwrap_or(value);
+    let value = value.strip_prefix("```").unwrap_or(value);
+    let value = value.strip_suffix("```").unwrap_or(value);
+    value.trim()
 }
 
 impl Summarizer for ClaudeSummarizer {
@@ -116,49 +84,32 @@ impl Summarizer for ClaudeSummarizer {
         transcript: &str,
         prior_sections: &NoteSections,
         encounter_number: u32,
-    ) -> AiResult<NoteSections> {
-        let system = r#"You are an emergency medicine documentation assistant.
-You extract structured clinical note sections from clinician-patient encounter transcripts.
-
-Output ONLY raw JSON — no markdown, no code fences, no commentary. Just the JSON object.
-
-Schema:
-{
-  "hpi": "string or null",
-  "ros": "string or null",
-  "exam": "string or null",
-  "mdm": null,
-  "disposition_text": null
-}
-
-Rules:
-- Write in standard ED note prose (third person, present tense, medical abbreviations OK)
-- HPI: Chief complaint, onset, duration, quality, severity, associated symptoms, pertinent negatives
-- ROS: Only if explicitly reviewed systems beyond HPI
-- Exam: Physical findings in organ-system format (HEENT, CV, Pulm, Abd, MSK, Neuro, Skin)
-- Leave mdm and disposition_text as null (generated separately)
-- If this is encounter 2+, MERGE new findings into prior sections — don't replace, augment
-- Omit sections with no data (return null for that field)"#;
-
-        let prior_json = serde_json::to_string(prior_sections).unwrap_or_else(|_| "{}".into());
-
+    ) -> AiResult<Generated<NoteSections>> {
+        let prior_json = serde_json::to_string(prior_sections).map_err(|_| {
+            AiError::Summarization("could not serialize prior note sections".to_string())
+        })?;
         let user_message = format!(
-            "Encounter #{encounter_number} transcript: transcript:\n\
-            ---\n\
-            {transcript}\n\
-            ---\n\
-            \n\
-            Prior note sections (merge into these):\n\
-            {prior_json}"
+            "Encounter #{encounter_number} transcript:\n---\n{transcript}\n---\n\n\
+             Prior note sections (merge into these):\n{prior_json}"
         );
 
-        let response_text = self.call_claude(&system, &user_message).await?;
+        let generated = self
+            .call_claude(
+                &self.config.summary_model,
+                SUMMARY_SYSTEM_PROMPT,
+                user_message,
+            )
+            .await?;
+        let sections = serde_json::from_str::<NoteSections>(&generated.value).map_err(|_| {
+            // Never include the raw response: model output may contain clinical
+            // content and error chains are logged by the worker.
+            AiError::Summarization("Claude response was not valid structured note JSON".to_string())
+        })?;
 
-        // Parse the JSON response into NoteSections
-        serde_json::from_str::<NoteSections>(&response_text).map_err(|e| {
-            AiError::Summarization(format!(
-                "Failed to parse Claude response as NoteSections: {e}\nRaw: {response_text}"
-            ))
+        Ok(Generated {
+            value: sections,
+            usage: generated.usage,
+            model: generated.model,
         })
     }
 
@@ -167,41 +118,50 @@ Rules:
         sections: &NoteSections,
         results_summary: &str,
         disposition: &str,
-    ) -> AiResult<String> {
-        let system = r#"You are an emergency medicine documentation assistant.
-        Generate the Medical Decision Making (MDM) section of an ED note.
-
-        MDM has three elements (per 2021 E/M guidelines):
-        1. Number and complexity of problems addressed
-        2. Amount and complexity of data reviewed (labs, imaging, records)
-        3. Risk of complications, morbidity, or mortality
-
-        Write in standard ED MDM prose. Be specific about:
-        - Differential diagnoses considered and why
-        - Data reviewed and how it influenced decisions
-        - Risk assessment tied to the clinical situation
-        - Treatment plan with rationale
-
-        Output ONLY the MDM text - no JSON wrapper, no section headers, just the prose."#;
-
-        let sections_json = serde_json::to_string(sections).unwrap_or_else(|_| "{}".into());
-
+    ) -> AiResult<Generated<String>> {
+        let sections_json = serde_json::to_string(sections)
+            .map_err(|_| AiError::Summarization("could not serialize note sections".to_string()))?;
         let user_message = format!(
             "Note sections so far:\n{sections_json}\n\n\
-            Results reviewed:\n{results_summary}\n\n\
-            Disposition: {disposition}\n\n\
-            Generate the MDM section."
+             Results and objective data reviewed:\n{results_summary}\n\n\
+             Disposition:\n{disposition}\n\nGenerate the MDM section."
         );
 
-        self.call_claude(&system, &user_message).await
+        self.call_claude(&self.config.mdm_model, MDM_SYSTEM_PROMPT, user_message)
+            .await
     }
 }
 
-/*
-Why the 2021 E/M guidelines reference?
-MDM complexity level (straightforward/ low / moderate / high) directly determines billing code (99281-99285).
-Claude knowing this framework produces MDM that maps to billing levels
-correctly. This is a major pain point for ED docs — MDM that doesn't support
-the billing level they select.
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-*/
+    #[test]
+    fn system_is_serialized_as_a_block_array() {
+        let request = messages_request(MDM_SYSTEM_PROMPT, "synthetic input".to_string());
+        let json = serde_json::to_value(request).unwrap();
+        let blocks = json["system"].as_array().unwrap();
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0]["type"], "text");
+        assert_eq!(blocks[0]["cache_control"]["type"], "ephemeral");
+        assert!(json.get("model").is_none());
+        assert!(json.get("anthropic_version").is_none());
+    }
+
+    #[test]
+    fn mdm_prompt_clears_the_cache_minimum_conservatively() {
+        // Whitespace-delimited words are a conservative lower bound for model
+        // tokens in this English/Markdown prompt. Exact provider tokenization and
+        // a live cache hit remain the manual gate recorded in the Step 7 guide.
+        assert!(MDM_SYSTEM_PROMPT.split_whitespace().count() >= 2_300);
+    }
+
+    #[test]
+    fn strips_optional_json_fences() {
+        assert_eq!(
+            strip_json_fences("```json\n{\"ok\":true}\n```"),
+            "{\"ok\":true}"
+        );
+        assert_eq!(strip_json_fences(" plain "), "plain");
+    }
+}

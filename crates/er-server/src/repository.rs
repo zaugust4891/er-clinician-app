@@ -4,6 +4,8 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use er_domain::{NoteEvent, PatientId, PatientNote};
+use er_ai::model::cost_micros;
+use er_ai::transport::Usage;
 use er_store::repository::{Repository, StoredEvent};
 use er_store::{StoreError, StoreResult, snapshot_checksum};
 
@@ -66,6 +68,34 @@ pub struct NewChunk<'a> {
     pub is_final: bool,
     pub content_type: &'a str,
     pub s3_key: &'a str,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct JobRow {
+    pub id: Uuid,
+    pub org_id: Uuid,
+    pub clinician_id: Uuid,
+    pub patient_id: Uuid,
+    pub kind: String,
+    pub status: String,
+    pub error: Option<String>,
+    pub enqueued_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+pub struct InsertJobOutcome {
+    pub row: JobRow,
+    pub created: bool,
+}
+
+pub struct NewUsage<'a> {
+    pub clinician_id: Option<Uuid>,
+    pub patient_id: Option<Uuid>,
+    pub job_id: Option<Uuid>,
+    pub kind: &'a str,
+    pub model: &'a str,
+    pub usage: &'a Usage,
 }
 
 /// Defined possible insert results
@@ -703,6 +733,170 @@ impl PostgresRepository {
             Some(row) => Ok(Some(row)),
             None => self.chunk_row(chunk_id).await,
         }
+    }
+
+    // ---- AI jobs and metering (Step 7) -----------------------------------
+
+    pub async fn insert_job(
+        &self,
+        id: Uuid,
+        patient_id: Uuid,
+        clinician_id: Uuid,
+        kind: &str,
+    ) -> StoreResult<InsertJobOutcome> {
+        let inserted = sqlx::query_as::<_, JobRow>(
+            r#"INSERT INTO jobs (id, org_id, clinician_id, patient_id, kind)
+               VALUES ($1, $2, $3, $4, $5)
+               ON CONFLICT (id) DO NOTHING
+               RETURNING id, org_id, clinician_id, patient_id, kind, status,
+                         error, enqueued_at, created_at, updated_at"#,
+        )
+        .bind(id)
+        .bind(self.org_id)
+        .bind(clinician_id)
+        .bind(patient_id)
+        .bind(kind)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(StoreError::backend)?;
+
+        if let Some(row) = inserted {
+            return Ok(InsertJobOutcome { row, created: true });
+        }
+
+        let row = self.job_row(id).await?.ok_or_else(|| {
+            StoreError::backend(std::io::Error::other(
+                "job id conflict outside this organization",
+            ))
+        })?;
+        if row.patient_id != patient_id
+            || row.clinician_id != clinician_id
+            || row.kind != kind
+        {
+            return Err(StoreError::backend(std::io::Error::other(
+                "job id was already used for a different request",
+            )));
+        }
+        Ok(InsertJobOutcome {
+            row,
+            created: false,
+        })
+    }
+
+    pub async fn job_row(&self, id: Uuid) -> StoreResult<Option<JobRow>> {
+        sqlx::query_as::<_, JobRow>(
+            r#"SELECT id, org_id, clinician_id, patient_id, kind, status,
+                      error, enqueued_at, created_at, updated_at
+                 FROM jobs
+                WHERE id = $1 AND org_id = $2"#,
+        )
+        .bind(id)
+        .bind(self.org_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(StoreError::backend)
+    }
+
+    /// Worker bootstrap lookup. The row discovers tenancy; all later work uses
+    /// an organization-scoped repository.
+    pub(crate) async fn job_row_any_org(
+        pool: &PgPool,
+        id: Uuid,
+    ) -> StoreResult<Option<JobRow>> {
+        sqlx::query_as::<_, JobRow>(
+            r#"SELECT id, org_id, clinician_id, patient_id, kind, status,
+                      error, enqueued_at, created_at, updated_at
+                 FROM jobs
+                WHERE id = $1"#,
+        )
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .map_err(StoreError::backend)
+    }
+
+    pub async fn mark_job_enqueued(&self, id: Uuid) -> StoreResult<()> {
+        sqlx::query(
+            r#"UPDATE jobs
+                  SET enqueued_at = COALESCE(enqueued_at, now()), updated_at = now()
+                WHERE id = $1 AND org_id = $2 AND status = 'queued'"#,
+        )
+        .bind(id)
+        .bind(self.org_id)
+        .execute(&self.pool)
+        .await
+        .map_err(StoreError::backend)?;
+        Ok(())
+    }
+
+    pub async fn mark_job_running(&self, id: Uuid) -> StoreResult<Option<JobRow>> {
+        sqlx::query_as::<_, JobRow>(
+            r#"UPDATE jobs
+                  SET status = 'running', error = NULL, updated_at = now()
+                WHERE id = $1 AND org_id = $2 AND status IN ('queued', 'running')
+            RETURNING id, org_id, clinician_id, patient_id, kind, status,
+                      error, enqueued_at, created_at, updated_at"#,
+        )
+        .bind(id)
+        .bind(self.org_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(StoreError::backend)
+    }
+
+    pub async fn mark_job_done(&self, id: Uuid) -> StoreResult<()> {
+        self.finish_job(id, er_api::job_status::DONE, None).await
+    }
+
+    pub async fn mark_job_failed(&self, id: Uuid, error: &str) -> StoreResult<()> {
+        self.finish_job(id, er_api::job_status::FAILED, Some(error)).await
+    }
+
+    async fn finish_job(&self, id: Uuid, status: &str, error: Option<&str>) -> StoreResult<()> {
+        sqlx::query(
+            r#"UPDATE jobs
+                  SET status = $3, error = $4, updated_at = now()
+                WHERE id = $1 AND org_id = $2 AND status IN ('queued', 'running')"#,
+        )
+        .bind(id)
+        .bind(self.org_id)
+        .bind(status)
+        .bind(error)
+        .execute(&self.pool)
+        .await
+        .map_err(StoreError::backend)?;
+        Ok(())
+    }
+
+    /// Best-effort callers deliberately handle an error from this insert after
+    /// preserving the clinical event. Usage is operational metadata.
+    pub async fn record_usage(&self, entry: NewUsage<'_>) -> StoreResult<()> {
+        let to_i64 = |value: u64| i64::try_from(value).unwrap_or(i64::MAX);
+        let cost = cost_micros(entry.model, entry.usage);
+        sqlx::query(
+            r#"INSERT INTO usage_log (
+                   id, org_id, clinician_id, patient_id, job_id, kind, model,
+                   input_tokens, output_tokens, cache_read_tokens,
+                   cache_write_tokens, cost_micros
+               )
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)"#,
+        )
+        .bind(Uuid::now_v7())
+        .bind(self.org_id)
+        .bind(entry.clinician_id)
+        .bind(entry.patient_id)
+        .bind(entry.job_id)
+        .bind(entry.kind)
+        .bind(entry.model)
+        .bind(to_i64(entry.usage.input_tokens))
+        .bind(to_i64(entry.usage.output_tokens))
+        .bind(to_i64(entry.usage.cache_read_input_tokens))
+        .bind(to_i64(entry.usage.cache_creation_input_tokens))
+        .bind(cost)
+        .execute(&self.pool)
+        .await
+        .map_err(StoreError::backend)?;
+        Ok(())
     }
 }
 

@@ -35,6 +35,7 @@ aws-config = "1"
 # All other S3/SQS defaults are retained. See the S6 security review.
 aws-sdk-s3 = { version = "1", default-features = false, features = ["sigv4a", "http-1x", "default-https-client", "rt-tokio"] }
 aws-sdk-sqs = { version = "1", default-features = false, features = ["default-https-client", "rt-tokio"] }
+aws-sdk-bedrockruntime = { version = "1", default-features = false, features = ["default-https-client", "rt-tokio"] }
 
 
 # Internal crates — the dependency graph is the architecture (arrows inward).

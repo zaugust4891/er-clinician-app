@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 use regex::Regex;
 
@@ -62,6 +63,29 @@ impl Deidentifier {
         result
     }
 
+    /// Stateless structured-identifier scrub for a headless worker.
+    ///
+    /// The server intentionally stores no patient name, so it cannot provide the
+    /// alias replacement used by `deidentify`. Spoken names may remain; the
+    /// pilot relies on the provider BAA for that residual risk.
+    pub fn scrub(text: &str) -> String {
+        static SSN: OnceLock<Regex> = OnceLock::new();
+        static PHONE: OnceLock<Regex> = OnceLock::new();
+        static MRN: OnceLock<Regex> = OnceLock::new();
+        static DATE: OnceLock<Regex> = OnceLock::new();
+
+        let ssn = SSN.get_or_init(|| Regex::new(r"\b\d{3}-\d{2}-\d{4}\b").unwrap());
+        let phone =
+            PHONE.get_or_init(|| Regex::new(r"\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}").unwrap());
+        let mrn = MRN.get_or_init(|| Regex::new(r"\b\d{7,10}\b").unwrap());
+        let date = DATE.get_or_init(|| Regex::new(r"\b\d{1,2}/\d{1,2}/\d{2,4}\b").unwrap());
+
+        let result = ssn.replace_all(text, "[SSN]");
+        let result = phone.replace_all(&result, "[PHONE]");
+        let result = mrn.replace_all(&result, "[MRN]");
+        date.replace_all(&result, "[DATE]").into_owned()
+    }
+
     /// Reset the deidentifier state (e.g., at shift end).
     pub fn reset(&mut self) {
         self.patient_map.clear();
@@ -120,5 +144,20 @@ mod tests {
         assert!(d.patient_map.get(&patient_a.id).unwrap() == "Patient_A");
         assert!(d.patient_map.get(&patient_b.id).unwrap() == "Patient_B");
         let _ = result;
+    }
+
+    #[test]
+    fn stateless_scrub_removes_structured_identifiers_but_is_honest_about_names() {
+        let scrubbed = Deidentifier::scrub(
+            "Mrs. Alvarez MRN 12345678, SSN 111-22-3333, phone 510-555-1234, DOB 1/2/1980",
+        );
+        assert_eq!(
+            scrubbed,
+            "Mrs. Alvarez MRN [MRN], SSN [SSN], phone [PHONE], DOB [DATE]"
+        );
+        // The server has no patient-name field to match. The BAA and clinician
+        // consent mitigate this documented residual; a certified NLP scrubber
+        // remains a future production hardening option.
+        assert!(scrubbed.contains("Mrs. Alvarez"));
     }
 }

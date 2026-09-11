@@ -1,11 +1,19 @@
 use std::env::var;
 use std::path::PathBuf;
 
+use er_ai::model::{SummarizerConfig, configured_model};
+
 #[derive(Clone)]
 pub enum AppEnv {
     Dev,
     Staging,
     Prod,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AiTransportMode {
+    Direct,
+    Bedrock,
 }
 
 #[derive(Clone)]
@@ -52,6 +60,9 @@ pub struct Config {
     pub audio_bucket: String,
     pub stt_queue: String,
     pub deepgram_api_key: Option<String>,
+    pub ai_transport: AiTransportMode,
+    pub anthropic_api_key: Option<String>,
+    pub summarizer: SummarizerConfig,
 }
 
 impl Config {
@@ -82,6 +93,24 @@ impl Config {
         let audio_bucket = required_var("AUDIO_BUCKET")?;
         let stt_queue = required_var("STT_QUEUE")?;
         let deepgram_api_key = optional_var("DEEPGRAM_API_KEY");
+        let ai_transport = match optional_var("TRANSPORT")
+            .unwrap_or_else(|| "direct".to_string())
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "direct" => AiTransportMode::Direct,
+            "bedrock" => AiTransportMode::Bedrock,
+            other => anyhow::bail!("TRANSPORT must be direct|bedrock, got {other}"),
+        };
+        let anthropic_api_key = optional_var("ANTHROPIC_KEY");
+        let summary_model_name =
+            optional_var("SUMMARY_MODEL").unwrap_or_else(|| "sonnet".to_string());
+        let mdm_model_name =
+            optional_var("MDM_MODEL").unwrap_or_else(|| "sonnet".to_string());
+        let summary_model = configured_model(&summary_model_name)
+            .ok_or_else(|| anyhow::anyhow!("SUMMARY_MODEL is not recognized"))?;
+        let mdm_model = configured_model(&mdm_model_name)
+            .ok_or_else(|| anyhow::anyhow!("MDM_MODEL is not recognized"))?;
 
         Ok(Config {
             bind,
@@ -92,6 +121,12 @@ impl Config {
             audio_bucket,
             stt_queue,
             deepgram_api_key,
+            ai_transport,
+            anthropic_api_key,
+            summarizer: SummarizerConfig {
+                summary_model,
+                mdm_model,
+            },
         })
     }
 }

@@ -1,7 +1,7 @@
-use er_domain::{Disposition, NoteSections, PatientRecord};
 use er_ai::claude::ClaudeSummarizer;
 use er_ai::summarizer::Summarizer;
 use er_app::export::format_note;
+use er_domain::{Disposition, NoteSections, PatientRecord};
 
 #[tokio::main]
 async fn main() {
@@ -33,7 +33,16 @@ async fn main() {
         .summarize_encounter(transcript_1, &prior, 1)
         .await
     {
-        Ok(sections) => {
+        Ok(generated) => {
+            tracing::info!(
+                model = %generated.model,
+                input_tokens = generated.usage.input_tokens,
+                output_tokens = generated.usage.output_tokens,
+                cache_read_tokens = generated.usage.cache_read_input_tokens,
+                cache_write_tokens = generated.usage.cache_creation_input_tokens,
+                "encounter 1 usage"
+            );
+            let sections = generated.value;
             tracing::info!("HPI: {:?}", sections.hpi);
             tracing::info!("ROS: {:?}", sections.ros);
             tracing::info!("Exam: {:?}", sections.exam);
@@ -52,7 +61,16 @@ async fn main() {
                 .summarize_encounter(transcript_2, &sections, 2)
                 .await
             {
-                Ok(updated) => {
+                Ok(generated) => {
+                    tracing::info!(
+                        model = %generated.model,
+                        input_tokens = generated.usage.input_tokens,
+                        output_tokens = generated.usage.output_tokens,
+                        cache_read_tokens = generated.usage.cache_read_input_tokens,
+                        cache_write_tokens = generated.usage.cache_creation_input_tokens,
+                        "encounter 2 usage"
+                    );
+                    let updated = generated.value;
                     tracing::info!("Updated HPI: {:?}", updated.hpi);
                     tracing::info!("Updated Exam: {:?}", updated.exam);
 
@@ -65,12 +83,39 @@ async fn main() {
                         .generate_mdm(&updated, results, "Discharge")
                         .await
                     {
-                        Ok(mdm) => {
+                        Ok(generated_mdm) => {
                             tracing::info!("MDM generated successfully");
+                            tracing::info!(
+                                model = %generated_mdm.model,
+                                input_tokens = generated_mdm.usage.input_tokens,
+                                output_tokens = generated_mdm.usage.output_tokens,
+                                cache_read_tokens = generated_mdm.usage.cache_read_input_tokens,
+                                cache_write_tokens = generated_mdm.usage.cache_creation_input_tokens,
+                                "MDM usage"
+                            );
+
+                            if std::env::var("CACHE_PROOF").as_deref() == Ok("1") {
+                                match summarizer
+                                    .generate_mdm(&updated, results, "Discharge")
+                                    .await
+                                {
+                                    Ok(proof) => tracing::info!(
+                                        model = %proof.model,
+                                        input_tokens = proof.usage.input_tokens,
+                                        output_tokens = proof.usage.output_tokens,
+                                        cache_read_tokens = proof.usage.cache_read_input_tokens,
+                                        cache_write_tokens = proof.usage.cache_creation_input_tokens,
+                                        "repeated MDM cache proof usage"
+                                    ),
+                                    Err(error) => {
+                                        tracing::error!("repeated MDM cache proof failed: {error}")
+                                    }
+                                }
+                            }
 
                             // Assemble the complete note and format it for export
                             let mut final_sections = updated.clone();
-                            final_sections.mdm = Some(mdm);
+                            final_sections.mdm = Some(generated_mdm.value);
 
                             let patient = PatientRecord::new("chest pain");
                             let disposition = Disposition::Discharge {
