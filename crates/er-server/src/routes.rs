@@ -199,8 +199,7 @@ fn job_view(row: JobRow) -> er_api::JobView {
 // ---------------------------------------------------------------------------
 
 const AUDIO_UPLOAD_EXPIRY: Duration = Duration::from_secs(15 * 60);
-const ALLOWED_AUDIO_TYPES: &[&str] =
-    &["audio/wav", "audio/ogg", "audio/mp4", "audio/mpeg"];
+const ALLOWED_AUDIO_TYPES: &[&str] = crate::audio::ALLOWED_AUDIO_TYPES;
 
 /// Authorize one direct-to-S3 audio upload without proxying PHI through axum.
 ///
@@ -341,16 +340,21 @@ async fn verify_chunk_object(state: &AppState, row: &ChunkRow) -> Result<(), Api
                 ApiError::Conflict("chunk_not_uploaded")
             } else {
                 ApiError::Internal(
-                    anyhow::Error::new(error).context("head_object on an audio chunk"),
+                    anyhow::anyhow!("audio_metadata_unavailable"),
                 )
             }
         })?;
 
     // A truncated upload can leave an object that exists and holds nothing.
     // Transcribing it would burn three worker attempts to learn the same fact.
-    if head.content_length().unwrap_or(0) <= 0 {
-        return Err(ApiError::Conflict("chunk_empty"));
-    }
+    crate::audio::validate_metadata(
+        head.content_length(),
+        head.content_type(),
+        &row.content_type,
+        state.config.max_audio_bytes,
+        true,
+    )
+    .map_err(|error| ApiError::Conflict(error.0))?;
 
     Ok(())
 }

@@ -41,7 +41,7 @@ pub struct AppState {
 
 impl AppState {
     pub async fn build(config: &Config) -> anyhow::Result<AppState> {
-        let pool = sqlx::PgPool::connect(&config.database_url).await?; // fail at boot, not first request.
+        let pool = config.database.connect().await?;
         let keys = Arc::new(match &config.auth_mode {
             AuthConfig::Dev { jwks_path } => auth::keys::KeySet::from_file(jwks_path)?,
             AuthConfig::Cognito { .. } => {
@@ -54,11 +54,7 @@ impl AppState {
         });
 
         let resolver = Arc::new(auth::resolver::ClinicianResolver::new(pool.clone()));
-        let clients = aws::clients(
-            config.s3_endpoint_url.as_deref(),
-            config.sqs_endpoint_url.as_deref(),
-        )
-        .await;
+        let clients = aws::configured_clients(&config.runtime).await;
         let dlq = config.stt_dlq();
         let queues = if config.uses_aws_endpoint_overrides() {
             aws::ensure_audio_infra(
@@ -134,18 +130,24 @@ impl AppState {
         let resolver = Arc::new(auth::resolver::ClinicianResolver::new(pool.clone()));
         let config = Config {
             bind: "127.0.0.1:0".to_string(),
-            database_url: String::new(), // unused: the pool is already connected
-            s3_endpoint_url: None,
-            sqs_endpoint_url: None,
+            runtime: crate::config::MigrationConfig::from_values(
+                &[
+                    ("APP_ENV".into(), "dev".into()),
+                    ("AWS_REGION".into(), "us-east-1".into()),
+                    (
+                        "DATABASE_URL".into(),
+                        "postgres://test:test@localhost/test".into(),
+                    ),
+                ]
+                .into(),
+            )
+            .expect("synthetic runtime config")
+            .runtime,
             auth_mode: AuthConfig::Dev {
                 jwks_path: "dev/keys/jwks.json".into(),
             },
             audio_bucket: audio.bucket.clone(),
             stt_queue: "stt-jobs-test".to_string(),
-            deepgram_api_key: None,
-            ai_transport: crate::config::AiTransportMode::Direct,
-            anthropic_api_key: None,
-            summarizer: er_ai::model::SummarizerConfig::default(),
         };
         AppState {
             config,

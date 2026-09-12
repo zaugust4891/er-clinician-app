@@ -58,4 +58,5 @@ path = "src/bin/worker.rs"
 # same Repository contract suite SQLite and Postgres pass, over HTTP. Only the test
 # build turns on `client`; the server binary still links DTOs only (§C9).
 [dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
 er-api = { workspace = true, features = ["client"] }

@@ -100,7 +100,11 @@ async fn complete_after_put_marks_uploaded_and_enqueues_one_job(pool: PgPool) {
     let app = routes::router(test_state_with_audio(pool.clone(), &audio).await);
 
     let intent = request_intent(&app, &token, patient_id, encounter_id, chunk_id, 0, true).await;
-    put_bytes(&intent.upload_url, tiny_wav(b"substernal chest pressure since 0600")).await;
+    put_bytes(
+        &intent.upload_url,
+        tiny_wav(b"substernal chest pressure since 0600"),
+    )
+    .await;
 
     let (status, body) = post_empty(&app, &complete_url(chunk_id), &token).await;
 
@@ -149,7 +153,8 @@ async fn completion_without_bytes_is_409_and_enqueues_nothing(pool: PgPool) {
 
     // Uploaded, but the connection died before any bytes arrived.
     let empty = Uuid::now_v7();
-    let empty_intent = request_intent(&app, &token, patient_id, Uuid::now_v7(), empty, 0, true).await;
+    let empty_intent =
+        request_intent(&app, &token, patient_id, Uuid::now_v7(), empty, 0, true).await;
     put_bytes(&empty_intent.upload_url, Vec::new()).await;
     let (empty_status, empty_body) = post_empty(&app, &complete_url(empty), &token).await;
 
@@ -213,6 +218,46 @@ async fn repeated_completion_is_idempotent_and_finished_chunks_are_not_requeued(
 }
 
 #[sqlx::test]
+async fn oversized_or_mistyped_audio_is_not_marked_uploaded_or_enqueued(pool: PgPool) {
+    let audio = ensure_test_audio_infra().await;
+    seed_org_and_clinician(&pool, ORG_A, "s1-audio").await;
+    let patient_id = seed_registered_patient(&pool, ORG_A).await;
+    let token = mint("s1-audio");
+    let mut state = test_state_with_audio(pool.clone(), &audio).await;
+    state.config.runtime.max_audio_bytes = 64;
+    let app = routes::router(state);
+    for (size, content_type, code) in [
+        (65, "audio/wav", "chunk_too_large"),
+        (44, "audio/ogg", "chunk_content_type_mismatch"),
+    ] {
+        let chunk_id = Uuid::now_v7();
+        request_intent(&app, &token, patient_id, Uuid::now_v7(), chunk_id, 0, true).await;
+        let key: String = sqlx::query_scalar("SELECT s3_key FROM audio_chunks WHERE id=$1")
+            .bind(chunk_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        // SDK fixture mutation models stale/replaced object metadata; the client
+        // cannot change the content type signed into its presigned PUT URL.
+        audio
+            .s3
+            .put_object()
+            .bucket(&audio.config.bucket)
+            .key(key)
+            .content_type(content_type)
+            .body(vec![0_u8; size].into())
+            .send()
+            .await
+            .unwrap();
+        let (status, body) = post_empty(&app, &complete_url(chunk_id), &token).await;
+        assert_eq!(status, 409);
+        assert_eq!(body["error"], code);
+        assert_eq!(chunk_status_in_db(&pool, chunk_id).await, "pending");
+    }
+    assert!(audio.drain_jobs().await.is_empty());
+}
+
+#[sqlx::test]
 async fn status_read_tracks_the_ledger_without_exposing_transcripts(pool: PgPool) {
     let audio = ensure_test_audio_infra().await;
     seed_org_and_clinician(&pool, ORG_A, "doc-complete-a").await;
@@ -231,7 +276,11 @@ async fn status_read_tracks_the_ledger_without_exposing_transcripts(pool: PgPool
     assert!(pending["duration_ms"].is_null());
     assert!(pending["error"].is_null());
 
-    put_bytes(&intent.upload_url, tiny_wav(b"the chest pain started at six")).await;
+    put_bytes(
+        &intent.upload_url,
+        tiny_wav(b"the chest pain started at six"),
+    )
+    .await;
     post_empty(&app, &complete_url(happy), &token).await;
     let (_, uploaded) = get_json(&app, &status_url(happy), &token).await;
     assert_eq!(uploaded["status"], er_api::chunk_status::UPLOADED);

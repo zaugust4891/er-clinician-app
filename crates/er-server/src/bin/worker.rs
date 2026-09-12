@@ -26,17 +26,14 @@ const LONG_POLL_SECONDS: i32 = 20;
 async fn main() -> anyhow::Result<()> {
     init_tracing();
 
-    let config = config::Config::from_env()?;
+    let config = config::WorkerConfig::from_env()?;
+    tracing::info!(environment = ?config.app_env, process = "worker", "configuration validated");
 
     // Same pool, same clients, same bootstrap as `AppState::build` — the worker is
     // a second consumer of the identical infrastructure, not a parallel
     // implementation of it.
-    let pool = sqlx::PgPool::connect(&config.database_url).await?;
-    let clients = aws::clients(
-        config.s3_endpoint_url.as_deref(),
-        config.sqs_endpoint_url.as_deref(),
-    )
-    .await;
+    let pool = config.database.connect().await?;
+    let clients = aws::configured_clients(&config.runtime).await;
 
     let dlq = config.stt_dlq();
     // In dev the queue may not exist yet if the worker wins the race to boot, so
@@ -51,9 +48,12 @@ async fn main() -> anyhow::Result<()> {
             &config.stt_queue,
             &dlq,
         )
-        .await?
+        .await
+        .map_err(|_| anyhow::anyhow!("worker_audio_initialization_failed"))?
     } else {
-        aws::resolve_queue_urls(&clients.sqs, &config.stt_queue, &dlq).await?
+        aws::resolve_queue_urls(&clients.sqs, &config.stt_queue, &dlq)
+            .await
+            .map_err(|_| anyhow::anyhow!("worker_queue_resolution_failed"))?
     };
 
     let stt = build_transcriber(&config)?;
@@ -68,6 +68,7 @@ async fn main() -> anyhow::Result<()> {
         stt,
         summarizer,
         wait_time_seconds: LONG_POLL_SECONDS,
+        limits: config.limits,
     };
 
     tracing::info!(
@@ -85,7 +86,12 @@ async fn main() -> anyhow::Result<()> {
 /// Select the AI transport once at boot. Direct mode uses an API key and keeps
 /// the offline mock fallback; Bedrock uses the normal AWS credential chain and
 /// therefore has no application secret to distribute.
-async fn build_summarizer(config: &config::Config) -> anyhow::Result<AppSummarizer> {
+async fn build_summarizer(config: &config::WorkerConfig) -> anyhow::Result<AppSummarizer> {
+    anyhow::ensure!(
+        config.app_env == config::AppEnv::Dev
+            || config.ai_transport == config::AiTransportMode::Bedrock,
+        "cloud AI requires Bedrock"
+    );
     let transport = match config.ai_transport {
         config::AiTransportMode::Direct => match config.anthropic_api_key.as_deref() {
             Some(key) => ClaudeTransport::direct(key)?,
@@ -100,10 +106,11 @@ async fn build_summarizer(config: &config::Config) -> anyhow::Result<AppSummariz
             }
         },
         config::AiTransportMode::Bedrock => {
-            let shared = aws_config::defaults(aws_config::BehaviorVersion::latest())
-                .load()
-                .await;
-            ClaudeTransport::bedrock(aws_sdk_bedrockruntime::Client::new(&shared))
+            let shared = aws::shared_config(&config.runtime).await;
+            let bedrock = aws_sdk_bedrockruntime::config::Builder::from(&shared)
+                .timeout_config(aws::operation_timeouts(config.limits.provider_timeout))
+                .build();
+            ClaudeTransport::bedrock(aws_sdk_bedrockruntime::Client::from_conf(bedrock))
         }
     };
 
@@ -125,7 +132,11 @@ async fn build_summarizer(config: &config::Config) -> anyhow::Result<AppSummariz
 /// writing `[mock transcript: 44 year old male…]` into real charts is the single
 /// most expensive misconfiguration this process can have, so the log line has to
 /// be impossible to skim past.
-fn build_transcriber(config: &config::Config) -> anyhow::Result<AppSpeechToText> {
+fn build_transcriber(config: &config::WorkerConfig) -> anyhow::Result<AppSpeechToText> {
+    anyhow::ensure!(
+        config.app_env == config::AppEnv::Dev || config.deepgram_api_key.is_some(),
+        "cloud STT requires Deepgram"
+    );
     match config.deepgram_api_key.as_deref() {
         Some(key) => {
             let transcriber = er_pipeline::deepgram::DeepgramTranscriber::new(key)?;
@@ -175,24 +186,24 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use er_server::config::{AiTransportMode, AuthConfig, Config};
+    use er_server::config::WorkerConfig;
 
-    fn direct_config(key: Option<&str>) -> Config {
-        Config {
-            bind: "127.0.0.1:0".to_string(),
-            database_url: String::new(),
-            s3_endpoint_url: None,
-            sqs_endpoint_url: None,
-            auth_mode: AuthConfig::Dev {
-                jwks_path: "unused".into(),
-            },
-            audio_bucket: "unused".to_string(),
-            stt_queue: "unused".to_string(),
-            deepgram_api_key: None,
-            ai_transport: AiTransportMode::Direct,
-            anthropic_api_key: key.map(str::to_string),
-            summarizer: er_ai::model::SummarizerConfig::default(),
-        }
+    fn direct_config(key: Option<&str>) -> WorkerConfig {
+        WorkerConfig::from_values(
+            &[
+                ("APP_ENV".into(), "dev".into()),
+                ("AWS_REGION".into(), "us-east-1".into()),
+                (
+                    "DATABASE_URL".into(),
+                    "postgres://test:test@localhost/test".into(),
+                ),
+                ("AUDIO_BUCKET".into(), "unused".into()),
+                ("STT_QUEUE".into(), "unused".into()),
+                ("ANTHROPIC_KEY".into(), key.unwrap_or_default().into()),
+            ]
+            .into(),
+        )
+        .unwrap()
     }
 
     #[tokio::test]

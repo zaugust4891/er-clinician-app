@@ -41,8 +41,113 @@ use er_domain::{NoteEvent, NotePhase};
 use er_pipeline::speech_to_text::{AppSpeechToText, SpeechToText};
 use er_store::repository::Repository;
 
+use crate::config::WorkerLimits;
 use crate::queue::Job;
 use crate::repository::{ChunkRow, NewUsage, PostgresRepository};
+
+#[derive(Debug, thiserror::Error)]
+#[error("job_deadline_exceeded")]
+struct JobDeadline;
+
+async fn within_job_budget<T>(
+    limits: &WorkerLimits,
+    work: impl Future<Output = anyhow::Result<T>>,
+) -> anyhow::Result<T> {
+    tokio::time::timeout(
+        limits.job_timeout.saturating_sub(limits.terminal_timeout),
+        work,
+    )
+    .await
+    .map_err(|_| anyhow::Error::new(JobDeadline))?
+}
+
+async fn within_provider_budget<T>(
+    limits: &WorkerLimits,
+    work: impl Future<Output = Result<T, AiError>>,
+) -> Result<T, AiError> {
+    tokio::time::timeout(limits.provider_timeout, work)
+        .await
+        .map_err(|_| AiError::Transport("provider_deadline_exceeded".into()))?
+}
+
+/// Keep the lease and handler in one cancellation scope. A failed or stalled
+/// renewal drops the handler (and any DB transaction) without deleting the job.
+async fn supervise<T, F, R>(
+    limits: WorkerLimits,
+    work: impl Future<Output = T>,
+    mut renew: F,
+) -> anyhow::Result<T>
+where
+    F: FnMut() -> R,
+    R: Future<Output = anyhow::Result<()>>,
+{
+    let heartbeat = async {
+        loop {
+            tokio::time::sleep(limits.lease_interval).await;
+            tokio::time::timeout(limits.lease_timeout, renew())
+                .await
+                .map_err(|_| anyhow!("queue_lease_timeout"))??;
+        }
+        #[allow(unreachable_code)]
+        Ok::<(), anyhow::Error>(())
+    };
+    tokio::select! {
+        biased;
+        result = heartbeat => { result?; Err(anyhow!("queue_lease_lost")) },
+        result = tokio::time::timeout(limits.job_timeout, work) =>
+            result.map_err(|_| anyhow::Error::new(JobDeadline)),
+    }
+}
+
+async fn process_message(ctx: &WorkerCtx, message: &Message) {
+    let Some(receipt) = message.receipt_handle() else {
+        tracing::error!(error_kind = "queue_receipt_missing", "job not started");
+        return;
+    };
+    let renew = || async {
+        ctx.sqs
+            .change_message_visibility()
+            .queue_url(&ctx.queue_url)
+            .receipt_handle(receipt)
+            .visibility_timeout(ctx.limits.visibility_seconds)
+            .send()
+            .await
+            .map_err(|_| anyhow!("queue_lease_failed"))?;
+        Ok(())
+    };
+    // AWS futures are large; box dispatch boundaries to keep Tokio/test-thread
+    // stacks bounded rather than increasing process/thread stack allocations.
+    if supervise(ctx.limits, Box::pin(handle_message(ctx, message)), renew)
+        .await
+        .is_err()
+    {
+        tracing::warn!(
+            error_kind = "job_cancelled",
+            "job left unacknowledged after deadline or lease failure"
+        );
+    }
+}
+
+/// Returns true when shutdown was observed. The work is owned, not spawned, so
+/// expiration drops it and its heartbeat before the caller can receive again.
+async fn finish_or_drain(
+    work: impl Future<Output = ()>,
+    shutdown: &mut (impl Future<Output = ()> + Unpin),
+    drain: Duration,
+) -> bool {
+    tokio::pin!(work);
+    tokio::select! {
+        biased;
+        _ = shutdown => {
+            tracing::info!("shutdown requested; draining current job");
+            if tokio::time::timeout(drain, &mut work).await.is_err() {
+                tracing::warn!(error_kind = "shutdown_drain_expired", "unfinished job left for redelivery");
+            }
+            true
+        }
+        _ = &mut work => false,
+    }
+}
 
 /// The namespace for [`transcript_event_id`].
 ///
@@ -89,6 +194,7 @@ pub struct WorkerCtx {
     /// of a busy loop of empty receives, which is both cheaper and lower latency
     /// (§C2). Tests set 0–1 s so a suite is not paced by a network wait.
     pub wait_time_seconds: i32,
+    pub limits: WorkerLimits,
 }
 
 impl WorkerCtx {
@@ -114,7 +220,7 @@ pub async fn poll_once(ctx: &WorkerCtx) -> anyhow::Result<usize> {
     let handled = messages.len();
 
     for message in &messages {
-        handle_message(ctx, message).await;
+        process_message(ctx, message).await;
     }
 
     Ok(handled)
@@ -122,11 +228,8 @@ pub async fn poll_once(ctx: &WorkerCtx) -> anyhow::Result<usize> {
 
 /// The long poll, on its own.
 ///
-/// Separated from the processing half so [`run`] can put *only this* inside a
-/// `tokio::select!`. Cancelling a receive is free — SQS simply never leases the
-/// message — whereas cancelling a `handle_message` would abandon a transcription
-/// somewhere in the middle, leave the chunk stuck at `transcribing`, and make the
-/// next delivery pay a second time for a Deepgram call we already made.
+/// A cancelled receive can still have leased a message server-side; it is never
+/// acknowledged here and becomes visible again after its bounded lease expires.
 async fn receive_batch(ctx: &WorkerCtx) -> anyhow::Result<Vec<Message>> {
     let received = ctx
         .sqs
@@ -134,6 +237,7 @@ async fn receive_batch(ctx: &WorkerCtx) -> anyhow::Result<Vec<Message>> {
         .queue_url(&ctx.queue_url)
         .max_number_of_messages(1)
         .wait_time_seconds(ctx.wait_time_seconds)
+        .visibility_timeout(ctx.limits.visibility_seconds)
         // Which delivery this is, 1-based. Without it the worker cannot tell a
         // first attempt from a last one, and "record the autopsy on the final
         // strike" has nothing to trigger on.
@@ -156,13 +260,13 @@ async fn handle_message(ctx: &WorkerCtx, message: &Message) {
 
     let job = match serde_json::from_str::<Job>(body) {
         Ok(job) => job,
-        Err(error) => {
+        Err(_error) => {
             // A body we cannot read is exactly what a dead-letter queue is for.
             // Deleting it would be tidier and would destroy the only copy of the
             // evidence; striking out costs three deliveries and leaves a corpse
             // the Step 9 alarm can point at.
             tracing::error!(
-                %error,
+                error_kind = "invalid_job_message",
                 delivery,
                 "undecodable job body; leaving it to strike out to the dead-letter queue"
             );
@@ -172,7 +276,12 @@ async fn handle_message(ctx: &WorkerCtx, message: &Message) {
 
     match job {
         Job::TranscribeChunk { chunk_id } => {
-            match handle_transcribe_chunk(ctx, chunk_id).await {
+            match within_job_budget(
+                &ctx.limits,
+                Box::pin(handle_transcribe_chunk(ctx, chunk_id)),
+            )
+            .await
+            {
                 Ok(()) => {
                     delete_message(ctx, message, chunk_id).await;
                 }
@@ -194,7 +303,7 @@ async fn handle_message(ctx: &WorkerCtx, message: &Message) {
                     tracing::error!(
                         %chunk_id,
                         delivery,
-                        error = %format!("{error:#}"),
+                        error_kind = failure_code(&error),
                         "encounter summarization exhausted retries; transcript retained"
                     );
                 }
@@ -207,13 +316,13 @@ async fn handle_message(ctx: &WorkerCtx, message: &Message) {
                     tracing::error!(
                         %chunk_id,
                         delivery,
-                        error = %format!("{error:#}"),
+                        error_kind = failure_code(&error),
                         "chunk transcription failed on its final delivery; marking failed"
                     );
                     if let Err(mark_error) = record_failure(ctx, chunk_id, &error).await {
                         tracing::error!(
                             %chunk_id,
-                            error = %format!("{mark_error:#}"),
+                            error_kind = failure_code(&mark_error),
                             "could not record the terminal failure for this chunk"
                         );
                     }
@@ -226,27 +335,34 @@ async fn handle_message(ctx: &WorkerCtx, message: &Message) {
                     tracing::warn!(
                         %chunk_id,
                         delivery,
-                        error = %format!("{error:#}"),
+                        error_kind = failure_code(&error),
                         "chunk transcription failed; leaving the message for redelivery"
                     );
                 }
             }
         }
         Job::GenerateMdm { patient_id, job_id } => {
-            match handle_generate_mdm(ctx, patient_id, job_id).await {
+            match within_job_budget(
+                &ctx.limits,
+                Box::pin(handle_generate_mdm(ctx, patient_id, job_id)),
+            )
+            .await
+            {
                 Ok(()) => delete_message(ctx, message, job_id).await,
                 Err(error) if delivery >= MAX_DELIVERIES => {
                     tracing::error!(
                         %job_id,
                         %patient_id,
                         delivery,
-                        error = %format!("{error:#}"),
+                        error_kind = failure_code(&error),
                         "MDM generation failed on its final delivery"
                     );
-                    if let Err(mark_error) = record_mdm_terminal_failure(ctx, job_id).await {
+                    if let Err(mark_error) =
+                        record_mdm_terminal_failure(ctx, patient_id, job_id, &error).await
+                    {
                         tracing::error!(
                             %job_id,
-                            error = %format!("{mark_error:#}"),
+                            error_kind = failure_code(&mark_error),
                             "could not record terminal MDM job failure"
                         );
                     }
@@ -257,7 +373,7 @@ async fn handle_message(ctx: &WorkerCtx, message: &Message) {
                         %job_id,
                         %patient_id,
                         delivery,
-                        error = %format!("{error:#}"),
+                        error_kind = failure_code(&error),
                         "MDM generation failed transiently; leaving for redelivery"
                     );
                 }
@@ -298,19 +414,14 @@ pub async fn handle_transcribe_chunk(ctx: &WorkerCtx, chunk_id: Uuid) -> anyhow:
         .context("mark the chunk transcribing")?
         .ok_or_else(|| anyhow!("chunk {chunk_id} vanished while claiming it"))?;
 
-    let bytes = ctx
-        .s3
-        .get_object()
-        .bucket(&ctx.bucket)
-        .key(&row.s3_key)
-        .send()
-        .await
-        .with_context(|| format!("fetch audio for chunk {chunk_id}"))?
-        .body
-        .collect()
-        .await
-        .with_context(|| format!("read audio body for chunk {chunk_id}"))?
-        .into_bytes();
+    let bytes = crate::audio::download(
+        &ctx.s3,
+        &ctx.bucket,
+        &row.s3_key,
+        &row.content_type,
+        &ctx.limits,
+    )
+    .await?;
 
     let result = ctx
         .stt
@@ -360,17 +471,16 @@ async fn record_failure(
         .ok_or_else(|| anyhow!("no audio_chunks row for chunk {chunk_id}"))?;
 
     let repo = ctx.repo_for_chunk(&row);
-    // `{:#}` renders the whole anyhow context chain on one line. The column is a
-    // PHI-free autopsy — vendor status codes and our own context strings, never
-    // audio and never transcript text (§C5).
-    let summary = truncate_error(&format!("{error:#}"));
-    repo.mark_chunk_failed(chunk_id, &summary)
+    let summary = failure_code(error);
+    repo.mark_chunk_failed(chunk_id, summary)
         .await
         .context("mark the chunk failed")?;
 
     // The note outranks the chunk: an encounter whose other segments transcribed
     // fine still becomes a usable note, with this one marked as a visible gap.
-    try_assemble(ctx, &row).await
+    // A deadline must not initiate another paid provider request during terminal
+    // bookkeeping. Publish the gap/transcript only; summary recovery is via DLQ.
+    assemble(ctx, &row, !error.is::<JobDeadline>()).await
 }
 
 /// §C3's assembly rule and §C4's idempotent publish.
@@ -379,6 +489,10 @@ async fn record_failure(
 /// `row` supplies the encounter, the org and the patient — it is the chunk that
 /// just went terminal, so its tenancy is the encounter's tenancy.
 pub async fn try_assemble(ctx: &WorkerCtx, row: &ChunkRow) -> anyhow::Result<()> {
+    assemble(ctx, row, true).await
+}
+
+async fn assemble(ctx: &WorkerCtx, row: &ChunkRow, summarize: bool) -> anyhow::Result<()> {
     let repo = ctx.repo_for_chunk(row);
     // Org-scoped and `ORDER BY chunk_index` in SQL. Order comes from the index the
     // device stamped, never from arrival time or `created_at` — chunk 2 routinely
@@ -423,7 +537,11 @@ pub async fn try_assemble(ctx: &WorkerCtx, row: &ChunkRow) -> anyhow::Result<()>
         "encounter transcript assembled and published"
     );
 
-    summarize_encounter_for(ctx, row, &text).await
+    if summarize {
+        summarize_encounter_for(ctx, row, &text).await
+    } else {
+        Ok(())
+    }
 }
 
 /// Produce one summary for an assembled encounter.
@@ -476,11 +594,16 @@ async fn summarize_encounter_for(
         .ok_or_else(|| anyhow!("encounter is absent from the replayed note"))?;
     let safe_transcript = Deidentifier::scrub(transcript);
 
-    let generated = ctx
-        .summarizer
-        .summarize_encounter(&safe_transcript, &note.note_sections, encounter_number)
-        .await
-        .context("summarize the assembled encounter")?;
+    let generated = within_provider_budget(
+        &ctx.limits,
+        Box::pin(ctx.summarizer.summarize_encounter(
+            &safe_transcript,
+            &note.note_sections,
+            encounter_number,
+        )),
+    )
+    .await
+    .context("summarize the assembled encounter")?;
 
     repo.append_event(
         row.patient_id,
@@ -495,7 +618,7 @@ async fn summarize_encounter_for(
     .await
     .context("append EncounterSummarized")?;
 
-    if let Err(error) = repo
+    if let Err(_error) = repo
         .record_usage(NewUsage {
             clinician_id: None,
             patient_id: Some(row.patient_id),
@@ -508,7 +631,7 @@ async fn summarize_encounter_for(
     {
         tracing::error!(
             encounter_id = %row.encounter_id,
-            error = %error,
+            error_kind = "usage_record_failed",
             "summary succeeded but its usage row could not be recorded"
         );
     }
@@ -623,14 +746,15 @@ pub async fn handle_generate_mdm(
         .map(|encounter| encounter.id)
         .collect::<Vec<_>>();
 
-    let generated = match ctx
-        .summarizer
-        .generate_mdm(
+    let generated = match within_provider_budget(
+        &ctx.limits,
+        Box::pin(ctx.summarizer.generate_mdm(
             &note.note_sections,
             &Deidentifier::scrub(&objective),
             &Deidentifier::scrub(&disposition),
-        )
-        .await
+        )),
+    )
+    .await
     {
         Ok(generated) => generated,
         Err(error) if !error.is_retryable() => {
@@ -659,7 +783,7 @@ pub async fn handle_generate_mdm(
     .await
     .context("append TriggerMDM")?;
 
-    if let Err(error) = repo
+    if let Err(_error) = repo
         .record_usage(NewUsage {
             clinician_id: Some(discovered.clinician_id),
             patient_id: Some(patient_id),
@@ -672,7 +796,7 @@ pub async fn handle_generate_mdm(
     {
         tracing::error!(
             %job_id,
-            error = %error,
+            error_kind = "usage_record_failed",
             "MDM succeeded but its usage row could not be recorded"
         );
     }
@@ -683,13 +807,26 @@ pub async fn handle_generate_mdm(
     Ok(())
 }
 
-async fn record_mdm_terminal_failure(ctx: &WorkerCtx, job_id: Uuid) -> anyhow::Result<()> {
+async fn record_mdm_terminal_failure(
+    ctx: &WorkerCtx,
+    patient_id: Uuid,
+    job_id: Uuid,
+    error: &anyhow::Error,
+) -> anyhow::Result<()> {
     let row = PostgresRepository::job_row_any_org(&ctx.pool, job_id)
         .await?
         .ok_or_else(|| anyhow!("no jobs row for job {job_id}"))?;
     let repo = PostgresRepository::for_org(ctx.pool.clone(), row.org_id);
-    repo.mark_job_failed(job_id, "generation_failed_after_retries")
-        .await?;
+    anyhow::ensure!(
+        row.patient_id == patient_id && row.kind == "mdm",
+        "job_receipt_mismatch"
+    );
+    let code = if error.is::<JobDeadline>() {
+        "job_deadline_exceeded"
+    } else {
+        "generation_failed_after_retries"
+    };
+    repo.mark_job_failed(job_id, code).await?;
     Ok(())
 }
 
@@ -714,6 +851,20 @@ fn retryable_ai_error(error: &anyhow::Error) -> bool {
         .chain()
         .find_map(|cause| cause.downcast_ref::<AiError>())
         .is_some_and(AiError::is_retryable)
+}
+
+fn failure_code(error: &anyhow::Error) -> &'static str {
+    if error.is::<JobDeadline>() {
+        "job_deadline_exceeded"
+    } else if let Some(error) = error.downcast_ref::<crate::audio::AudioError>() {
+        error.0
+    } else if let Some(code) = non_retryable_ai_error(error) {
+        code
+    } else if retryable_ai_error(error) {
+        "provider_retryable_failure"
+    } else {
+        "job_processing_failed"
+    }
 }
 
 /// The index of the chunk the device marked final, if one has arrived.
@@ -810,20 +961,6 @@ fn duration_to_millis(seconds: f32) -> i32 {
     (seconds * 1000.0).round().min(i32::MAX as f32) as i32
 }
 
-/// Keep the autopsy readable. A vendor error chain can be long; the column is for
-/// a human deciding what broke, not for a stack trace.
-fn truncate_error(message: &str) -> String {
-    const MAX: usize = 500;
-    if message.len() <= MAX {
-        return message.to_string();
-    }
-    let end = (0..=MAX)
-        .rev()
-        .find(|i| message.is_char_boundary(*i))
-        .unwrap_or(0);
-    format!("{}…", &message[..end])
-}
-
 /// `ApproximateReceiveCount`, 1-based, defaulting to a first delivery.
 ///
 /// Defaulting to 1 when the attribute is missing is the conservative direction:
@@ -847,7 +984,7 @@ async fn delete_message(ctx: &WorkerCtx, message: &Message, chunk_id: Uuid) {
         return;
     };
 
-    if let Err(error) = ctx
+    if let Err(_error) = ctx
         .sqs
         .delete_message()
         .queue_url(&ctx.queue_url)
@@ -857,7 +994,7 @@ async fn delete_message(ctx: &WorkerCtx, message: &Message, chunk_id: Uuid) {
     {
         tracing::warn!(
             %chunk_id,
-            error = %error,
+            error_kind = "queue_delete_failed",
             "failed to delete a completed job; it will be redelivered and shrugged at"
         );
     }
@@ -868,13 +1005,8 @@ async fn delete_message(ctx: &WorkerCtx, message: &Message, chunk_id: Uuid) {
 /// `shutdown` is the caller's cancellation signal — SIGTERM/SIGINT in the binary,
 /// which is what ECS sends before it kills a task on a rolling deploy.
 ///
-/// **Only the receive races the signal.** `tokio::select!` drops the losing
-/// future, so anything inside it can be cancelled mid-`await`. That is harmless
-/// for a long poll and actively harmful for a transcription — a cancelled
-/// `handle_message` would leave a chunk stuck at `transcribing` with its message
-/// undeleted, and the redelivery would pay for the same Deepgram call twice. So
-/// the signal races [`receive_batch`] alone, and any message already in hand is
-/// processed to completion before the next check.
+/// A signal stops new receives. An active handler keeps its lease while draining
+/// for at most 100 seconds; cancellation releases locks and leaves SQS to retry.
 pub async fn run(ctx: &WorkerCtx, mut shutdown: impl Future<Output = ()> + Unpin) {
     loop {
         let messages = tokio::select! {
@@ -885,12 +1017,12 @@ pub async fn run(ctx: &WorkerCtx, mut shutdown: impl Future<Output = ()> + Unpin
             }
             received = receive_batch(ctx) => match received {
                 Ok(messages) => messages,
-                Err(error) => {
+                Err(_error) => {
                     // Almost always the queue being unreachable. Back off rather
                     // than spinning a tight loop of failing API calls — and let
                     // the signal interrupt the backoff, so an outage cannot make
                     // shutdown take five seconds longer than it should.
-                    tracing::error!(error = %format!("{error:#}"), "poll cycle failed");
+                    tracing::error!(error_kind = "queue_receive_failed", "poll cycle failed");
                     tokio::select! {
                         biased;
                         _ = &mut shutdown => {
@@ -903,9 +1035,18 @@ pub async fn run(ctx: &WorkerCtx, mut shutdown: impl Future<Output = ()> + Unpin
             },
         };
 
-        // Outside the select on purpose: this half is not cancellation-safe.
+        // Stop receives immediately on a signal; keep the same handler and lease
+        // alive during the bounded drain, then drop without acknowledgement.
         for message in &messages {
-            handle_message(ctx, message).await;
+            if finish_or_drain(
+                process_message(ctx, message),
+                &mut shutdown,
+                ctx.limits.shutdown_drain,
+            )
+            .await
+            {
+                return;
+            }
         }
     }
 }
@@ -913,6 +1054,132 @@ pub async fn run(ctx: &WorkerCtx, mut shutdown: impl Future<Output = ()> + Unpin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn job_budget_reserves_terminal_bookkeeping_time() {
+        let started = tokio::time::Instant::now();
+        let error = within_job_budget::<()>(&WorkerLimits::default(), std::future::pending())
+            .await
+            .unwrap_err();
+        assert!(error.is::<JobDeadline>());
+        assert_eq!(started.elapsed(), Duration::from_secs(260));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn provider_deadline_is_retryable_and_includes_the_whole_future() {
+        let started = tokio::time::Instant::now();
+        let error = within_provider_budget::<()>(&WorkerLimits::default(), std::future::pending())
+            .await
+            .unwrap_err();
+        assert!(error.is_retryable());
+        assert_eq!(started.elapsed(), Duration::from_secs(45));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn lease_renews_only_while_work_is_active() {
+        let renewals = std::cell::Cell::new(0);
+        supervise(
+            WorkerLimits::default(),
+            tokio::time::sleep(Duration::from_secs(130)),
+            || async {
+                renewals.set(renewals.get() + 1);
+                Ok(())
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(renewals.get(), 2);
+        tokio::time::advance(Duration::from_secs(300)).await;
+        assert_eq!(renewals.get(), 2, "heartbeat must not outlive work");
+    }
+
+    struct OnDrop<'a>(&'a std::cell::Cell<bool>);
+    impl Drop for OnDrop<'_> {
+        fn drop(&mut self) {
+            self.0.set(true);
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn lease_failure_or_timeout_cancels_work_before_visibility_expires() {
+        for stalled in [false, true] {
+            let dropped = std::cell::Cell::new(false);
+            let started = tokio::time::Instant::now();
+            let work = async {
+                let _guard = OnDrop(&dropped);
+                std::future::pending::<()>().await;
+            };
+            assert!(
+                supervise(WorkerLimits::default(), work, || async {
+                    if stalled {
+                        std::future::pending::<()>().await;
+                    }
+                    anyhow::bail!("synthetic lease failure")
+                })
+                .await
+                .is_err()
+            );
+            assert!(dropped.get());
+            assert_eq!(
+                started.elapsed(),
+                Duration::from_secs(if stalled { 65 } else { 60 })
+            );
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn successful_renewals_do_not_extend_the_overall_job_deadline() {
+        let started = tokio::time::Instant::now();
+        let result = supervise(
+            WorkerLimits::default(),
+            std::future::pending::<()>(),
+            || async { Ok(()) },
+        )
+        .await;
+        assert!(result.unwrap_err().is::<JobDeadline>());
+        assert_eq!(started.elapsed(), Duration::from_secs(270));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn shutdown_drains_with_lease_then_drops_unfinished_work() {
+        let started = tokio::time::Instant::now();
+        let dropped = std::cell::Cell::new(false);
+        let acknowledged = std::cell::Cell::new(false);
+        let renewals = std::cell::Cell::new(0);
+        let work = async {
+            let _guard = OnDrop(&dropped);
+            std::future::pending::<()>().await;
+            acknowledged.set(true);
+        };
+        let processing = async {
+            let _ = supervise(WorkerLimits::default(), work, || async {
+                renewals.set(renewals.get() + 1);
+                Ok(())
+            })
+            .await;
+        };
+        let mut signal = Box::pin(tokio::time::sleep(Duration::from_secs(5)));
+        assert!(finish_or_drain(processing, &mut signal, Duration::from_secs(100)).await);
+        assert_eq!(started.elapsed(), Duration::from_secs(105));
+        assert!(dropped.get());
+        assert!(!acknowledged.get());
+        assert_eq!(renewals.get(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn shutdown_allows_a_short_job_to_finish_without_waiting_out_the_drain() {
+        let started = tokio::time::Instant::now();
+        let mut signal = Box::pin(tokio::time::sleep(Duration::from_secs(5)));
+        assert!(
+            finish_or_drain(
+                tokio::time::sleep(Duration::from_secs(20)),
+                &mut signal,
+                Duration::from_secs(100)
+            )
+            .await
+        );
+        assert_eq!(started.elapsed(), Duration::from_secs(20));
+    }
 
     fn chunk(index: i32, status: &str, transcript: Option<&str>, is_final: bool) -> ChunkRow {
         ChunkRow {
@@ -1088,13 +1355,16 @@ mod tests {
     }
 
     #[test]
-    fn a_long_error_chain_is_truncated_on_a_character_boundary() {
-        let long = "€".repeat(400); // 1200 bytes, 3 per character
-        let capped = truncate_error(&long);
-
-        assert!(capped.ends_with('…'));
-        assert!(capped.len() <= 500 + '…'.len_utf8());
-        assert_eq!(truncate_error("short"), "short");
+    fn failure_codes_never_contain_error_payloads() {
+        let sensitive = anyhow!("credential=synthetic-secret; patient=Synthetic Name");
+        assert_eq!(failure_code(&sensitive), "job_processing_failed");
+        assert_eq!(
+            failure_code(&anyhow::Error::new(JobDeadline)),
+            "job_deadline_exceeded"
+        );
+        let audio = anyhow::Error::new(crate::audio::AudioError("chunk_too_large"))
+            .context("synthetic secret");
+        assert_eq!(failure_code(&audio), "chunk_too_large");
     }
 
     #[test]

@@ -24,6 +24,20 @@ impl ModelId {
         }
     }
 
+    /// Exact, reviewed identifiers only. Profiles/ARNs and cross-region routing
+    /// require a separate residency, account-access, and pricing review.
+    pub fn set_bedrock_id(&mut self, id: &str) -> bool {
+        let approved = match self.direct.as_str() {
+            "claude-sonnet-4-6" => id == "anthropic.claude-sonnet-4-6",
+            "claude-haiku-4-5" => id == "anthropic.claude-haiku-4-5",
+            _ => false,
+        };
+        if approved {
+            self.bedrock = id.to_string();
+        }
+        approved
+    }
+
     pub fn for_transport<'a>(&'a self, transport: &ClaudeTransport) -> &'a str {
         match transport {
             ClaudeTransport::DirectApi { .. } => &self.direct,
@@ -74,14 +88,14 @@ struct Price {
 }
 
 fn price_for(model: &str) -> Option<Price> {
-    if model.contains("sonnet-4-6") {
+    if matches!(model, "claude-sonnet-4-6" | "anthropic.claude-sonnet-4-6") {
         Some(Price {
             input: 300,
             output: 1_500,
             cache_read: 30,
             cache_write: 375,
         })
-    } else if model.contains("haiku-4-5") {
+    } else if matches!(model, "claude-haiku-4-5" | "anthropic.claude-haiku-4-5") {
         Some(Price {
             input: 100,
             output: 500,
@@ -145,5 +159,24 @@ mod tests {
         assert_eq!(sonnet.direct, "claude-sonnet-4-6");
         assert_eq!(sonnet.bedrock, "anthropic.claude-sonnet-4-6");
         assert!(configured_model("future-model").is_none());
+    }
+
+    #[test]
+    fn overrides_cannot_change_family_or_smuggle_an_unpriced_profile() {
+        let mut model = ModelId::sonnet_4_6();
+        for id in [
+            "anthropic.claude-haiku-4-5",
+            "unreviewed-sonnet-4-6",
+            "us.anthropic.claude-sonnet-4-6",
+            "arn:aws:bedrock:profile",
+        ] {
+            assert!(!model.set_bedrock_id(id));
+            assert_eq!(model, ModelId::sonnet_4_6());
+            if !id.contains("haiku") {
+                assert!(price_for(id).is_none());
+            }
+        }
+        assert!(model.set_bedrock_id("anthropic.claude-sonnet-4-6"));
+        assert!(price_for(&model.bedrock).is_some());
     }
 }

@@ -4,10 +4,56 @@
 //! the application uses the official AWS SDK in every environment. Endpoint
 //! overrides are the only switch: present locally, absent in ECS.
 
+use crate::config::{AppEnv, RuntimeConfig};
 use anyhow::{Context, anyhow};
 use aws_config::{BehaviorVersion, SdkConfig};
 use aws_sdk_s3::Client as S3Client;
 use aws_sdk_sqs::{Client as SqsClient, types::QueueAttributeName};
+use std::time::Duration;
+
+pub fn operation_timeouts(total: Duration) -> aws_sdk_s3::config::timeout::TimeoutConfig {
+    aws_sdk_s3::config::timeout::TimeoutConfig::builder()
+        .connect_timeout(Duration::from_secs(5))
+        .read_timeout(Duration::from_secs(30))
+        .operation_attempt_timeout(Duration::from_secs(30))
+        .operation_timeout(total)
+        .build()
+}
+
+/// Cloud is ECS-only: no developer profile, static key, IMDS fallback or endpoint
+/// configuration can redirect requests. ECS credential URI/token variables are
+/// consumed by the SDK's validated container credential provider, not rejected.
+pub async fn shared_config(config: &RuntimeConfig) -> SdkConfig {
+    let region = aws_sdk_s3::config::Region::new(config.aws_region.clone());
+    let timeouts = operation_timeouts(Duration::from_secs(35));
+    let retries = aws_sdk_s3::config::retry::RetryConfig::standard().with_max_attempts(3);
+    if config.app_env == AppEnv::Dev {
+        aws_config::defaults(BehaviorVersion::latest())
+            .region(region)
+            .timeout_config(timeouts)
+            .retry_config(retries)
+            .load()
+            .await
+    } else {
+        SdkConfig::builder()
+            .behavior_version(BehaviorVersion::latest())
+            .region(region)
+            .timeout_config(timeouts)
+            .retry_config(retries)
+            .credentials_provider(aws_sdk_s3::config::SharedCredentialsProvider::new(
+                aws_config::ecs::EcsCredentialsProvider::builder().build(),
+            ))
+            .build()
+    }
+}
+
+pub async fn configured_clients(config: &RuntimeConfig) -> AwsClients {
+    let shared = shared_config(config).await;
+    AwsClients {
+        s3: s3_client(&shared, config.s3_endpoint_url.as_deref()),
+        sqs: sqs_client(&shared, config.sqs_endpoint_url.as_deref()),
+    }
+}
 
 const AUDIO_JOB_VISIBILITY_TIMEOUT_SECS: &str = "300";
 const AUDIO_JOB_MAX_RECEIVE_COUNT: &str = "3";
@@ -29,7 +75,10 @@ pub struct QueueUrls {
 /// signed requests to MinIO and ElasticMQ. In ECS, `None` leaves normal AWS
 /// endpoint and task-role resolution intact.
 pub async fn clients(s3_endpoint: Option<&str>, sqs_endpoint: Option<&str>) -> AwsClients {
-    let shared = aws_config::defaults(BehaviorVersion::latest()).load().await;
+    let shared = aws_config::defaults(BehaviorVersion::latest())
+        .timeout_config(operation_timeouts(Duration::from_secs(35)))
+        .load()
+        .await;
     AwsClients {
         s3: s3_client(&shared, s3_endpoint),
         sqs: sqs_client(&shared, sqs_endpoint),
@@ -198,6 +247,35 @@ fn redrive_policy(dlq_arn: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn cloud_config_has_no_shared_endpoint_or_profile_loader() {
+        let config = crate::config::MigrationConfig::from_values(
+            &[
+                ("APP_ENV".into(), "prod".into()),
+                ("AWS_REGION".into(), "us-east-1".into()),
+                (
+                    "DATABASE_URL".into(),
+                    "postgres://test:secret@db.example/test".into(),
+                ),
+                (
+                    "DB_SSL_ROOT_CERT".into(),
+                    std::env::current_exe().unwrap().display().to_string(),
+                ),
+            ]
+            .into(),
+        )
+        .unwrap();
+        let shared = shared_config(&config.runtime).await;
+        assert!(shared.endpoint_url().is_none());
+        assert!(shared.service_config().is_none());
+        assert!(shared.credentials_provider().is_some());
+        assert_eq!(
+            shared.timeout_config().unwrap().operation_timeout(),
+            Some(Duration::from_secs(35))
+        );
+        assert_eq!(shared.retry_config().unwrap().max_attempts(), 3);
+    }
 
     #[test]
     fn redrive_policy_points_at_dlq_and_limits_retries() {

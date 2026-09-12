@@ -1,6 +1,8 @@
+pub mod audio;
 pub mod auth;
 pub mod aws;
 pub mod config;
+pub mod db;
 pub mod error;
 pub mod queue;
 pub mod repository;

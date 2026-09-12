@@ -19,10 +19,10 @@
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use er_ai::summarizer::{AppSummarizer, MockSummarizer};
 use er_api::client::{RemoteRepository, ServerApi};
 use er_domain::{CaptureMode, NoteEvent};
 use er_pipeline::speech_to_text::{AppSpeechToText, MockSpeechToText};
-use er_ai::summarizer::{AppSummarizer, MockSummarizer};
 use er_server::queue::{self, Job};
 use er_server::repository::{ChunkRow, NewChunk, PostgresRepository};
 use er_server::{
@@ -49,6 +49,10 @@ fn echo_worker(pool: PgPool, audio: &AudioFixture) -> WorkerCtx {
         summarizer: AppSummarizer::Mock(MockSummarizer::new()),
         // 0 keeps the suite snappy; the binary uses 20 (§C2).
         wait_time_seconds: 0,
+        limits: er_server::config::WorkerLimits {
+            visibility_seconds: 0,
+            ..Default::default()
+        },
     }
 }
 
@@ -245,6 +249,186 @@ async fn seed(pool: &PgPool) -> (Uuid, Uuid) {
     (patient_id, encounter_id)
 }
 
+#[sqlx::test(migrations = "./migrations")]
+async fn worker_rechecks_size_and_type_before_transcribing(pool: PgPool) {
+    let audio = ensure_test_audio_infra().await;
+    let (patient_id, encounter_id) = seed(&pool).await;
+    let mut ctx = echo_worker(pool.clone(), &audio);
+    let id = upload_chunk(
+        &pool,
+        &audio,
+        patient_id,
+        encounter_id,
+        0,
+        true,
+        b"synthetic audio",
+    )
+    .await;
+    ctx.limits.max_audio_bytes = 4;
+    let error = worker::handle_transcribe_chunk(&ctx, id).await.unwrap_err();
+    assert_eq!(error.to_string(), "chunk_too_large");
+    assert!(chunk(&pool, id).await.transcript.is_none());
+    let row = chunk(&pool, id).await;
+    ctx.limits.max_audio_bytes = 1024;
+    audio
+        .s3
+        .put_object()
+        .bucket(&audio.config.bucket)
+        .key(&row.s3_key)
+        .content_type("text/plain")
+        .body(tiny_wav(b"synthetic audio").into())
+        .send()
+        .await
+        .unwrap();
+    let error = worker::handle_transcribe_chunk(&ctx, id).await.unwrap_err();
+    assert_eq!(error.to_string(), "chunk_content_type_mismatch");
+    assert!(chunk(&pool, id).await.transcript.is_none());
+    assert!(transcript_events(&pool, patient_id).await.is_empty());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn lease_renewal_shutdown_and_redelivery_recover_a_durable_transcript(pool: PgPool) {
+    use std::{sync::Arc, time::Duration};
+    let audio = ensure_test_audio_infra().await;
+    let (patient_id, encounter_id) = seed(&pool).await;
+    let id = upload_chunk(
+        &pool,
+        &audio,
+        patient_id,
+        encounter_id,
+        0,
+        true,
+        b"synthetic persisted transcript",
+    )
+    .await;
+    // Hold the summary lock so the worker stops after persisting the transcript.
+    let mut held = pool.begin().await.unwrap();
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(format!("summary:{encounter_id}"))
+        .execute(&mut *held)
+        .await
+        .unwrap();
+    let mut ctx = echo_worker(pool.clone(), &audio);
+    ctx.limits.visibility_seconds = 2;
+    ctx.limits.lease_interval = Duration::from_millis(300);
+    ctx.limits.lease_timeout = Duration::from_millis(200);
+    ctx.limits.shutdown_drain = Duration::from_millis(100);
+    let ctx = Arc::new(ctx);
+    enqueue(&audio, id).await;
+    let (stop, stopped) = tokio::sync::oneshot::channel();
+    let running_ctx = Arc::clone(&ctx);
+    let task = tokio::spawn(async move {
+        worker::run(
+            &running_ctx,
+            Box::pin(async {
+                let _ = stopped.await;
+            }),
+        )
+        .await;
+    });
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while chunk(&pool, id).await.status != "done" {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    tokio::time::sleep(Duration::from_millis(2200)).await;
+    let visible = audio
+        .sqs
+        .receive_message()
+        .queue_url(&audio.config.stt_queue_url)
+        .wait_time_seconds(0)
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        visible.messages().is_empty(),
+        "renewal keeps the active job hidden past the original lease"
+    );
+    stop.send(()).unwrap();
+    tokio::time::timeout(Duration::from_secs(1), task)
+        .await
+        .unwrap()
+        .unwrap();
+    held.rollback().await.unwrap();
+    let row = chunk(&pool, id).await;
+    // Remove only this synthetic fixture object: successful retry must use the
+    // saved transcript, never download or pay for STT again.
+    audio
+        .s3
+        .delete_object()
+        .bucket(&audio.config.bucket)
+        .key(&row.s3_key)
+        .send()
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(2200)).await;
+    assert_eq!(
+        worker::poll_once(&ctx).await.unwrap(),
+        1,
+        "shutdown did not acknowledge unfinished work"
+    );
+    assert_eq!(transcript_events(&pool, patient_id).await.len(), 1);
+    let repo = PostgresRepository::for_org(pool.clone(), ORG_A);
+    let summaries = repo
+        .get_events(patient_id)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|stored| matches!(stored.event, NoteEvent::EncounterSummarized { .. }))
+        .count();
+    assert_eq!(summaries, 1);
+    assert_eq!(queue_depth(&audio).await, 0);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn final_summary_deadline_retains_transcript_and_goes_to_dlq_without_second_provider_call(
+    pool: PgPool,
+) {
+    use std::time::Duration;
+    let audio = ensure_test_audio_infra().await;
+    let (patient_id, encounter_id) = seed(&pool).await;
+    let id = upload_chunk(
+        &pool,
+        &audio,
+        patient_id,
+        encounter_id,
+        0,
+        true,
+        b"synthetic retained transcript",
+    )
+    .await;
+    let mock = MockSummarizer::new();
+    let captured = mock.captured_transcripts();
+    let mut ctx = echo_worker(pool.clone(), &audio);
+    ctx.summarizer = AppSummarizer::Mock(mock);
+    ctx.limits.job_timeout = Duration::from_millis(800);
+    ctx.limits.terminal_timeout = Duration::from_millis(400);
+    let mut held = pool.begin().await.unwrap();
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(format!("summary:{encounter_id}"))
+        .execute(&mut *held)
+        .await
+        .unwrap();
+    enqueue(&audio, id).await;
+    for _ in 0..3 {
+        assert_eq!(worker::poll_once(&ctx).await.unwrap(), 1);
+    }
+    assert_eq!(worker::poll_once(&ctx).await.unwrap(), 0);
+    let row = chunk(&pool, id).await;
+    assert_eq!(row.status, "done");
+    assert!(row.transcript.is_some());
+    assert!(row.error.is_none());
+    assert!(
+        captured.lock().unwrap().is_empty(),
+        "terminal deadline never re-enters the provider"
+    );
+    assert_eq!(transcript_events(&pool, patient_id).await.len(), 1);
+    assert!(receive_dlq_job(&audio).await.is_some());
+    held.rollback().await.unwrap();
+}
+
 /// The literal Step 6 gate through the same client methods the CLI uses:
 /// authenticated intent, direct presigned PUT, completion, queue worker, cursor
 /// replay, and a transcript on the encounter.
@@ -397,18 +581,13 @@ async fn the_transcript_is_scrubbed_before_the_model_sees_it(pool: PgPool) {
         stt: AppSpeechToText::Mock(MockSpeechToText { echo: true }),
         summarizer: AppSummarizer::Mock(mock),
         wait_time_seconds: 0,
+        limits: er_server::config::WorkerLimits {
+            visibility_seconds: 0,
+            ..Default::default()
+        },
     };
     let raw = b"Mrs. Alvarez MRN 12345678 SSN 111-22-3333 phone 510-555-1234";
-    let chunk_id = upload_chunk(
-        &pool,
-        &audio,
-        patient_id,
-        encounter_id,
-        0,
-        true,
-        raw,
-    )
-    .await;
+    let chunk_id = upload_chunk(&pool, &audio, patient_id, encounter_id, 0, true, raw).await;
     enqueue(&audio, chunk_id).await;
     assert_eq!(drain(&ctx).await, 1);
 
@@ -577,12 +756,13 @@ async fn a_replayed_job_changes_nothing(pool: PgPool) {
         1,
         "duplicate deliveries must not call or persist a second summary"
     );
-    let metered: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM usage_log WHERE org_id = $1 AND kind = 'summarize'")
-            .bind(ORG_A)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let metered: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM usage_log WHERE org_id = $1 AND kind = 'summarize'",
+    )
+    .bind(ORG_A)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
     assert_eq!(metered, 1);
 }
 
