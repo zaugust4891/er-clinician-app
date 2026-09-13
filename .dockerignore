@@ -1,7 +1,33 @@
-target/
-  .git/
-  .env
-  *.db
-  shift.json
-  src/$HOME/
-  **/*.db
+# Source-only build context. New files are excluded until explicitly allowed.
+**
+!Cargo.toml
+!Cargo.lock
+!rust-toolchain.toml
+!.sqlx/*.json
+!certs/rds-global-bundle.pem
+!crates/*/Cargo.toml
+!crates/*/src/**
+!crates/er-server/migrations/*.sql
+!crates/er-ai/prompts/*.md
+
+# Belt-and-suspenders denies even when a future file lands under src/.
+**/.env*
+**/*.db*
+**/*.sqlite*
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+**/*.tfstate*
+**/*.tfplan
+**/shift.json
+**/dev/keys/**
+**/recordings/**
+**/exports/**
+**/*.wav
+**/*.mp3
+**/*.m4a
+**/*.odt
+**/*.rtf
+**/$HOME/**
+!certs/rds-global-bundle.pem

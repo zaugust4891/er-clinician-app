@@ -81,6 +81,12 @@ impl DatabaseConfig {
             .map_err(|_| anyhow::anyhow!("DATABASE_URL is invalid"))?
             .application_name(&format!("er-{process}"))
             .disable_statement_logging();
+        if process == "migration" {
+            // PostgreSQL enforces these on every migration session, including
+            // SQLx's advisory-lock wait and each DDL statement. The executable
+            // also bounds the whole migration run independently.
+            options = options.options([("lock_timeout", "15s"), ("statement_timeout", "300s")]);
+        }
         if env != AppEnv::Dev {
             anyhow::ensure!(
                 options.get_socket().is_none(),

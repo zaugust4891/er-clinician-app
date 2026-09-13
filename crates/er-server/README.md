@@ -1,7 +1,8 @@
-# Server and worker startup (Phase 4, Step 8 S1)
+# Server, worker, and migration startup (Phase 4, Step 8 S1–S2)
 
-This step hardens application startup and resource use. It does not add a
-migration executable, package images, provision infrastructure, or authorize PHI use.
+S1 hardens application startup and resource use. S2 adds a one-shot migration
+binary and a pinned source-only production image. Infrastructure provisioning
+and authorization for PHI use are separate work.
 
 ## Local development
 
@@ -16,8 +17,50 @@ APP_ENV=dev cargo run -p er-server --bin er-worker
 Only explicit `APP_ENV=dev` loads `.env`. Missing/invalid `APP_ENV` exits before
 network access. Dev permits local plaintext Postgres, paired S3/SQS emulator
 endpoints, dev JWKS, direct AI, and mock providers when keys are absent. Use
-synthetic data only with these defaults. The migration configuration parser is
-ready for S2; there is no new migration command in S1.
+synthetic data only with these defaults. The migration process parses only
+its database settings and does not initialize auth, queues, or providers.
+
+## Schema migration and production image
+
+Run the migration with its own database login before updating API or worker
+tasks. The first cloud database setup creates the owner/login roles separately;
+`er-migrate` only applies the checked-in SQLx schema migrations. API and worker
+startup do not apply migrations.
+
+```bash
+APP_ENV=dev cargo run --locked -p er-server --bin er-migrate
+docker build --platform linux/amd64 -t er-note-app:local .
+```
+
+The image contains `/usr/local/bin/er-server`, `er-worker`, and `er-migrate`.
+Its default entrypoint is the API. ECS worker and one-shot migration task
+definitions must set `entryPoint` to the corresponding absolute binary path;
+changing only `command` passes arguments to the API instead.
+
+SQLx's embedded migrator keeps PostgreSQL advisory locking and validates
+applied checksums on every run. The migration connection sets a 15-second lock
+wait limit and a 300-second per-statement limit; the full run has a 600-second
+limit. It exits nonzero for failures and prints only migration version and a
+fixed status. A no-op rerun succeeds. Migration/role changes must be planned
+for compatibility with the previous application image; a deploy rollback does
+not reverse schema migrations.
+
+The pinned image manifests are `linux/amd64` and use the Rust version in
+`rust-toolchain.toml`. The build uses `--locked` and `SQLX_OFFLINE=true` in
+both cargo-chef and final compilation. The runtime has CA certificates and the
+[AWS RDS global bundle](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.SSL.html)
+at `/etc/ssl/certs/rds-global-bundle.pem` (SHA-256
+`e5bb2084ccf45087bda1c9bffdea0eb15ee67f0b91646106e466714f9de3c7e3`).
+Set `DB_SSL_ROOT_CERT` to that path in cloud tasks and review the bundle at
+rotation time.
+
+The Docker context allows only manifests, source, prompts, migrations, SQLx
+metadata, the toolchain file, and this public CA bundle. No development keys,
+`.env`, local database, shift state, test data, or Terraform output enters any
+build layer. `.gitignore` blocks newly created local artifacts; existing
+tracked databases and development keys remain tracked until S0 provenance
+review determines a safe remediation. Do not publish a source archive or
+shared build cache containing those files.
 
 ## Cloud configuration contract
 

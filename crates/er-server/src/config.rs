@@ -85,7 +85,7 @@ pub struct WorkerConfig {
     pub limits: WorkerLimits,
 }
 
-/// Prepared for S2's migration executable; parsing performs no network I/O.
+/// One-shot schema process; parsing performs no network I/O.
 #[derive(Clone)]
 pub struct MigrationConfig {
     pub runtime: RuntimeConfig,

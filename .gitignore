@@ -35,3 +35,29 @@ docs/planning/*
 # Claude Code worktrees live INSIDE the working tree here, so `git add .`
 # would otherwise stage them as embedded-repo gitlinks.
 .claude/
+
+# Local credentials, databases, recordings, exports, and Terraform artifacts.
+# Existing tracked paths are unaffected; review provenance before untracking.
+.env*
+!.env.example
+**/*.db
+**/*.db-*
+**/*.sqlite
+**/*.sqlite3
+**/*.sqlite-wal
+**/*.sqlite-shm
+shift.json
+dev/keys/
+**/*.pem
+!certs/rds-global-bundle.pem
+**/*.key
+**/*.p12
+**/*.pfx
+**/*.tfstate
+**/*.tfstate.*
+**/*.tfplan
+**/terraform.tfvars
+**/*.tfvars
+**/.terraform/
+recordings/
+exports/

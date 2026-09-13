@@ -45,14 +45,15 @@ aws-sdk-s3.workspace = true
 aws-sdk-sqs.workspace = true
 
 
-# One crate, two binaries, one image (phase4.md §6). `cargo build -p er-server`
-# compiles both, and the Step 8 ECS worker service runs the same image with the
-# command overridden — which is why the Dockerfile's builder stage needs no change.
-# The path is declared explicitly so the target is named `er-worker` rather than
-# the `worker` that src/bin/ autodiscovery would infer from the file name.
+# One production image carries separate API, worker, and one-shot migration
+# entrypoints. ECS must override entryPoint, not command, for the latter two.
 [[bin]]
 name = "er-worker"
 path = "src/bin/worker.rs"
+
+[[bin]]
+name = "er-migrate"
+path = "src/bin/migrate.rs"
 
 # Tests drive the server through the real client (S9): `RemoteRepository` runs the
 # same Repository contract suite SQLite and Postgres pass, over HTTP. Only the test

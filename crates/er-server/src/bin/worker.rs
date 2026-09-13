@@ -5,9 +5,8 @@
 //! [`WorkerCtx`] out of the same `Config` and AWS constructors the API server
 //! uses, and then hand it to `worker::run`.
 //!
-//! It ships in the **same image** as `er-server` (`cargo build -p er-server`
-//! compiles both binaries). Step 8's ECS worker service runs that image with the
-//! command overridden — one image, two services, per `phase4.md` §6.
+//! It ships in the same image as the API and migration binaries. The ECS worker
+//! task uses `/usr/local/bin/er-worker` as its explicit entryPoint.
 
 use er_ai::claude::ClaudeSummarizer;
 use er_ai::summarizer::{AppSummarizer, MockSummarizer};
