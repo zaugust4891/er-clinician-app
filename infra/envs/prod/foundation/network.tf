@@ -1,0 +1,27 @@
+# Record the resolved AZ pair after the first plan and pin it in network.availability_zones.
+data "aws_availability_zones" "network" {
+  count = var.enabled ? (var.network.availability_zones == null ? 1 : 0) : 0
+  state = "available"
+  filter {
+    name   = "zone-type"
+    values = ["availability-zone"]
+  }
+}
+
+module "network" {
+  source = "../../../modules/network"
+  count  = var.enabled ? 1 : 0
+
+  name                  = "${var.project}-${local.environment}"
+  aws_region            = var.aws_region
+  availability_zones    = var.network.availability_zones != null ? var.network.availability_zones : slice(sort(data.aws_availability_zones.network[0].names), 0, 2)
+  vpc_cidr              = var.network.vpc_cidr
+  nat_per_az            = var.network.nat_per_az
+  client_ipv4_cidrs     = var.network.client_ipv4_cidrs
+  http_redirect_enabled = var.network.http_redirect_enabled
+  api_https_port        = var.network.api_https_port
+  s3_bucket_arns        = var.network.s3_bucket_arns
+  interface_endpoints   = var.network.interface_endpoints
+
+  depends_on = [terraform_data.account_guard]
+}

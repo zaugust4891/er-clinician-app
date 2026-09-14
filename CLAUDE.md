@@ -46,7 +46,8 @@ Key differentiator: **multi-encounter merging** — captures every interaction a
 - Transcript compaction / ephemeral mode (G7) and structured exam templates (G8) are deferred to later phases
 - Audio upload (S3/SQS/worker) is Phase 4 Step 6; server-side STT and AI generation are Step 7 — today the summarizer still runs **inside the CLI**, and its output syncs up as an ordinary event
 - No device offline queue: if the server is unreachable in remote mode, `EventBus::publish` fails and the command errors visibly (Phase 5 device work)
-- No AWS deployment yet (Terraform/CI is Step 8); everything runs against docker-compose
+- No AWS deployment yet: Step 8 S3–S4 authored the Terraform roots and network under `infra/`, but nothing has
+  been applied to an AWS account and there is no CI. Everything still runs against docker-compose
 
 ## Completed: Phase 2 Audio Pipeline Wiring
 
@@ -314,13 +315,45 @@ crates/
     ├── main.rs interface/cli.rs
     └── bin/       # mdm_standalone.rs spike_summarizer.rs
 dev/keys/          # dev RSA keypair + JWKS for offline auth
-docs/              # architecture / product / planning documents
+docs/              # architecture / product / planning / ops documents
 docker-compose.yml # postgres:5433, minio, elasticmq
+
+infra/             # Terraform (Phase 4 Step 8 S3–S4) — authored, not yet applied
+├── bootstrap/         # state bucket + KMS key + artifact bucket + per-root IAM
+├── modules/manifest/  # publishes the non-secret foundation→release contract
+├── modules/network/   # two-AZ private placement, NAT, SGs and scoped endpoints
+└── envs/
+    ├── staging/{foundation,release}/
+    └── prod/{foundation,release}/   # enabled = false
+scripts/           # dev-token.sh, tf-manifest-guards.sh, tf-lock-check.sh, tf-network-check.sh
 ```
 
 Only `er-cli` and `er-server` are binaries; everything else is a library. `er-server` depends
 on `er-api` for DTOs only — the `client` feature (reqwest, er-store) is enabled by `er-cli` and
 by `er-server`'s dev-dependencies for tests, never by the shipped server binary.
+
+### Terraform state ownership (S3)
+
+Five roots, five state keys in one versioned, KMS-encrypted bucket, locked with the S3
+backend's native `use_lockfile` (no DynamoDB table). Each root gets its own IAM policy that
+allows only its own state object, grants the lock object separately, and **explicitly denies**
+every other root's objects — so a staging credential cannot read production state. Foundation
+owns everything durable; release owns only ECS services and task definitions and learns
+resource names from a published JSON manifest rather than `terraform_remote_state`. Every root
+refuses to run against the wrong AWS account, twice: `allowed_account_ids` on the provider and
+an STS `precondition` that fails during `plan`.
+
+### Terraform networking (S4)
+
+The shared network module provides six subnets in two AZs, isolated database routes,
+one staging NAT, closed ALB client ingress, separate API/worker/migration/onboarding
+SGs, and an S3 gateway endpoint with ECR layer access. Paid interface endpoints are
+opt-in with resource scopes. Foundation publishes task subnet/SG interfaces; subnet
+lists use JSON-encoded strings in the existing manifest. Production stays disabled.
+`scripts/tf-network-check.sh` runs 17 mocked Terraform tests without AWS credentials.
+See `docs/ops/network-verification.md` for cost assumptions, S5–S9 integrations and
+pending live tests. The 8443 SG rule reserves S8's HTTPS listener; it does not add TLS
+to the server or enforce ECS/RDS public-access settings by itself.
 
 ## Key Files
 
@@ -365,5 +398,12 @@ by `er-server`'s dev-dependencies for tests, never by the shipped server binary.
 | `crates/er-server/tests/common/mod.rs` | Shared fixtures: mint, seeds, spawn_server, full_visit_events |
 | `docs/planning/phase4-step5-implementation-steps.md` | Step 5 S0–S11 with the concepts (§C1–§C9) |
 | `docs/planning/phase4-step6-implementation-steps.md` | Step 6 S0–S9: audio upload, SQS worker, Deepgram STT (§C1–§C8) |
+| `infra/README.md` | Root ownership map, why foundation/release are split, how to run a root |
+| `infra/bootstrap/iam.tf` | Per-root state policies: allow own key, deny every other root's |
+| `infra/modules/manifest/` | Foundation→release contract; rejects secret values by variable validation |
+| `docs/ops/deployment-contract.md` | Step 8 S0 decision register + the S3 values to record |
+| `docs/ops/staging-deploy.md` | First-run runbook: bootstrap, state migration, guards, recovery |
+| `scripts/tf-manifest-guards.sh` | Offline negative tests for the manifest's secret-rejection rules |
+| `scripts/tf-lock-check.sh` | Proves two concurrent operations cannot share a state lock (MinIO) |
 | `docs/product/doctor-feedback-responses.md` | Responses to ED doctor's questions |
 | `docs/product/product-summary.md` | Product pitch document |

@@ -61,3 +61,17 @@ dev/keys/
 **/.terraform/
 recordings/
 exports/
+
+# Terraform working files. State, plans, and crash logs can all contain resource
+# detail that does not belong in Git; the provider lock files deliberately do not
+# match these patterns and are committed.
+crash.log
+crash.*.log
+**/backend.hcl
+**/*.auto.tfvars
+**/*_override.tf
+**/*_override.tf.json
+**/override.tf
+**/override.tf.json
+.terraformrc
+terraform.rc

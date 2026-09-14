@@ -1,0 +1,16 @@
+# Copy to terraform.tfvars and fill in verified values. terraform.tfvars is gitignored.
+# The bucket name comes from `terraform -chdir=infra/bootstrap output`.
+#
+# In CI, manifest_version_id and image_digest are passed with -var by the deploy
+# workflow rather than written to a file, because both change every release.
+
+aws_account_id          = "000000000000"
+aws_region              = "us-east-2"
+project                 = "ernote"
+deploy_artifacts_bucket = "ernote-deploy-000000000000-us-east-2"
+
+# manifest_version_id = "abcdEXAMPLEversionid"
+# image_digest        = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+
+# Production services are authored but unprovisioned.
+enabled = false

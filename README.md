@@ -1,5 +1,10 @@
 # ER Clinician App (Work in Progress)
 
+The [Step 8 S0 deployment contract](docs/ops/deployment-contract.md) records the
+synthetic-only staging Region, Bedrock profile evidence, and remaining setup gates.
+Terraform lives in [`infra/`](infra/README.md), and the first-run procedure is in the
+[staging deployment runbook](docs/ops/staging-deploy.md).
+
 `er-clinician-app` is a Rust-based ambient clinical documentation system built for Emergency Department workflows.
 
 Its core goal is to capture fragmented, non-linear encounters across a patient’s full ED stay and turn them into one coherent, billable note.

@@ -1,0 +1,16 @@
+# Copy to terraform.tfvars and fill in verified values. terraform.tfvars is gitignored
+# because it is environment-specific, not because these values are secret.
+#
+# Verify the account first; do not copy it out of a document:
+#   aws sts get-caller-identity --profile ernote-staging-admin
+
+aws_account_id = "000000000000"
+aws_region     = "us-east-2"
+project        = "ernote"
+
+# Optional. Leave unset to delegate trust to the account (an Identity Center
+# administrator can then assume the state roles). Set exact permission-set role ARNs
+# to narrow it:
+# state_operator_principals = [
+#   "arn:aws:iam::000000000000:role/aws-reserved/sso.amazonaws.com/us-east-2/AWSReservedSSO_AdministratorAccess_0123456789abcdef",
+# ]

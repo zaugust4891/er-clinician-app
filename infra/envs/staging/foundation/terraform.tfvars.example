@@ -1,0 +1,20 @@
+# Copy to terraform.tfvars and fill in verified values. terraform.tfvars is gitignored.
+# Bucket and key values come from `terraform -chdir=infra/bootstrap output`.
+
+aws_account_id          = "000000000000"
+aws_region              = "us-east-2"
+project                 = "ernote"
+deploy_artifacts_bucket = "ernote-deploy-000000000000-us-east-2"
+deploy_kms_key_arn      = "arn:aws:kms:us-east-2:000000000000:key/00000000-0000-0000-0000-000000000000"
+
+# Recorded in the manifest so a release traces back to the run that produced it.
+# CI sets this to the commit SHA.
+generated_by = "local"
+
+# Pin the pair selected by the first reviewed plan; these are example AZ names.
+# No client CIDRs until S8 has installed TLS and WAF. No paid interface endpoints.
+network = {
+  availability_zones = ["us-east-2a", "us-east-2b"]
+  vpc_cidr           = "10.40.0.0/16"
+  nat_per_az         = false
+}
