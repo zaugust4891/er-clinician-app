@@ -1,0 +1,35 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "failures"
+  ],
+  "properties": {
+    "failures": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "location",
+          "code",
+          "detail"
+        ],
+        "properties": {
+          "location": {
+            "type": "string",
+            "description": "file:line:col or test name"
+          },
+          "code": {
+            "type": "string",
+            "description": "e.g. E0308, or empty"
+          },
+          "detail": {
+            "type": "string",
+            "description": "the message, one line"
+          }
+        }
+      }
+    }
+  }
+}
