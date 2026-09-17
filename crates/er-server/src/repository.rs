@@ -3,9 +3,9 @@ use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use er_domain::{NoteEvent, PatientId, PatientNote};
 use er_ai::model::cost_micros;
 use er_ai::transport::Usage;
+use er_domain::{NoteEvent, PatientId, PatientNote};
 use er_store::repository::{Repository, StoredEvent};
 use er_store::{StoreError, StoreResult, snapshot_checksum};
 
@@ -103,11 +103,11 @@ pub struct NewUsage<'a> {
 /// repository.rs should not directly return ApiError, because the repository should remain independent from HTTP.
 #[derive(Debug)]
 pub enum InsertChunkOutcome {
-    Created(ChunkRow), // A new row was inserted
-    Retry(ChunkRow), // The identical chunk request was previously inserted
-    ChunkIndexTaken, // A different chunk already owns that encounter position
+    Created(ChunkRow),    // A new row was inserted
+    Retry(ChunkRow),      // The identical chunk request was previously inserted
+    ChunkIndexTaken,      // A different chunk already owns that encounter position
     FinalChunkAlreadySet, // That encounter already has a final chunk
-    ChunkIdMismatch, // The chunk ID exists, but its saved details do not match this request
+    ChunkIdMismatch,      // The chunk ID exists, but its saved details do not match this request
 }
 
 const AUDIO_CHUNKS_PRIMARY_KEY: &str = "audio_chunks_pkey";
@@ -140,7 +140,9 @@ const ONE_ACTIVE_SHIFT_INDEX: &str = "one_active_shift_per_clinician";
 /// which one this server version fills in — but require SQLSTATE 23505 first, so
 /// an unrelated error whose text happens to mention the index can't match.
 fn is_active_shift_violation(e: &sqlx::Error) -> bool {
-    let Some(db) = e.as_database_error() else { return false };
+    let Some(db) = e.as_database_error() else {
+        return false;
+    };
     if db.code().as_deref() != Some("23505") {
         return false; // not unique_violation
     }
@@ -174,18 +176,25 @@ impl PostgresRepository {
         event_id: Uuid,
         payload: serde_json::Value,
         occurred_at: DateTime<Utc>,
-    ) -> StoreResult<StoredEvent>
-    {
+    ) -> StoreResult<StoredEvent> {
         let event: NoteEvent = serde_json::from_value(payload)?;
-        Ok(StoredEvent { sequence_id: sequence_id as u64, event_id, event, occurred_at })
-        
+        Ok(StoredEvent {
+            sequence_id: sequence_id as u64,
+            event_id,
+            event,
+            occurred_at,
+        })
     }
 
     pub async fn patient_registered(&self, patient_id: Uuid) -> StoreResult<bool> {
         let db_hit = sqlx::query_scalar!(
             "SELECT 1 AS one FROM patients WHERE id = $1 AND org_id = $2",
-            patient_id, self.org_id,
-        ).fetch_optional(&self.pool).await.map_err(StoreError::backend)?;
+            patient_id,
+            self.org_id,
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(StoreError::backend)?;
         Ok(db_hit.is_some())
     }
 
@@ -199,7 +208,8 @@ impl PostgresRepository {
         let row = sqlx::query!(
             "SELECT chief_complaint, display_label, created_at
                FROM patients WHERE id = $1 AND org_id = $2",
-            patient_id, self.org_id,
+            patient_id,
+            self.org_id,
         )
         .fetch_optional(&self.pool)
         .await
@@ -222,7 +232,9 @@ impl PostgresRepository {
             r#"INSERT INTO shifts (id, org_id, clinician_id, status)
                VALUES ($1, $2, $3, 'active')
                RETURNING id, started_at, ended_at, status"#,
-            Uuid::now_v7(), self.org_id, clinician_id,
+            Uuid::now_v7(),
+            self.org_id,
+            clinician_id,
         )
         .fetch_one(&self.pool)
         .await;
@@ -243,7 +255,8 @@ impl PostgresRepository {
         let row = sqlx::query!(
             "SELECT id, started_at, ended_at, status
                FROM shifts WHERE id = $1 AND org_id = $2",
-            shift_id, self.org_id,
+            shift_id,
+            self.org_id,
         )
         .fetch_optional(&self.pool)
         .await
@@ -264,7 +277,8 @@ impl PostgresRepository {
             "SELECT id, started_at, ended_at, status
                FROM shifts
               WHERE clinician_id = $1 AND org_id = $2 AND status = 'active'",
-            clinician_id, self.org_id,
+            clinician_id,
+            self.org_id,
         )
         .fetch_optional(&self.pool)
         .await
@@ -289,7 +303,8 @@ impl PostgresRepository {
             r#"UPDATE shifts SET ended_at = now(), status = 'ended'
                 WHERE id = $1 AND org_id = $2 AND status = 'active'
             RETURNING id, started_at, ended_at, status"#,
-            shift_id, self.org_id,
+            shift_id,
+            self.org_id,
         )
         .fetch_optional(&self.pool)
         .await
@@ -317,7 +332,8 @@ impl PostgresRepository {
                JOIN patients p ON p.id = sp.patient_id
               WHERE sp.shift_id = $1 AND p.org_id = $2
               ORDER BY sp.position ASC",
-            shift_id, self.org_id,
+            shift_id,
+            self.org_id,
         )
         .fetch_all(&self.pool)
         .await
@@ -349,9 +365,16 @@ impl PostgresRepository {
         sqlx::query!(
             r#"INSERT INTO patients (id, org_id, created_by, chief_complaint, display_label)
                VALUES ($1, $2, $3, $4, $5)
-               ON CONFLICT (id) DO NOTHING"#,             // retry-safe (§C2)
-            patient_id, self.org_id, created_by, chief_complaint, display_label,
-        ).execute(&mut *tx).await.map_err(StoreError::backend)?;
+               ON CONFLICT (id) DO NOTHING"#, // retry-safe (§C2)
+            patient_id,
+            self.org_id,
+            created_by,
+            chief_complaint,
+            display_label,
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(StoreError::backend)?;
 
         // Attach to the active shift if one exists; next free position.
         // COALESCE(x, 0) = "x, or 0 if x is NULL" — first patient gets position 0.
@@ -363,8 +386,12 @@ impl PostgresRepository {
                  FROM shifts s
                 WHERE s.clinician_id = $1 AND s.status = 'active'
                ON CONFLICT DO NOTHING"#,
-            created_by, patient_id,
-        ).execute(&mut *tx).await.map_err(StoreError::backend)?;
+            created_by,
+            patient_id,
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(StoreError::backend)?;
 
         tx.commit().await.map_err(StoreError::backend)?;
         Ok(())
@@ -769,10 +796,7 @@ impl PostgresRepository {
                 "job id conflict outside this organization",
             ))
         })?;
-        if row.patient_id != patient_id
-            || row.clinician_id != clinician_id
-            || row.kind != kind
-        {
+        if row.patient_id != patient_id || row.clinician_id != clinician_id || row.kind != kind {
             return Err(StoreError::backend(std::io::Error::other(
                 "job id was already used for a different request",
             )));
@@ -799,10 +823,7 @@ impl PostgresRepository {
 
     /// Worker bootstrap lookup. The row discovers tenancy; all later work uses
     /// an organization-scoped repository.
-    pub(crate) async fn job_row_any_org(
-        pool: &PgPool,
-        id: Uuid,
-    ) -> StoreResult<Option<JobRow>> {
+    pub(crate) async fn job_row_any_org(pool: &PgPool, id: Uuid) -> StoreResult<Option<JobRow>> {
         sqlx::query_as::<_, JobRow>(
             r#"SELECT id, org_id, clinician_id, patient_id, kind, status,
                       error, enqueued_at, created_at, updated_at
@@ -849,7 +870,8 @@ impl PostgresRepository {
     }
 
     pub async fn mark_job_failed(&self, id: Uuid, error: &str) -> StoreResult<()> {
-        self.finish_job(id, er_api::job_status::FAILED, Some(error)).await
+        self.finish_job(id, er_api::job_status::FAILED, Some(error))
+            .await
     }
 
     async fn finish_job(&self, id: Uuid, status: &str, error: Option<&str>) -> StoreResult<()> {
@@ -902,15 +924,21 @@ impl PostgresRepository {
 
 #[async_trait]
 impl Repository for PostgresRepository {
-    async fn append_event(&self, patient_id: PatientId, event_id: Uuid, event: NoteEvent) -> StoreResult<u64> {
+    async fn append_event(
+        &self,
+        patient_id: PatientId,
+        event_id: Uuid,
+        event: NoteEvent,
+    ) -> StoreResult<u64> {
         let payload = serde_json::to_value(&event)?;
         let occurred = event.clinical_occurred_at();
         let mut tx = self.pool.begin().await.map_err(StoreError::backend)?;
 
         sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
             .bind(patient_id.to_string())
-            .execute(&mut *tx).await.map_err(StoreError::backend)?; 
-
+            .execute(&mut *tx)
+            .await
+            .map_err(StoreError::backend)?;
 
         let rec = sqlx::query!(
             r#"INSERT INTO events
@@ -918,15 +946,17 @@ impl Repository for PostgresRepository {
                 VALUES ($1, $2, $3, $4, $5, $6)
                 ON CONFLICT (event_id) DO NOTHING
                 RETURNING sequence_id"#,
-                event_id,
-                self.org_id,
-                patient_id,
-                event.event_type(),
-                payload,
-                occurred,
+            event_id,
+            self.org_id,
+            patient_id,
+            event.event_type(),
+            payload,
+            occurred,
         )
-        .fetch_optional(&mut *tx).await.map_err(StoreError::backend)?;
-        
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(StoreError::backend)?;
+
         tx.commit().await.map_err(StoreError::backend)?;
 
         match rec {
@@ -953,14 +983,24 @@ impl Repository for PostgresRepository {
         .fetch_all(&self.pool)
         .await
         .map_err(StoreError::backend)?;
-        
+
         rows.into_iter()
-            .map(|r| Self::to_stored_events_struct(r.sequence_id, r.event_id, r.payload, r.clinical_occurred_at))
+            .map(|r| {
+                Self::to_stored_events_struct(
+                    r.sequence_id,
+                    r.event_id,
+                    r.payload,
+                    r.clinical_occurred_at,
+                )
+            })
             .collect()
-        
     }
 
-    async fn get_events_since(&self, patient_id: PatientId, sequence_id: u64) -> StoreResult<Vec<StoredEvent>> {
+    async fn get_events_since(
+        &self,
+        patient_id: PatientId,
+        sequence_id: u64,
+    ) -> StoreResult<Vec<StoredEvent>> {
         let rows = sqlx::query!(
             r#"
             SELECT
@@ -979,11 +1019,17 @@ impl Repository for PostgresRepository {
         .fetch_all(&self.pool)
         .await
         .map_err(StoreError::backend)?;
-        
+
         rows.into_iter()
-            .map(|r| Self::to_stored_events_struct(r.sequence_id, r.event_id, r.payload, r.clinical_occurred_at))
+            .map(|r| {
+                Self::to_stored_events_struct(
+                    r.sequence_id,
+                    r.event_id,
+                    r.payload,
+                    r.clinical_occurred_at,
+                )
+            })
             .collect()
-        
     }
 
     async fn save_snapshot(
@@ -991,8 +1037,7 @@ impl Repository for PostgresRepository {
         patient_id: PatientId,
         sequence_id: u64,
         snapshot: &PatientNote,
-    ) -> StoreResult<()>
-    {
+    ) -> StoreResult<()> {
         let snapshot_json = serde_json::to_string(snapshot)?;
         let checksum = snapshot_checksum(&snapshot_json);
 
@@ -1016,9 +1061,8 @@ impl Repository for PostgresRepository {
         .execute(&self.pool)
         .await
         .map_err(StoreError::backend)?;
-        
+
         Ok(())
-        
     }
 
     async fn get_latest_snapshot(
@@ -1036,7 +1080,9 @@ impl Repository for PostgresRepository {
         .await
         .map_err(StoreError::backend)?;
 
-        let Some(r) = rec else { return Ok(None); };   // no snapshot → caller does full replay
+        let Some(r) = rec else {
+            return Ok(None);
+        }; // no snapshot → caller does full replay
 
         // Integrity check, identical to SQLite. Mismatch ⇒ treat as "no snapshot"
         // so load_patient_note falls back to replaying the event stream.
@@ -1051,7 +1097,7 @@ impl Repository for PostgresRepository {
         }
 
         let mut note: PatientNote = serde_json::from_str(&r.snapshot)?;
-        note.hydrate();   // rebuild the #[serde(skip)] state trait object from the phase enum
+        note.hydrate(); // rebuild the #[serde(skip)] state trait object from the phase enum
         Ok(Some((r.sequence_id as u64, note)))
     }
 
@@ -1076,7 +1122,6 @@ impl Repository for PostgresRepository {
         .map_err(StoreError::backend)?;
         Ok(n as usize)
     }
-
 }
 
 #[cfg(test)]

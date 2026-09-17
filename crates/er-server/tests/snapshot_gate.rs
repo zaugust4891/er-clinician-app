@@ -15,8 +15,8 @@ use er_store::repository::Repository;
 
 mod common;
 use common::{
-    get, get_json, mint, put_json, seed_org_and_clinician, seed_registered_patient, test_state,
-    ORG_A, ORG_B,
+    ORG_A, ORG_B, get, get_json, mint, put_json, seed_org_and_clinician, seed_registered_patient,
+    test_state,
 };
 
 fn snapshot_url(patient: Uuid) -> String {
@@ -25,11 +25,7 @@ fn snapshot_url(patient: Uuid) -> String {
 
 /// Write a short encounter and return the note it replays to, plus the sequence_id
 /// that note is a checkpoint *of* — the two halves of a `SnapshotUp`.
-async fn seed_note_and_checkpoint(
-    pool: &PgPool,
-    org: Uuid,
-    patient: Uuid,
-) -> (PatientNote, u64) {
+async fn seed_note_and_checkpoint(pool: &PgPool, org: Uuid, patient: Uuid) -> (PatientNote, u64) {
     let repo = PostgresRepository::for_org(pool.clone(), org);
     let encounter = Uuid::now_v7();
     let events = vec![
@@ -74,7 +70,13 @@ async fn snapshot_put_then_get_round_trips(pool: PgPool) {
     let app = routes::router(test_state(pool).await);
     let token = mint("doc-joey-a");
 
-    let (put_status, _) = put_json(&app, &snapshot_url(patient), &token, snapshot_body(checkpoint, &note)).await;
+    let (put_status, _) = put_json(
+        &app,
+        &snapshot_url(patient),
+        &token,
+        snapshot_body(checkpoint, &note),
+    )
+    .await;
     assert_eq!(put_status, 200);
 
     let (get_status, body) = get_json(&app, &snapshot_url(patient), &token).await;
@@ -89,9 +91,15 @@ async fn snapshot_put_then_get_round_trips(pool: PgPool) {
     // And it must be *usable* on arrival: the `state` trait object is #[serde(skip)],
     // so a client deserializes then hydrates — the sequence S9 will perform.
     let mut received: PatientNote = serde_json::from_value(body["snapshot"].clone()).unwrap();
-    assert!(received.state.is_none(), "state does not travel over the wire");
+    assert!(
+        received.state.is_none(),
+        "state does not travel over the wire"
+    );
     received.hydrate();
-    assert!(received.state.is_some(), "hydrate rebuilds behavior from the phase enum");
+    assert!(
+        received.state.is_some(),
+        "hydrate rebuilds behavior from the phase enum"
+    );
     assert_eq!(received.phase, NotePhase::Idle);
     assert_eq!(
         received.encounters[0].transcript.as_deref(),
@@ -109,7 +117,13 @@ async fn repeated_put_replaces_rather_than_accumulates(pool: PgPool) {
     let app = routes::router(test_state(pool.clone()).await);
     let token = mint("doc-joey-a");
 
-    put_json(&app, &snapshot_url(patient), &token, snapshot_body(checkpoint, &note)).await;
+    put_json(
+        &app,
+        &snapshot_url(patient),
+        &token,
+        snapshot_body(checkpoint, &note),
+    )
+    .await;
 
     // A later checkpoint of the same patient, one event further along.
     let repo = PostgresRepository::for_org(pool.clone(), ORG_A);
@@ -121,12 +135,26 @@ async fn repeated_put_replaces_rather_than_accumulates(pool: PgPool) {
     let mut later_note = note.clone();
     er_domain::replay::apply_event(&mut later_note, &later_event);
 
-    let (status, _) = put_json(&app, &snapshot_url(patient), &token, snapshot_body(later_seq, &later_note)).await;
+    let (status, _) = put_json(
+        &app,
+        &snapshot_url(patient),
+        &token,
+        snapshot_body(later_seq, &later_note),
+    )
+    .await;
     assert_eq!(status, 200);
 
-    assert_eq!(repo.snapshot_count().await.unwrap(), 1, "one row per patient");
+    assert_eq!(
+        repo.snapshot_count().await.unwrap(),
+        1,
+        "one row per patient"
+    );
     let (_, body) = get_json(&app, &snapshot_url(patient), &token).await;
-    assert_eq!(body["sequence_id"].as_u64().unwrap(), later_seq, "the newer checkpoint wins");
+    assert_eq!(
+        body["sequence_id"].as_u64().unwrap(),
+        later_seq,
+        "the newer checkpoint wins"
+    );
     assert_eq!(body["snapshot"]["phase"], "Finalizing");
 }
 
@@ -144,7 +172,10 @@ async fn missing_snapshot_is_404_and_replay_still_works(pool: PgPool) {
     let (expected, _) = seed_note_and_checkpoint(&pool, ORG_A, patient).await;
     let app = routes::router(test_state(pool.clone()).await);
 
-    assert_eq!(get(&app, &snapshot_url(patient), Some(&mint("doc-joey-a"))).await, 404);
+    assert_eq!(
+        get(&app, &snapshot_url(patient), Some(&mint("doc-joey-a"))).await,
+        404
+    );
 
     // The fallback path is the point: no snapshot must never mean no note.
     let repo = PostgresRepository::for_org(pool, ORG_A);
@@ -168,8 +199,18 @@ async fn corrupted_snapshot_reads_as_absent_and_self_heals(pool: PgPool) {
     let app = routes::router(test_state(pool.clone()).await);
     let token = mint("doc-joey-a");
 
-    put_json(&app, &snapshot_url(patient), &token, snapshot_body(checkpoint, &note)).await;
-    assert_eq!(get(&app, &snapshot_url(patient), Some(&token)).await, 200, "healthy first");
+    put_json(
+        &app,
+        &snapshot_url(patient),
+        &token,
+        snapshot_body(checkpoint, &note),
+    )
+    .await;
+    assert_eq!(
+        get(&app, &snapshot_url(patient), Some(&token)).await,
+        200,
+        "healthy first"
+    );
 
     // Tamper with the stored note but leave the checksum column alone — exactly
     // what silent storage corruption looks like.
@@ -239,10 +280,16 @@ async fn snapshot_endpoints_are_org_scoped(pool: PgPool) {
         snapshot_body(checkpoint, &forged),
     )
     .await;
-    assert_eq!(intruder_put, 404, "org A cannot overwrite org B's checkpoint");
+    assert_eq!(
+        intruder_put, 404,
+        "org A cannot overwrite org B's checkpoint"
+    );
 
     // And org B's snapshot is untouched by the attempt.
     let (status, body) = get_json(&app, &snapshot_url(patient_b), &mint("doc-peppas-b")).await;
     assert_eq!(status, 200);
-    assert_eq!(body["snapshot"]["phase"], "Idle", "still org B's note, not the forgery");
+    assert_eq!(
+        body["snapshot"]["phase"], "Idle",
+        "still org B's note, not the forgery"
+    );
 }

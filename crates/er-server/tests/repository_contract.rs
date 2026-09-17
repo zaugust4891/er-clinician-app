@@ -76,11 +76,17 @@ async fn suite(repo: Arc<dyn Repository>, new_patient: &PatientFactory) {
     let events = repo.get_events(patient).await.unwrap();
     assert_eq!(events.len(), 3);
     assert_eq!(events[0].sequence_id, seq1);
-    assert_eq!(events[0].event_id, id1, "envelope carries the client-stamped id");
+    assert_eq!(
+        events[0].event_id, id1,
+        "envelope carries the client-stamped id"
+    );
     assert_eq!(events[0].event.event_type(), "AudioStarted");
     match &events[1].event {
         NoteEvent::TranscriptReady { text, .. } => {
-            assert_eq!(text, "chest pain, worse on exertion", "payload round-trips intact")
+            assert_eq!(
+                text, "chest pain, worse on exertion",
+                "payload round-trips intact"
+            )
         }
         other => panic!("expected TranscriptReady, got {other:?}"),
     }
@@ -102,9 +108,18 @@ async fn suite(repo: Arc<dyn Repository>, new_patient: &PatientFactory) {
     let before = repo.event_count().await.unwrap();
     let dup_id = Uuid::now_v7();
     let dup_ev = NoteEvent::data_reviewed(patient, "prior ECG reviewed".to_string());
-    let first = repo.append_event(patient, dup_id, dup_ev.clone()).await.unwrap();
-    let second = repo.append_event(patient, dup_id, dup_ev.clone()).await.unwrap();
-    assert_eq!(first, second, "a retried append returns the original sequence_id");
+    let first = repo
+        .append_event(patient, dup_id, dup_ev.clone())
+        .await
+        .unwrap();
+    let second = repo
+        .append_event(patient, dup_id, dup_ev.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        first, second,
+        "a retried append returns the original sequence_id"
+    );
     assert_eq!(
         repo.event_count().await.unwrap(),
         before + 1,
@@ -155,7 +170,11 @@ async fn seed_org(pool: &PgPool) -> Uuid {
 #[tokio::test]
 async fn sqlite_repository_satisfies_contract() {
     let conn = er_store::db::open_memory_db().unwrap();
-    suite(Arc::new(SqliteRepository::new(conn)), &bare_patient_factory()).await;
+    suite(
+        Arc::new(SqliteRepository::new(conn)),
+        &bare_patient_factory(),
+    )
+    .await;
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -211,7 +230,10 @@ async fn postgres_snapshot_checksum_mismatch_falls_back(pool: PgPool) {
     let encounter = Uuid::now_v7();
 
     let ev = NoteEvent::audio_started(patient, encounter, CaptureMode::Ambient);
-    let seq = repo.append_event(patient, Uuid::now_v7(), ev.clone()).await.unwrap();
+    let seq = repo
+        .append_event(patient, Uuid::now_v7(), ev.clone())
+        .await
+        .unwrap();
     let note = replay(patient, &[ev]);
     repo.save_snapshot(patient, seq, &note).await.unwrap();
     assert!(repo.get_latest_snapshot(patient).await.unwrap().is_some());
@@ -284,8 +306,12 @@ async fn postgres_full_lifecycle_survives_reload(pool: PgPool) {
     bus.publish(NoteEvent::audio_stopped(patient, encounter), &store)
         .await
         .unwrap();
-    bus.publish(NoteEvent::trigger_mdm(patient), &store).await.unwrap();
-    bus.publish(NoteEvent::review_ready(patient), &store).await.unwrap();
+    bus.publish(NoteEvent::trigger_mdm(patient), &store)
+        .await
+        .unwrap();
+    bus.publish(NoteEvent::review_ready(patient), &store)
+        .await
+        .unwrap();
     bus.publish(NoteEvent::sign(patient), &store).await.unwrap();
 
     assert_eq!(store.get(&patient).unwrap().phase, NotePhase::Signed);

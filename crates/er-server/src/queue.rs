@@ -38,11 +38,7 @@ pub enum Job {
 /// Returns `anyhow::Result` rather than `ApiError`: this is transport plumbing
 /// with no opinion about HTTP status codes, and the caller is the only layer that
 /// knows what a send failure means for the request it is answering.
-pub async fn send_job(
-    sqs: &aws_sdk_sqs::Client,
-    queue_url: &str,
-    job: &Job,
-) -> anyhow::Result<()> {
+pub async fn send_job(sqs: &aws_sdk_sqs::Client, queue_url: &str, job: &Job) -> anyhow::Result<()> {
     let body = serde_json::to_string(job).context("serialize background job")?;
     sqs.send_message()
         .queue_url(queue_url)

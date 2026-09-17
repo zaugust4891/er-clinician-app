@@ -13,7 +13,7 @@ use er_server::routes;
 
 mod common;
 use common::{
-    get, get_json, mint, post_empty, post_json, seed_org_and_clinician, test_state, ORG_A, ORG_B,
+    ORG_A, ORG_B, get, get_json, mint, post_empty, post_json, seed_org_and_clinician, test_state,
 };
 
 const SHIFTS: &str = "/v1/shifts";
@@ -58,7 +58,10 @@ async fn start_shift_returns_an_active_shift(pool: PgPool) {
     assert_eq!(status, 200);
     assert_eq!(body["status"], "active");
     assert!(body["ended_at"].is_null(), "a new shift has not ended");
-    assert!(body["patients"].as_array().unwrap().is_empty(), "nobody on it yet");
+    assert!(
+        body["patients"].as_array().unwrap().is_empty(),
+        "nobody on it yet"
+    );
     assert!(!shift_id_of(&body).is_empty());
 }
 
@@ -75,7 +78,10 @@ async fn starting_a_second_shift_is_409(pool: PgPool) {
     assert_eq!(first, 200);
 
     let (second, body) = post_empty(&app, SHIFTS, &token).await;
-    assert_eq!(second, 409, "a unique-index violation must surface as Conflict, not 500");
+    assert_eq!(
+        second, 409,
+        "a unique-index violation must surface as Conflict, not 500"
+    );
     assert_eq!(body["error"], "shift_already_active");
 }
 
@@ -131,7 +137,11 @@ async fn active_shift_resumes_with_the_roster_in_registration_order(pool: PgPool
     let (status, body) = get_json(&app, ACTIVE, &token).await;
 
     assert_eq!(status, 200);
-    assert_eq!(shift_id_of(&body), expected_id, "the same shift, recovered from the token alone");
+    assert_eq!(
+        shift_id_of(&body),
+        expected_id,
+        "the same shift, recovered from the token alone"
+    );
 
     let roster: Vec<&str> = body["patients"]
         .as_array()
@@ -164,7 +174,10 @@ async fn get_shift_by_id_matches_the_active_shift(pool: PgPool) {
     let (_, by_active) = get_json(&app, ACTIVE, &token).await;
 
     assert_eq!(status, 200);
-    assert_eq!(by_id, by_active, "both routes describe the same shift identically");
+    assert_eq!(
+        by_id, by_active,
+        "both routes describe the same shift identically"
+    );
 }
 
 #[sqlx::test]
@@ -173,7 +186,10 @@ async fn unknown_shift_id_is_404(pool: PgPool) {
     let app = routes::router(test_state(pool).await);
 
     let ghost = Uuid::now_v7().to_string();
-    assert_eq!(get(&app, &shift_url(&ghost), Some(&mint("doc-joey-a"))).await, 404);
+    assert_eq!(
+        get(&app, &shift_url(&ghost), Some(&mint("doc-joey-a"))).await,
+        404
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -199,7 +215,10 @@ async fn ending_a_shift_is_idempotent(pool: PgPool) {
 
     let (second_status, second) = post_empty(&app, &end_url(&id), &token).await;
     assert_eq!(second_status, 200, "a retry succeeds");
-    assert_eq!(second, first, "and returns the identical body — ended_at must not move");
+    assert_eq!(
+        second, first,
+        "and returns the identical body — ended_at must not move"
+    );
 }
 
 /// Once ended, the shift stops being "what I'm in the middle of", and the
@@ -214,7 +233,11 @@ async fn ending_clears_active_and_allows_a_new_shift(pool: PgPool) {
     let first_id = shift_id_of(&started);
     post_empty(&app, &end_url(&first_id), &token).await;
 
-    assert_eq!(get(&app, ACTIVE, Some(&token)).await, 404, "no shift in progress");
+    assert_eq!(
+        get(&app, ACTIVE, Some(&token)).await,
+        404,
+        "no shift in progress"
+    );
 
     let (status, next) = post_empty(&app, SHIFTS, &token).await;
     assert_eq!(status, 200, "the index no longer blocks a new shift");
@@ -254,7 +277,11 @@ async fn shifts_are_org_scoped(pool: PgPool) {
     let a_id = shift_id_of(&a_shift);
 
     let intruder = mint("doc-peppas-b");
-    assert_eq!(get(&app, &shift_url(&a_id), Some(&intruder)).await, 404, "cannot read");
+    assert_eq!(
+        get(&app, &shift_url(&a_id), Some(&intruder)).await,
+        404,
+        "cannot read"
+    );
 
     let (end_status, _) = post_empty(&app, &end_url(&a_id), &intruder).await;
     assert_eq!(end_status, 404, "cannot end");
@@ -265,5 +292,8 @@ async fn shifts_are_org_scoped(pool: PgPool) {
     // And org A's shift is untouched by the attempt.
     let (status, still) = get_json(&app, &shift_url(&a_id), &mint("doc-joey-a")).await;
     assert_eq!(status, 200);
-    assert_eq!(still["status"], "active", "the intruder's end must not have landed");
+    assert_eq!(
+        still["status"], "active",
+        "the intruder's end must not have landed"
+    );
 }

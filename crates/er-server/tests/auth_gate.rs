@@ -12,23 +12,23 @@ use er_store::repository::Repository; // .append_event is a trait method
 
 mod common;
 use common::{
-    get, get_json, mint, patient_row_count, post_json, seed_active_shift, seed_org_and_clinician,
-    seed_registered_patient, test_state, ORG_A, ORG_B,
+    ORG_A, ORG_B, get, get_json, mint, patient_row_count, post_json, seed_active_shift,
+    seed_org_and_clinician, seed_registered_patient, test_state,
 };
 
 /*
-NOTES on the following helper function seed_patient_events(): 
-- Writes a minimal event stream for a brand-new patient in `org_id`, returning the patient id. 
+NOTES on the following helper function seed_patient_events():
+- Writes a minimal event stream for a brand-new patient in `org_id`, returning the patient id.
   Uses the org-scoped repo so the events carry `org_id` — which is what the cross-tenant 404 relies on.
 
-- A patient's event stream scoped to one org, and hand back that patient's id so the test can then request 
+- A patient's event stream scoped to one org, and hand back that patient's id so the test can then request
   /v1/patients/{id}/note as different clinicians and check tenant isolation.
 
-- The key is that it writes through PostgresRepository::for_org(pool, org_id) — the same org-scoped path production uses. 
+- The key is that it writes through PostgresRepository::for_org(pool, org_id) — the same org-scoped path production uses.
   That's what stamps org_id onto the events rows, which is exactly what makes the cross-tenant query come back empty later.
 
-- Signature append_event(patient_id, event_id, event) (repository.rs:46). event_id is the row's identity 
-  (dedup key for the ON CONFLICT (event_id) DO NOTHING), distinct from patient_id. 
+- Signature append_event(patient_id, event_id, event) (repository.rs:46). event_id is the row's identity
+  (dedup key for the ON CONFLICT (event_id) DO NOTHING), distinct from patient_id.
   A fresh Uuid::now_v7() per call is right.
 
 - Repository must be imported as a trait, even though we never name it — .append_event is a trait method,
@@ -36,14 +36,14 @@ NOTES on the following helper function seed_patient_events():
 
 - Why audio_started specifically: I picked the one event that both constructs trivially and replays cleanly from a fresh Registered note.
   replay.rs:30, AudioStarted drives the state machine to Encountering and pushes an encounter
-  no dependency on prior events. 
-  Most other events (MedicationRecorded, DataReviewed, DispositionSet, …) are guarded by can_ingest_results() 
+  no dependency on prior events.
+  Most other events (MedicationRecorded, DataReviewed, DispositionSet, …) are guarded by can_ingest_results()
   and would be silently dropped from a bare note, leaving the stream effectively empty.
   The test only asserts the status code, so a single audio_started giving a valid non-empty note is all you need. (The handler will return hpi: null, which is fine.)
-  
-- Ordering / FK requirement: the tenancy migration back-fills events.org_id → orgs(id) (migration line 20). 
-  So the org row must exist before you append events into it. In test 3 that's already satisfied — 
-  seed_org_and_clinician(&pool, ORG_B, "doc-b") runs before seed_patient_events(&pool, ORG_B). 
+
+- Ordering / FK requirement: the tenancy migration back-fills events.org_id → orgs(id) (migration line 20).
+  So the org row must exist before you append events into it. In test 3 that's already satisfied —
+  seed_org_and_clinician(&pool, ORG_B, "doc-b") runs before seed_patient_events(&pool, ORG_B).
   If you ever call seed_patient_events for an org you didn't seed first, the insert fails the foreign key.
 */
 
@@ -65,7 +65,6 @@ async fn seed_patient_events(pool: &PgPool, org_id: Uuid) -> Uuid {
     patient_id
 }
 
-
 #[sqlx::test]
 async fn no_token_is_401_and_healthz_is_open(pool: PgPool) {
     let app = routes::router(test_state(pool).await);
@@ -77,7 +76,10 @@ async fn no_token_is_401_and_healthz_is_open(pool: PgPool) {
 async fn dev_token_reaches_me(pool: PgPool) {
     seed_org_and_clinician(&pool, ORG_A, "test-doc-cusamano").await;
     let app = routes::router(test_state(pool).await);
-    assert_eq!(get(&app, "/v1/me", Some(&mint("test-doc-cusamano"))).await, 200);
+    assert_eq!(
+        get(&app, "/v1/me", Some(&mint("test-doc-cusamano"))).await,
+        200
+    );
 }
 
 /// Key here: "belongs to another org" and "doesn't exist" are indistinguishable to the caller.
@@ -90,11 +92,35 @@ async fn cross_tenant_fails_closed_with_404(pool: PgPool) {
 
     let app = routes::router(test_state(pool).await);
     // Org-A token asks for org-B's patient: 404, NOT 403 - existence is NOT confirmed.
-    assert_eq!(get(&app, &format!("/v1/patients/{patient_b}/note"), Some(&mint("doc-joey-a"))).await, 404);
+    assert_eq!(
+        get(
+            &app,
+            &format!("/v1/patients/{patient_b}/note"),
+            Some(&mint("doc-joey-a"))
+        )
+        .await,
+        404
+    );
     // Sanity: the rightful owner sees it.
-    assert_eq!(get(&app, &format!("/v1/patients/{patient_b}/note"), Some(&mint("doc-peppas-b"))).await, 200);
+    assert_eq!(
+        get(
+            &app,
+            &format!("/v1/patients/{patient_b}/note"),
+            Some(&mint("doc-peppas-b"))
+        )
+        .await,
+        200
+    );
     // And a random never-existed id is the SAME 404 for doc-peppas-b - indistinguishability.
-    assert_eq!(get(&app, &format!("/v1/patients/{}/note", Uuid::now_v7()), Some(&mint("doc-peppas-b"))).await, 404);
+    assert_eq!(
+        get(
+            &app,
+            &format!("/v1/patients/{}/note", Uuid::now_v7()),
+            Some(&mint("doc-peppas-b"))
+        )
+        .await,
+        404
+    );
 }
 
 /// S3's deliberate behavior change: "registered, but nothing has happened yet" is a
@@ -106,7 +132,12 @@ async fn registered_patient_with_no_events_is_200_not_404(pool: PgPool) {
     let patient = seed_registered_patient(&pool, ORG_A).await; // registered, zero events
 
     let app = routes::router(test_state(pool).await);
-    let (status, body) = get_json(&app, &format!("/v1/patients/{patient}/note"), &mint("doc-joey-a")).await;
+    let (status, body) = get_json(
+        &app,
+        &format!("/v1/patients/{patient}/note"),
+        &mint("doc-joey-a"),
+    )
+    .await;
 
     assert_eq!(status, 200);
     assert_eq!(body["phase"], "Registered");
@@ -134,7 +165,11 @@ async fn registering_twice_is_idempotent(pool: PgPool) {
     assert_eq!(first, 200, "first registration");
     assert_eq!(second, 200, "replay of the same registration");
     assert_eq!(first_body["patient_id"], second_body["patient_id"]);
-    assert_eq!(patient_row_count(&pool, patient_id).await, 1, "exactly one row");
+    assert_eq!(
+        patient_row_count(&pool, patient_id).await,
+        1,
+        "exactly one row"
+    );
 }
 
 #[sqlx::test]
@@ -154,7 +189,11 @@ async fn empty_chief_complaint_is_400(pool: PgPool) {
     .await;
 
     assert_eq!(status, 400);
-    assert_eq!(patient_row_count(&pool, patient_id).await, 0, "rejected before insert");
+    assert_eq!(
+        patient_row_count(&pool, patient_id).await,
+        0,
+        "rejected before insert"
+    );
 }
 
 /// The other half of the guard: registration is org-scoped, so a patient announced
@@ -177,8 +216,16 @@ async fn patient_registered_by_another_org_is_404(pool: PgPool) {
     assert_eq!(registered, 200);
 
     let note = format!("/v1/patients/{patient_id}/note");
-    assert_eq!(get(&app, &note, Some(&mint("doc-joey-a"))).await, 404, "org A must not see it");
-    assert_eq!(get(&app, &note, Some(&mint("doc-peppas-b"))).await, 200, "org B owns it");
+    assert_eq!(
+        get(&app, &note, Some(&mint("doc-joey-a"))).await,
+        404,
+        "org A must not see it"
+    );
+    assert_eq!(
+        get(&app, &note, Some(&mint("doc-peppas-b"))).await,
+        200,
+        "org B owns it"
+    );
 }
 
 /// The second half of `register_patient`: a patient announced while a shift is

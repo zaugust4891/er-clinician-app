@@ -14,7 +14,7 @@ pub mod state;
 
 // Re-export core types for convenience.
 pub use audit::{AuditAction, AuditEntry};
-pub use diagnosis::Diagnosis; 
+pub use diagnosis::Diagnosis;
 pub use disposition::Disposition;
 pub use encounter::{CaptureMode, Encounter, EncounterId};
 pub use error::{DomainError, DomainResult};

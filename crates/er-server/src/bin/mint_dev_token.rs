@@ -6,19 +6,27 @@ use std::fs;
 const KID: &str = "dev-key-1";
 
 fn jwks() -> anyhow::Result<()> {
+    use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
     use rsa::{RsaPublicKey, pkcs8::DecodePublicKey, traits::PublicKeyParts};
-    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
     let key = RsaPublicKey::from_public_key_pem(&fs::read_to_string("dev/keys/dev_public.pem")?)?;
-    let (n, e) = (URL_SAFE_NO_PAD.encode(key.n().to_bytes_be()),
-                  URL_SAFE_NO_PAD.encode(key.e().to_bytes_be()));
-    println!("{}", serde_json::json!({ "keys": [{
-        "kty": "RSA", "alg": "RS256", "use": "sig", "kid": KID, "n": n, "e": e }] }));
+    let (n, e) = (
+        URL_SAFE_NO_PAD.encode(key.n().to_bytes_be()),
+        URL_SAFE_NO_PAD.encode(key.e().to_bytes_be()),
+    );
+    println!(
+        "{}",
+        serde_json::json!({ "keys": [{
+        "kty": "RSA", "alg": "RS256", "use": "sig", "kid": KID, "n": n, "e": e }] })
+    );
     Ok(())
 }
 
 fn token(sub: &str) -> anyhow::Result<()> {
     let header = jsonwebtoken::Header {
-        alg: jsonwebtoken::Algorithm::RS256, kid: Some(KID.into()), ..Default::default() };
+        alg: jsonwebtoken::Algorithm::RS256,
+        kid: Some(KID.into()),
+        ..Default::default()
+    };
     let key = jsonwebtoken::EncodingKey::from_rsa_pem(&fs::read("dev/keys/dev_private.pem")?)?;
     let claims = serde_json::json!({
         "sub": sub,
@@ -44,9 +52,7 @@ fn main() -> anyhow::Result<()> {
             token(sub)
         }
         _ => {
-            anyhow::bail!(
-                "usage:\n  mint_dev_token jwks\n  mint_dev_token token --sub <subject>"
-            );
+            anyhow::bail!("usage:\n  mint_dev_token jwks\n  mint_dev_token token --sub <subject>");
         }
     }
 }

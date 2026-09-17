@@ -7,16 +7,16 @@ use std::{
 
 use uuid::Uuid;
 
+use er_ai::summarizer::Summarizer;
+use er_api::client::ServerApi;
 use er_app::conversions::diagnosis::parse_diagnosis;
 use er_app::conversions::disposition::{format_disposition_for_cli, parse_disposition};
 use er_app::conversions::labs::parse_string_to_f64;
 use er_app::conversions::medication::parse_medication;
-use er_api::client::ServerApi;
-use er_app::shift_manager::ShiftManager;
-use er_domain::{CaptureMode, ClinicalResult, Disposition, LabResult, MedicationKind};
 use er_app::error::AppError::NoActivePatient;
 use er_app::error::{AppError, AppResult};
-use er_ai::summarizer::Summarizer;
+use er_app::shift_manager::ShiftManager;
+use er_domain::{CaptureMode, ClinicalResult, Disposition, LabResult, MedicationKind};
 use er_pipeline::audio::AudioCapture;
 use er_pipeline::stt::Transcriber;
 use er_store::{StoreError, StoreResult};
@@ -63,7 +63,7 @@ pub enum Command {
     Mdm,
     Review,
     Sign,
-    Note, // print formatted note
+    Note,       // print formatted note
     Transcript, // print raw encounter transcripts
     Export,
     Reload, // rehydrate from repository
@@ -448,17 +448,11 @@ fn observation_message(outcome: &ObservationOutcome) -> String {
 }
 
 trait JobStatusSource {
-    fn job(
-        &self,
-        job_id: Uuid,
-    ) -> impl Future<Output = StoreResult<er_api::JobView>> + Send;
+    fn job(&self, job_id: Uuid) -> impl Future<Output = StoreResult<er_api::JobView>> + Send;
 }
 
 impl JobStatusSource for ServerApi {
-    fn job(
-        &self,
-        job_id: Uuid,
-    ) -> impl Future<Output = StoreResult<er_api::JobView>> + Send {
+    fn job(&self, job_id: Uuid) -> impl Future<Output = StoreResult<er_api::JobView>> + Send {
         ServerApi::job(self, job_id)
     }
 }
@@ -913,12 +907,12 @@ where
 
             println!("MDM generated and note moved to Finalizing.");
             println!("── MDM ──────────────────────────────────────");
-            if let Some(patient_id) = manager.active_patient_id() {
-                if let Some(note) = manager.get_note(patient_id) {
-                    match note.note_sections.mdm.as_deref() {
-                        Some(mdm) => println!("{}", mdm_preview(mdm)),
-                        None => println!("<no MDM text generated>"),
-                    }
+            if let Some(patient_id) = manager.active_patient_id()
+                && let Some(note) = manager.get_note(patient_id)
+            {
+                match note.note_sections.mdm.as_deref() {
+                    Some(mdm) => println!("{}", mdm_preview(mdm)),
+                    None => println!("<no MDM text generated>"),
                 }
             }
             println!("(run 'note' or 'export' to see the full note)");
@@ -987,7 +981,11 @@ where
             let replayed_count = manager.reload_active_patient()?;
             // Identical code path either way — only the sentence changes, so the
             // operator can see which store just answered.
-            let source = if remote.is_some() { "the server" } else { "SQLite" };
+            let source = if remote.is_some() {
+                "the server"
+            } else {
+                "SQLite"
+            };
             println!("Reloaded active patient from {source}. Replayed {replayed_count} events.");
             Ok(true)
         }
@@ -996,7 +994,7 @@ where
             let patient_count = manager.list_patients().len();
             let active_patient = manager
                 .active_patient_id()
-                .map(|id| short_id(id))
+                .map(short_id)
                 .unwrap_or_else(|| "none".to_string());
             let event_count = manager.event_count()?;
             let snapshot_count = manager.snapshot_count()?;
@@ -1053,14 +1051,14 @@ mod tests {
         atomic::{AtomicUsize, Ordering},
     };
 
+    use er_ai::summarizer::MockSummarizer;
     use er_app::EventBus;
     use er_app::encounter_driver::EncounterDriver;
     use er_app::load;
     use er_domain::{PatientId, PatientRecord, Shift};
-    use er_ai::summarizer::MockSummarizer;
     use er_pipeline::audio::MockAudioCapture;
-    use er_store::repository::{Repository, SqliteRepository};
     use er_pipeline::stt::MockTranscriber;
+    use er_store::repository::{Repository, SqliteRepository};
 
     fn test_manager() -> ShiftManager<MockAudioCapture, MockTranscriber, MockSummarizer> {
         let conn = er_store::db::open_memory_db().unwrap();
@@ -1186,10 +1184,7 @@ mod tests {
 
     impl JobStatusSource for FakeJobStatusSource {
         #[allow(clippy::manual_async_fn)]
-        fn job(
-            &self,
-            job_id: Uuid,
-        ) -> impl Future<Output = StoreResult<er_api::JobView>> + Send {
+        fn job(&self, job_id: Uuid) -> impl Future<Output = StoreResult<er_api::JobView>> + Send {
             async move {
                 self.calls.fetch_add(1, Ordering::SeqCst);
                 let status = self.statuses.lock().unwrap().pop_front().unwrap();
@@ -1256,7 +1251,10 @@ mod tests {
         );
     }
 
-    fn run(manager: &mut ShiftManager<MockAudioCapture, MockTranscriber, MockSummarizer>, parts: &[&str]) {
+    fn run(
+        manager: &mut ShiftManager<MockAudioCapture, MockTranscriber, MockSummarizer>,
+        parts: &[&str],
+    ) {
         let args: Vec<String> = parts.iter().map(|p| p.to_string()).collect();
         let command = Commands::new(&args).unwrap();
         assert!(handle_command(manager, command, None).unwrap());
@@ -1269,8 +1267,14 @@ mod tests {
         manager.set_active_patient(patient_id).unwrap();
 
         run(&mut manager, &["med", "given", "Aspirin", "324mg", "PO"]);
-        run(&mut manager, &["dx", "\"Acute", "PE\"", "--primary", "I26.99"]);
-        run(&mut manager, &["data", "\"CTA", "chest:", "PE", "in", "RLL\""]);
+        run(
+            &mut manager,
+            &["dx", "\"Acute", "PE\"", "--primary", "I26.99"],
+        );
+        run(
+            &mut manager,
+            &["data", "\"CTA", "chest:", "PE", "in", "RLL\""],
+        );
 
         let note = manager.get_note(patient_id).unwrap();
 

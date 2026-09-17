@@ -1,5 +1,11 @@
-use axum::{Json, Router, http::StatusCode, middleware, response::IntoResponse, routing::{get, post, put}};
-use axum::extract::{State, Path, Query};
+use axum::extract::{Path, Query, State};
+use axum::{
+    Json, Router,
+    http::StatusCode,
+    middleware,
+    response::IntoResponse,
+    routing::{get, post, put},
+};
 
 use er_store::Repository;
 use serde_json::json;
@@ -8,10 +14,13 @@ use uuid::Uuid;
 
 use aws_sdk_s3::presigning::PresigningConfig;
 
+use crate::error::ApiError;
 use crate::queue;
 use crate::repository::{ChunkRow, InsertChunkOutcome, JobRow, NewChunk, PostgresRepository};
-use crate::error::ApiError;
-use crate::{auth::{self, AuthedClinician}, state::AppState};
+use crate::{
+    auth::{self, AuthedClinician},
+    state::AppState,
+};
 
 // Log identifiers, never content.
 // patient_id = %id is safe; payload = ?event is not because an event can contain a transcript.
@@ -20,7 +29,7 @@ use crate::{auth::{self, AuthedClinician}, state::AppState};
 /// caputre state clone so Middleware's State(state) parameter can be injected as require_auth's State<AppState> first argument.
 /// So Router<AppState> becomes Router<()> aka Router which we return from fn router()
 /// `Router<()>` can be served by `axum::serve`, because "state `()` means nothing left to inject.
-/// '.route_layer' applies only to requests that match a route already on this router. 
+/// '.route_layer' applies only to requests that match a route already on this router.
 /// A request that matches no route here falls through to the verified router's '/healthz' (or 404) without running 'require_auth'
 /// '.layer' would wrap everything, including the fallback - which would run auth on unmatched paths and if placed globally, on '/healthz'
 /// using '.route_layer' scopes the gate to '/v1' routes and leaves the health probe open (no token) for load balancer
@@ -42,8 +51,14 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/audio/{chunk_id}", get(audio_status))
         // Same path, two methods: chain onto ONE MethodRouter. A second `.route()`
         // with an identical path string panics at construction ("Overlapping method route").
-        .route("/v1/patients/{id}/events", post(append_events).get(events_since))
-        .route("/v1/patients/{id}/snapshot", put(put_snapshot).get(get_snapshot))
+        .route(
+            "/v1/patients/{id}/events",
+            post(append_events).get(events_since),
+        )
+        .route(
+            "/v1/patients/{id}/snapshot",
+            put(put_snapshot).get(get_snapshot),
+        )
         .route("/v1/patients/{id}/note/export", get(note_export))
         // `/active` is a literal and `{id}` a capture; axum matches literals first,
         // so the resume route is never swallowed by the by-id route.
@@ -52,8 +67,11 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/shifts/{id}", get(get_shift))
         .route("/v1/shifts/{id}/end", post(end_shift))
         .route("/v1/stats", get(stats))
-        .route_layer(middleware::from_fn_with_state(state.clone(), auth::middleware::require_auth));
-    
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::middleware::require_auth,
+        ));
+
     // No auth - load balancer probe. This is the tail expression (no `let`, no `;`),
     // so its value — a Router<()> after `.with_state` — is what `router` returns.
     Router::new()
@@ -70,7 +88,11 @@ async fn me(authed: AuthedClinician) -> impl IntoResponse {
     Json(json!({ "clinician_id": authed.clinician_id, "org_id": authed.org_id }))
 }
 
-async fn patient_note(State(state): State<AppState>, authed: AuthedClinician, Path(patient_id): Path<Uuid>) -> Result<Json<er_api::NoteView>, ApiError> {
+async fn patient_note(
+    State(state): State<AppState>,
+    authed: AuthedClinician,
+    Path(patient_id): Path<Uuid>,
+) -> Result<Json<er_api::NoteView>, ApiError> {
     let repo = state.repo_for(&authed); // the ONLY data-access pattern
     // Guard first, load second. 'Patient not in your org' and 'patient doesn't exist' both become 404 here,
     // treats 'no events' ->  a registered patient nothing has happened to yet.
@@ -78,22 +100,23 @@ async fn patient_note(State(state): State<AppState>, authed: AuthedClinician, Pa
     // `?` alone — no map_err. `impl From<StoreError> for ApiError` (error.rs) turns a
     // storage failure into ApiError::Internal, which logs the cause and tells the
     // caller nothing but 500.
-    let repository: &dyn er_store::Repository = &repo; 
+    let repository: &dyn er_store::Repository = &repo;
     let loaded_note = er_app::load_patient_note(repository, patient_id).await;
-    let loaded_note = loaded_note
-        .map_err(|e| ApiError::Internal(anyhow::Error::new(e)))?;
+    let loaded_note = loaded_note.map_err(|e| ApiError::Internal(anyhow::Error::new(e)))?;
     let patient_note = loaded_note.unwrap_or_else(|| er_domain::PatientNote::new(patient_id));
     Ok(Json(er_api::NoteView::from(&patient_note)))
 }
 
-async fn ensure_patient_in_org(repo: &PostgresRepository, patient_id: Uuid) -> Result<(), ApiError> {
+async fn ensure_patient_in_org(
+    repo: &PostgresRepository,
+    patient_id: Uuid,
+) -> Result<(), ApiError> {
     if repo.patient_registered(patient_id).await? {
         Ok(())
     } else {
         Err(ApiError::NotFound)
     }
 }
-
 
 async fn register_patient(
     State(state): State<AppState>,
@@ -105,11 +128,12 @@ async fn register_patient(
     }
     let repo = state.repo_for(&authed);
     repo.register_patient(
-        body.patient_id, 
-        authed.clinician_id, 
-        &body.chief_complaint, 
+        body.patient_id,
+        authed.clinician_id,
+        &body.chief_complaint,
         body.display_label.as_deref(),
-    ).await?;
+    )
+    .await?;
 
     Ok(Json(er_api::PatientView {
         patient_id: body.patient_id,
@@ -138,8 +162,8 @@ async fn request_mdm(
     let inserted = repo
         .insert_job(body.job_id, patient_id, authed.clinician_id, "mdm")
         .await?;
-    let should_enqueue = inserted.row.status == er_api::job_status::QUEUED
-        && inserted.row.enqueued_at.is_none();
+    let should_enqueue =
+        inserted.row.status == er_api::job_status::QUEUED && inserted.row.enqueued_at.is_none();
 
     if should_enqueue {
         queue::send_job(
@@ -276,7 +300,6 @@ async fn audio_upload_intent(
     }))
 }
 
-
 // ---------------------------------------------------------------------------
 // Step 6 S4 — completion + enqueue, and the ledger read the device polls
 // ---------------------------------------------------------------------------
@@ -297,7 +320,10 @@ fn chunk_view(row: &ChunkRow) -> Result<er_api::ChunkView, ApiError> {
     // API; answering 500 says that, where a saturating cast would hand the
     // device a plausible-looking index for a corrupt row.
     let chunk_index = u32::try_from(row.chunk_index).map_err(|_| {
-        ApiError::Internal(anyhow::anyhow!("audio chunk {} has a negative index", row.id))
+        ApiError::Internal(anyhow::anyhow!(
+            "audio chunk {} has a negative index",
+            row.id
+        ))
     })?;
 
     Ok(er_api::ChunkView {
@@ -339,9 +365,7 @@ async fn verify_chunk_object(state: &AppState, row: &ChunkRow) -> Result<(), Api
             {
                 ApiError::Conflict("chunk_not_uploaded")
             } else {
-                ApiError::Internal(
-                    anyhow::anyhow!("audio_metadata_unavailable"),
-                )
+                ApiError::Internal(anyhow::anyhow!("audio_metadata_unavailable"))
             }
         })?;
 
@@ -452,7 +476,6 @@ async fn append_events(
     Path(patient_id): Path<Uuid>,
     Json(body): Json<er_api::AppendEventsRequest>,
 ) -> Result<Json<er_api::AppendEventsResponse>, ApiError> {
-
     if body.events.is_empty() {
         return Err(ApiError::Validation("empty_batch"));
     }
@@ -476,7 +499,7 @@ async fn append_events(
         let seq = repo.append_event(patient_id, e.event_id, e.event).await?;
         results.push(er_api::EventAck {
             event_id: e.event_id,
-            sequence_id: seq 
+            sequence_id: seq,
         });
     }
 
@@ -485,41 +508,42 @@ async fn append_events(
 
 #[derive(serde::Deserialize)]
 struct SinceParams {
-    #[serde(default)]                        // absent → 0 → "from the beginning"
+    #[serde(default)] // absent → 0 → "from the beginning"
     since: u64,
-    #[serde(default = "default_page")]       // absent → 500
+    #[serde(default = "default_page")] // absent → 500
     limit: usize,
 }
-fn default_page() -> usize { 500 }
+fn default_page() -> usize {
+    500
+}
 const MAX_PAGE: usize = 1_000;
-
-
 
 async fn events_since(
     State(state): State<AppState>,
     authed: AuthedClinician,
     Path(patient_id): Path<Uuid>,
-    Query(q): Query<SinceParams>,           
+    Query(q): Query<SinceParams>,
 ) -> Result<Json<er_api::EventsPage>, ApiError> {
     let limit = q.limit.clamp(1, MAX_PAGE);
     let repo = state.repo_for(&authed);
     ensure_patient_in_org(&repo, patient_id).await?;
-
 
     let mut events = repo.get_events_since(patient_id, q.since).await?;
     let has_more = events.len() > limit;
     events.truncate(limit);
 
     Ok(Json(er_api::EventsPage {
-    events: events.into_iter().map(|se| er_api::EventDown {
-        sequence_id: se.sequence_id,
-        event_id:    se.event_id,
-        event:       se.event,
-        occurred_at: se.occurred_at,
-    }).collect(),
-    has_more,
+        events: events
+            .into_iter()
+            .map(|se| er_api::EventDown {
+                sequence_id: se.sequence_id,
+                event_id: se.event_id,
+                event: se.event,
+                occurred_at: se.occurred_at,
+            })
+            .collect(),
+        has_more,
     }))
-
 }
 
 // ---------------------------------------------------------------------------
@@ -542,7 +566,8 @@ async fn put_snapshot(
 ) -> Result<StatusCode, ApiError> {
     let repo = state.repo_for(&authed);
     ensure_patient_in_org(&repo, patient_id).await?;
-    repo.save_snapshot(patient_id, body.sequence_id, &body.snapshot).await?;
+    repo.save_snapshot(patient_id, body.sequence_id, &body.snapshot)
+        .await?;
     Ok(StatusCode::OK)
 }
 
@@ -554,7 +579,10 @@ async fn get_snapshot(
     let repo = state.repo_for(&authed);
     ensure_patient_in_org(&repo, patient_id).await?;
     match repo.get_latest_snapshot(patient_id).await? {
-        Some((sequence_id, snapshot)) => Ok(Json(er_api::SnapshotDown { sequence_id, snapshot })),
+        Some((sequence_id, snapshot)) => Ok(Json(er_api::SnapshotDown {
+            sequence_id,
+            snapshot,
+        })),
         // "No snapshot yet" is a NORMAL 404, not an error: it mirrors the local
         // `Ok(None)` contract, and the client answers it by replaying from since=0.
         // A checksum mismatch lands here too — `get_latest_snapshot` reports a
@@ -563,7 +591,11 @@ async fn get_snapshot(
     }
 }
 
-async fn note_export(State(state): State<AppState>, authed: AuthedClinician, Path(patient_id): Path<Uuid>) -> Result<impl IntoResponse, ApiError> {
+async fn note_export(
+    State(state): State<AppState>,
+    authed: AuthedClinician,
+    Path(patient_id): Path<Uuid>,
+) -> Result<impl IntoResponse, ApiError> {
     let repo = state.repo_for(&authed);
     ensure_patient_in_org(&repo, patient_id).await?;
 
@@ -573,7 +605,10 @@ async fn note_export(State(state): State<AppState>, authed: AuthedClinician, Pat
         .ok_or(ApiError::NotFound)?; // exporting nothing is 404
     // format_note wants a PatientRecord; the server's PHI-minimal patients row maps onto it with the identity
     // fields deliberately empty.
-    let row = repo.patient_row(patient_id).await?.ok_or(ApiError::NotFound)?;
+    let row = repo
+        .patient_row(patient_id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
     let record = er_domain::PatientRecord {
         id: patient_id,
         first_name: None,
@@ -589,12 +624,22 @@ async fn note_export(State(state): State<AppState>, authed: AuthedClinician, Pat
     let results_text = er_app::export::format_results_text(&note.results);
 
     let text = er_app::export::format_note(
-        &record, &note.note_sections, note.disposition.as_ref(), 
-        results_text.as_deref(), &note.medication, &note.diagnoses, &note.data_reviewed
+        &record,
+        &note.note_sections,
+        note.disposition.as_ref(),
+        results_text.as_deref(),
+        &note.medication,
+        &note.diagnoses,
+        &note.data_reviewed,
     );
 
-    Ok(([(axum::http::header::CONTENT_TYPE, "text/plain; charset=utf-8")], text))
-    
+    Ok((
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; charset=utf-8",
+        )],
+        text,
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -673,7 +718,10 @@ async fn end_shift(
     Ok(Json(shift_view(&repo, row).await?))
 }
 
-async fn stats(State(state): State<AppState>, authed: AuthedClinician) -> Result<Json<er_api::StatsView>, ApiError> {
+async fn stats(
+    State(state): State<AppState>,
+    authed: AuthedClinician,
+) -> Result<Json<er_api::StatsView>, ApiError> {
     let repo = state.repo_for(&authed);
     Ok(Json(er_api::StatsView {
         event_count: repo.event_count().await? as u64,
@@ -681,15 +729,11 @@ async fn stats(State(state): State<AppState>, authed: AuthedClinician) -> Result
     }))
 }
 
-
-
-
-
-/*  
-/// State(state) is the same as 
+/*
+/// State(state) is the same as
 /// async fn(wrapper: State<AppState>) {
-///     let State(state) = wrapper     
+///     let State(state) = wrapper
 /// }
 /// or
-/// let state = state.0  
+/// let state = state.0
 */

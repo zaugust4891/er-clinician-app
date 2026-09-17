@@ -1,7 +1,6 @@
 use crate::{
-    CaptureMode, ClinicalResult, 
-    Disposition, EncounterId, NoteSections,
-    PatientId, Medication, Diagnosis,
+    CaptureMode, ClinicalResult, Diagnosis, Disposition, EncounterId, Medication, NoteSections,
+    PatientId,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -38,9 +37,9 @@ pub enum NoteEvent {
         source_encounter_ids: Vec<EncounterId>,
         clinical_occurred_at: DateTime<Utc>,
     },
-    MedicationRecorded { 
-        patient_id: PatientId, 
-        medication: Medication, 
+    MedicationRecorded {
+        patient_id: PatientId,
+        medication: Medication,
         clinical_occurred_at: DateTime<Utc>,
     },
     /// A clinical result was ingested (manual or FHIR).
@@ -50,15 +49,15 @@ pub enum NoteEvent {
         clinical_occurred_at: DateTime<Utc>,
     },
 
-    DiagnosisAssigned  { 
+    DiagnosisAssigned {
         patient_id: PatientId,
-        diagnosis: Diagnosis,   
-        clinical_occurred_at: DateTime<Utc>, 
+        diagnosis: Diagnosis,
+        clinical_occurred_at: DateTime<Utc>,
     },
-    
-    DataReviewed { 
-        patient_id: PatientId, 
-        physician_review: String,           
+
+    DataReviewed {
+        patient_id: PatientId,
+        physician_review: String,
         clinical_occurred_at: DateTime<Utc>,
     },
 
@@ -90,7 +89,6 @@ pub enum NoteEvent {
         patient_id: PatientId,
         clinical_occurred_at: DateTime<Utc>,
     },
-
 }
 
 impl NoteEvent {
@@ -137,19 +135,58 @@ impl NoteEvent {
     /// is deterministic regardless of when events were synced.
     pub fn clinical_occurred_at(&self) -> DateTime<Utc> {
         match self {
-            NoteEvent::AudioStarted { clinical_occurred_at, .. } => *clinical_occurred_at,
-            NoteEvent::AudioStopped { clinical_occurred_at, .. } => *clinical_occurred_at,
-            NoteEvent::TranscriptReady { clinical_occurred_at, .. } => *clinical_occurred_at,
-            NoteEvent::EncounterSummarized { clinical_occurred_at, .. } => *clinical_occurred_at,
-            NoteEvent::MedicationRecorded { clinical_occurred_at, .. } => *clinical_occurred_at,
-            NoteEvent::ResultReceived { clinical_occurred_at, .. } => *clinical_occurred_at,
-            NoteEvent::DiagnosisAssigned { clinical_occurred_at, .. } => *clinical_occurred_at,
-            NoteEvent::DataReviewed { clinical_occurred_at, .. } => *clinical_occurred_at,
-            NoteEvent::TriggerMDM { clinical_occurred_at, .. } => *clinical_occurred_at,
-            NoteEvent::MdmGenerated { clinical_occurred_at, .. } => *clinical_occurred_at,
-            NoteEvent::ReviewReady { clinical_occurred_at, .. } => *clinical_occurred_at,
-            NoteEvent::DispositionSet { clinical_occurred_at, .. } => *clinical_occurred_at,
-            NoteEvent::Sign { clinical_occurred_at, .. } => *clinical_occurred_at,
+            NoteEvent::AudioStarted {
+                clinical_occurred_at,
+                ..
+            } => *clinical_occurred_at,
+            NoteEvent::AudioStopped {
+                clinical_occurred_at,
+                ..
+            } => *clinical_occurred_at,
+            NoteEvent::TranscriptReady {
+                clinical_occurred_at,
+                ..
+            } => *clinical_occurred_at,
+            NoteEvent::EncounterSummarized {
+                clinical_occurred_at,
+                ..
+            } => *clinical_occurred_at,
+            NoteEvent::MedicationRecorded {
+                clinical_occurred_at,
+                ..
+            } => *clinical_occurred_at,
+            NoteEvent::ResultReceived {
+                clinical_occurred_at,
+                ..
+            } => *clinical_occurred_at,
+            NoteEvent::DiagnosisAssigned {
+                clinical_occurred_at,
+                ..
+            } => *clinical_occurred_at,
+            NoteEvent::DataReviewed {
+                clinical_occurred_at,
+                ..
+            } => *clinical_occurred_at,
+            NoteEvent::TriggerMDM {
+                clinical_occurred_at,
+                ..
+            } => *clinical_occurred_at,
+            NoteEvent::MdmGenerated {
+                clinical_occurred_at,
+                ..
+            } => *clinical_occurred_at,
+            NoteEvent::ReviewReady {
+                clinical_occurred_at,
+                ..
+            } => *clinical_occurred_at,
+            NoteEvent::DispositionSet {
+                clinical_occurred_at,
+                ..
+            } => *clinical_occurred_at,
+            NoteEvent::Sign {
+                clinical_occurred_at,
+                ..
+            } => *clinical_occurred_at,
         }
     }
 
@@ -308,7 +345,7 @@ mod tests {
             patient_id,
             capture_mode: CaptureMode::Ambient,
             clinical_occurred_at: Utc::now(),
-            encounter_id: encounter_id,
+            encounter_id,
         };
 
         println!("patient_id: {:?}", patient_id);
@@ -356,13 +393,11 @@ mod tests {
                         patient_id,
                         source: crate::ResultSource::Manual,
                         timestamp: now,
-                        result_type: crate::ResultType::Vital(
-                            crate::result::VitalSign {
-                                vital_type: crate::result::VitalType::HeartRate,
-                                value: 72.0,
-                                unit: "bpm".into(),
-                            },
-                        ),
+                        result_type: crate::ResultType::Vital(crate::result::VitalSign {
+                            vital_type: crate::result::VitalType::HeartRate,
+                            value: 72.0,
+                            unit: "bpm".into(),
+                        }),
                     },
                     clinical_occurred_at: now,
                 },

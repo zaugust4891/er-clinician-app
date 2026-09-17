@@ -1,21 +1,21 @@
 mod interface;
 
+use crate::interface::cli::{Commands, RemoteContext, handle_command};
 use dotenvy::dotenv;
+use er_ai::claude::ClaudeSummarizer;
+use er_ai::summarizer::{AppSummarizer, MockSummarizer};
+use er_api::client::ServerApi;
 use er_app::EventBus;
 use er_app::encounter_driver::EncounterDriver;
+use er_app::error::{AppError, AppResult};
 use er_app::load::{self, PatientNoteStore, load_patient_note};
 use er_app::shift_manager::ShiftManager;
 use er_app::shift_snapshot::ShiftSnapshot;
 use er_domain::{PatientId, PatientNote, PatientRecord, Shift};
-use er_app::error::{AppError, AppResult};
-use er_ai::claude::ClaudeSummarizer;
-use er_ai::summarizer::{AppSummarizer, MockSummarizer};
 use er_pipeline::audio::MockAudioCapture;
+use er_pipeline::stt::MockTranscriber;
 use er_store::db;
 use er_store::repository::{Repository, SqliteRepository};
-use er_pipeline::stt::MockTranscriber;
-use crate::interface::cli::{Commands, RemoteContext, handle_command};
-use er_api::client::ServerApi;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::collections::HashMap;
@@ -196,14 +196,18 @@ fn main() -> AppResult<()> {
                         Err(e) => bail("loading shift.json", Err(e)),
                     };
                 let ShiftSnapshot { shift, patients } = snapshot;
-                (shift, patients.into_iter().map(|p| (p.id, p)).collect(), resumed)
+                (
+                    shift,
+                    patients.into_iter().map(|p| (p.id, p)).collect(),
+                    resumed,
+                )
             }
         };
 
     // Unchanged, and in remote mode this IS the cloud reload: the same snapshot
     // fast-path and delta replay, answered over HTTP instead of by SQLite.
     let mut notes_reloaded_count = 0;
-    for (id, _) in &patients {
+    for id in patients.keys() {
         match threaded_rt.block_on(load_patient_note(&*repo, *id)) {
             Ok(Some(note)) => {
                 store.insert(*id, note);
@@ -376,8 +380,16 @@ mod tests {
         );
         assert_eq!(remote_from(some("http://localhost:8080"), None), None);
         assert_eq!(remote_from(None, some("jwt")), None);
-        assert_eq!(remote_from(some("  "), some("jwt")), None, "a blank URL is not a URL");
-        assert_eq!(remote_from(some("http://x"), some("")), None, "an empty token is not a token");
+        assert_eq!(
+            remote_from(some("  "), some("jwt")),
+            None,
+            "a blank URL is not a URL"
+        );
+        assert_eq!(
+            remote_from(some("http://x"), some("")),
+            None,
+            "an empty token is not a token"
+        );
         assert_eq!(
             remote_from(some(" http://x \n"), some(" jwt ")),
             Some(("http://x".to_string(), "jwt".to_string())),

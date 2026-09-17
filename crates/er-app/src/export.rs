@@ -1,5 +1,5 @@
-use er_domain::{ClinicalResult, Diagnosis, Disposition, Medication, NoteSections, PatientRecord};
 use er_domain::note::format_result_line;
+use er_domain::{ClinicalResult, Diagnosis, Disposition, Medication, NoteSections, PatientRecord};
 /// Format a patient note for export (copy to clipboard → paste into Epic).
 /// Plain text only — no markdown, no HTML. Epic note fields accept plain text.
 pub fn format_note(
@@ -35,14 +35,22 @@ pub fn format_note(
         out.push_str(&format!("Results Reviewed:\n{results}\n\n"));
     }
 
-    push_lines(&mut out, "Medications", &lines(medications, Medication::summary_line));
+    push_lines(
+        &mut out,
+        "Medications",
+        &lines(medications, Medication::summary_line),
+    );
     push_lines(&mut out, "Data Reviewed", data_reviewed);
 
     if let Some(mdm) = &sections.mdm {
         out.push_str(&format!("Medical Decision Making:\n{mdm}\n\n"));
     }
 
-    push_lines(&mut out, "Diagnoses", &lines(diagnoses, Diagnosis::summary_line));
+    push_lines(
+        &mut out,
+        "Diagnoses",
+        &lines(diagnoses, Diagnosis::summary_line),
+    );
 
     if let Some(dispo) = disposition {
         out.push_str(&format!("Disposition: {}\n", format_disposition(dispo)));
@@ -118,7 +126,6 @@ pub fn format_results_text(results: &[ClinicalResult]) -> Option<String> {
     )
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -150,8 +157,8 @@ mod tests {
 
     #[test]
     fn renders_medications_diagnoses_and_data_reviewed() {
-        use er_domain::{Medication, MedicationKind};
         use chrono::Utc;
+        use er_domain::{Medication, MedicationKind};
         use uuid::Uuid;
 
         let patient = PatientRecord::new("chest pain");

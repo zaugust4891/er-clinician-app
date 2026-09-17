@@ -1,5 +1,5 @@
-use er_domain::Disposition;
 use crate::error::{AppError, AppResult};
+use er_domain::Disposition;
 
 pub fn parse_disposition(args: &[String]) -> AppResult<Disposition> {
     if args.len() < 2 {
@@ -58,7 +58,10 @@ pub fn parse_disposition(args: &[String]) -> AppResult<Disposition> {
 /// no newlines (it's fed to generate_mdm() as the `disposition` arg).
 pub fn format_disposition_for_mdm(disposition: &Disposition) -> String {
     match disposition {
-        Disposition::Discharge { instructions, follow_up } => {
+        Disposition::Discharge {
+            instructions,
+            follow_up,
+        } => {
             let mut s = format!("Discharged with instructions: {instructions}");
             if let Some(follow_up) = follow_up {
                 s.push_str(&format!("; follow-up: {follow_up}"));
@@ -72,7 +75,10 @@ pub fn format_disposition_for_mdm(disposition: &Disposition) -> String {
             }
             s
         }
-        Disposition::Transfer { destination, reason } => {
+        Disposition::Transfer {
+            destination,
+            reason,
+        } => {
             let mut s = format!("Transferred to {destination}");
             if let Some(reason) = reason {
                 s.push_str(&format!(" for {reason}"));
@@ -83,7 +89,6 @@ pub fn format_disposition_for_mdm(disposition: &Disposition) -> String {
         Disposition::LWBS => "Left without being seen (LWBS)".to_string(),
     }
 }
-
 
 pub fn format_disposition_for_cli(disposition: &Disposition) -> String {
     match disposition {

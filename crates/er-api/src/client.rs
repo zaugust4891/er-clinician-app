@@ -94,7 +94,7 @@ impl ServerApi {
 
     /// Register a client-stampresend returns 200, not 409.
     ///ed patient id (D5.3). Retry-safe: the server's
-    /// INSERT is `ON CONFLICT DO NOTHING`, so a 
+    /// INSERT is `ON CONFLICT DO NOTHING`, so a
     /// Deviation from the S9 sketch's `StoreResult<()>`: the server already
     /// answers with the full `PatientView`, and S10's roster needs it.
     pub async fn register_patient(
@@ -117,7 +117,10 @@ impl ServerApi {
     /// The resume request a fresh device opens with (D5.6). `Ok(None)` — the
     /// server's 404 — is the normal first-boot answer, not a failure.
     pub async fn active_shift(&self) -> StoreResult<Option<crate::ShiftView>> {
-        match self.send(self.http.get(self.url("/v1/shifts/active"))).await {
+        match self
+            .send(self.http.get(self.url("/v1/shifts/active")))
+            .await
+        {
             Ok(resp) => decode(resp).await.map(Some),
             Err(StoreError::Remote { status: 404, .. }) => Ok(None),
             Err(e) => Err(e),
@@ -135,7 +138,10 @@ impl ServerApi {
     /// same ended view rather than 409.
     pub async fn end_shift(&self, shift_id: Uuid) -> StoreResult<crate::ShiftView> {
         let resp = self
-            .send(self.http.post(self.url(&format!("/v1/shifts/{shift_id}/end"))))
+            .send(
+                self.http
+                    .post(self.url(&format!("/v1/shifts/{shift_id}/end"))),
+            )
             .await?;
         decode(resp).await
     }
@@ -143,7 +149,10 @@ impl ServerApi {
     /// The read model for a patient's note (`GET /v1/patients/{id}/note`).
     pub async fn note(&self, patient_id: Uuid) -> StoreResult<crate::NoteView> {
         let resp = self
-            .send(self.http.get(self.url(&format!("/v1/patients/{patient_id}/note"))))
+            .send(
+                self.http
+                    .get(self.url(&format!("/v1/patients/{patient_id}/note"))),
+            )
             .await?;
         decode(resp).await
     }
@@ -335,14 +344,11 @@ impl Repository for RemoteRepository {
         let acks: crate::AppendEventsResponse = decode(resp).await?;
         // A resent event_id gets the ORIGINAL sequence_id back (§C2), which is
         // what makes at-least-once delivery add up to exactly-once storage.
-        acks.results
-            .first()
-            .map(|a| a.sequence_id)
-            .ok_or_else(|| {
-                StoreError::backend(std::io::Error::other(
-                    "empty event acknowledgment from server",
-                ))
-            })
+        acks.results.first().map(|a| a.sequence_id).ok_or_else(|| {
+            StoreError::backend(std::io::Error::other(
+                "empty event acknowledgment from server",
+            ))
+        })
     }
 
     async fn get_events(&self, patient_id: PatientId) -> StoreResult<Vec<StoredEvent>> {

@@ -106,10 +106,7 @@ async fn presigned_put_sends_only_the_signed_content_type_and_scrubs_failures() 
         .await
         .expect_err("a rejected upload must fail");
     let rendered = rejection.to_string();
-    assert!(matches!(
-        rejection,
-        StoreError::Remote { status: 403, .. }
-    ));
+    assert!(matches!(rejection, StoreError::Remote { status: 403, .. }));
     assert!(!rendered.contains("secret object-store diagnostic"));
     assert!(!rendered.contains("upload-secret"));
 
@@ -169,7 +166,11 @@ async fn an_unusable_token_surfaces_as_remote_401(pool: PgPool) {
     let base = common::spawn_server(routes::router(common::test_state(pool).await)).await;
     let repo = RemoteRepository::new(base.as_str(), "not-a-jwt");
 
-    match repo.event_count().await.expect_err("401 must not read as success") {
+    match repo
+        .event_count()
+        .await
+        .expect_err("401 must not read as success")
+    {
         // 401 has an empty body by design (the caller learns nothing), so the
         // message is empty here — the status is the part clients branch on.
         StoreError::Remote { status: 401, .. } => {}
@@ -184,9 +185,19 @@ async fn a_second_start_shift_surfaces_as_remote_409(pool: PgPool) {
     let (api, _, _) = client_pair(&pool).await;
     api.start_shift().await.expect("first shift starts");
 
-    match api.start_shift().await.expect_err("second start must be rejected") {
-        StoreError::Remote { status: 409, message } => {
-            assert_eq!(message, "shift_already_active", "the error code survives decoding")
+    match api
+        .start_shift()
+        .await
+        .expect_err("second start must be rejected")
+    {
+        StoreError::Remote {
+            status: 409,
+            message,
+        } => {
+            assert_eq!(
+                message, "shift_already_active",
+                "the error code survives decoding"
+            )
         }
         other => panic!("expected Remote 409, got {other:?}"),
     }
@@ -199,7 +210,11 @@ async fn an_unreachable_server_is_a_backend_error_not_a_remote_one(pool: PgPool)
     common::seed_org_and_clinician(&pool, common::ORG_A, DOC).await;
     let repo = RemoteRepository::new(common::unreachable_url().await, common::mint(DOC));
 
-    match repo.event_count().await.expect_err("nothing is listening there") {
+    match repo
+        .event_count()
+        .await
+        .expect_err("nothing is listening there")
+    {
         StoreError::Backend(_) => {}
         other => panic!("expected Backend (transport) error, got {other:?}"),
     }
@@ -229,11 +244,19 @@ async fn the_cursor_loop_returns_every_event_across_pages(pool: PgPool) {
     ];
     let mut seqs = Vec::new();
     for e in &events {
-        seqs.push(repo.append_event(patient, Uuid::now_v7(), e.clone()).await.unwrap());
+        seqs.push(
+            repo.append_event(patient, Uuid::now_v7(), e.clone())
+                .await
+                .unwrap(),
+        );
     }
 
     let all = repo.get_events(patient).await.unwrap();
-    assert_eq!(all.len(), events.len(), "paging must not drop or duplicate events");
+    assert_eq!(
+        all.len(),
+        events.len(),
+        "paging must not drop or duplicate events"
+    );
     assert_eq!(
         all.iter().map(|e| e.sequence_id).collect::<Vec<_>>(),
         seqs,
@@ -250,7 +273,12 @@ async fn the_cursor_loop_returns_every_event_across_pages(pool: PgPool) {
     );
 
     // A cursor at the head is an empty page, not a hang.
-    assert!(repo.get_events_since(patient, *seqs.last().unwrap()).await.unwrap().is_empty());
+    assert!(
+        repo.get_events_since(patient, *seqs.last().unwrap())
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }
 
 /// The one server behavior the client cannot survive politely: a page that
@@ -302,7 +330,10 @@ async fn a_downloaded_snapshot_arrives_hydrated(pool: PgPool) {
     ];
     let mut last_seq = 0;
     for e in &events {
-        last_seq = repo.append_event(patient, Uuid::now_v7(), e.clone()).await.unwrap();
+        last_seq = repo
+            .append_event(patient, Uuid::now_v7(), e.clone())
+            .await
+            .unwrap();
     }
     let note = replay(patient, &events);
     assert_eq!(note.phase, NotePhase::Idle);
@@ -315,7 +346,10 @@ async fn a_downloaded_snapshot_arrives_hydrated(pool: PgPool) {
         .expect("the snapshot just saved comes back");
     assert_eq!(seq, last_seq);
     assert_eq!(loaded.phase, NotePhase::Idle);
-    assert!(loaded.state.is_some(), "hydrate() must run before the note is handed back");
+    assert!(
+        loaded.state.is_some(),
+        "hydrate() must run before the note is handed back"
+    );
 
     loaded.handle_trigger_mdm(Utc::now());
     assert_eq!(
@@ -354,7 +388,11 @@ async fn server_api_drives_the_whole_shift_lifecycle(pool: PgPool) {
         .expect("the open shift is discoverable without local state (D5.6)");
     assert_eq!(resumed.shift_id, started.shift_id);
     assert_eq!(
-        resumed.patients.iter().map(|p| p.patient_id).collect::<Vec<_>>(),
+        resumed
+            .patients
+            .iter()
+            .map(|p| p.patient_id)
+            .collect::<Vec<_>>(),
         vec![patient],
     );
     assert_eq!(resumed.patients[0].chief_complaint, "ankle injury");

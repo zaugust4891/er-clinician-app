@@ -4,31 +4,31 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use er_domain::{Diagnosis, Disposition, Medication, ClinicalResult, NoteEvent, PatientNote};
+use er_domain::{ClinicalResult, Diagnosis, Disposition, Medication, NoteEvent, PatientNote};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventUp {
     pub event_id: Uuid,
-    pub event: NoteEvent,          
+    pub event: NoteEvent,
     // externally-tagged JSON, same as the payload column (§C1)
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct AppendEventsRequest { 
-    pub events: Vec<EventUp> 
+pub struct AppendEventsRequest {
+    pub events: Vec<EventUp>,
 }
 
 /// Per-event acknowledgment: the server-assigned position in the stream.
 /// On a duplicate delivery this is the ORIGINAL sequence_id — same answer every time.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct EventAck { 
+pub struct EventAck {
     pub event_id: Uuid,
-    pub sequence_id: u64 
+    pub sequence_id: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct AppendEventsResponse { 
-    pub results: Vec<EventAck>
+pub struct AppendEventsResponse {
+    pub results: Vec<EventAck>,
 }
 
 /// One event coming down — the wire twin of er_store's StoredEvent envelope.
@@ -37,29 +37,29 @@ pub struct EventDown {
     pub sequence_id: u64,
     pub event_id: Uuid,
     pub event: NoteEvent,
-    pub occurred_at: DateTime<Utc>,   
+    pub occurred_at: DateTime<Utc>,
     // clinical time, not server-received time
 }
 
 /// A page of the stream. `has_more` tells the client to keep looping (§C3).
 #[derive(Debug, Serialize, Deserialize)]
-pub struct EventsPage { 
-    pub events: Vec<EventDown>, 
-    pub has_more: bool
+pub struct EventsPage {
+    pub events: Vec<EventDown>,
+    pub has_more: bool,
 }
 
 // ---------- Snapshots (S6) ----------
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct SnapshotUp   { 
+pub struct SnapshotUp {
     pub sequence_id: u64,
-    pub snapshot: PatientNote
+    pub snapshot: PatientNote,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct SnapshotDown { 
+pub struct SnapshotDown {
     pub sequence_id: u64,
-    pub snapshot: PatientNote
+    pub snapshot: PatientNote,
 }
 
 // ---------- Patients (S3) ----------
@@ -68,7 +68,7 @@ pub struct SnapshotDown {
 /// `display_label` is "Room 4 – chest pain" territory, never an identity.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RegisterPatientRequest {
-    pub patient_id: Uuid,              // client-stamped, like event_id — see S3 for why
+    pub patient_id: Uuid, // client-stamped, like event_id — see S3 for why
     pub chief_complaint: String,
     pub display_label: Option<String>,
 }
@@ -88,8 +88,8 @@ pub struct ShiftView {
     pub shift_id: Uuid,
     pub started_at: DateTime<Utc>,
     pub ended_at: Option<DateTime<Utc>>,
-    pub status: String,                 // "active" | "ended"
-    pub patients: Vec<PatientView>,     // ordered by position — ShiftManager's stable-list invariant
+    pub status: String,             // "active" | "ended"
+    pub patients: Vec<PatientView>, // ordered by position — ShiftManager's stable-list invariant
 }
 
 // ---------- Note projection (S7) ----------
@@ -99,7 +99,7 @@ pub struct ShiftView {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct NoteView {
     pub patient_id: Uuid,
-    pub phase: String,                  // "Registered" | "Encountering" | "Idle" | ...
+    pub phase: String, // "Registered" | "Encountering" | "Idle" | ...
     pub hpi: Option<String>,
     pub ros: Option<String>,
     pub exam: Option<String>,
@@ -142,7 +142,7 @@ impl From<&PatientNote> for NoteView {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct StatsView {
     pub event_count: u64,
-    pub snapshot_count: u64
+    pub snapshot_count: u64,
 }
 // ---------- Audio chunks (Step 6 S2) ----------
 
@@ -377,7 +377,10 @@ mod audio_wire_tests {
             chunk_status::UPLOADED,
             chunk_status::TRANSCRIBING,
         ] {
-            assert!(!chunk_status::is_terminal(moving), "{moving} is not terminal");
+            assert!(
+                !chunk_status::is_terminal(moving),
+                "{moving} is not terminal"
+            );
         }
 
         // A status from a newer server: unknown means "still moving", never a panic

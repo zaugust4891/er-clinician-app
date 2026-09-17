@@ -29,6 +29,10 @@ Each noisy invocation stores a complete ``*.transcript.log`` and retains only
 a bounded in-memory excerpt. Model calls also save a complete ``*.final.*``
 response. Excerpt and summary limits are Unicode character counts, not tokens.
 
+Claude invocations honor ``CLAUDE_CONFIG_DIR``. When it is unset, the harness
+uses ``~/.claude-personal`` if that directory exists, otherwise ``~/.claude``;
+``PAI_DIR`` is kept aligned so hooks load from the same Claude home.
+
 On POSIX, child processes run in a separate session. Timeout or interruption
 terminates the whole process group, escalating to SIGKILL after a short grace.
 Process-group cleanup is POSIX-only; non-POSIX child signaling is best-effort,
@@ -68,6 +72,15 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 RUNS = REPO / ".agents" / "runs"
 OLLAMA = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
+
+
+def default_claude_config_dir() -> Path:
+    """Prefer the personal Claude home when present; honor an explicit override."""
+    configured = os.environ.get("CLAUDE_CONFIG_DIR")
+    if configured:
+        return Path(configured).expanduser()
+    personal = Path.home() / ".claude-personal"
+    return personal if personal.is_dir() else Path.home() / ".claude"
 
 
 # --------------------------------------------------------------------------
@@ -497,8 +510,14 @@ class ClaudeEngine(Engine):
 
     tools = True
 
-    def __init__(self, model: str = "opus", permission_mode: str = "acceptEdits"):
+    def __init__(
+        self,
+        model: str = "opus",
+        permission_mode: str = "acceptEdits",
+        config_dir: Path | None = None,
+    ):
         self.model, self.permission_mode = model, permission_mode
+        self.config_dir = config_dir or default_claude_config_dir()
         self.name = f"claude:{model}"
 
     def run(
@@ -526,7 +545,15 @@ class ClaudeEngine(Engine):
         final_path = _invocation_final_path(log_path, ".json" if schema else ".md")
         final_path.unlink(missing_ok=True)
         res = _stream(
-            argv, timeout, "claude", log_path=log_path, stdout_path=final_path
+            argv,
+            timeout,
+            "claude",
+            env={
+                "CLAUDE_CONFIG_DIR": str(self.config_dir),
+                "PAI_DIR": str(self.config_dir),
+            },
+            log_path=log_path,
+            stdout_path=final_path,
         )
         try:
             # Claude print/text writes the final response on stdout. Capturing it

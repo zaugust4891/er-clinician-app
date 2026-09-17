@@ -1,5 +1,5 @@
-use er_domain::MedicationKind;
 use crate::error::{AppError, AppResult};
+use er_domain::MedicationKind;
 
 /// Parse a `med <home|given> <name> [dose] [route]` command into the parts
 /// `ShiftManager::record_medication` needs. Dose/route are single tokens

@@ -4,9 +4,6 @@ use crate::auth::AuthError;
 use crate::auth::keys::KeySet;
 use crate::config::AuthConfig;
 
-
-
-
 #[derive(Debug, serde::Deserialize)]
 pub struct Claims {
     pub sub: String,
@@ -18,15 +15,17 @@ pub struct Claims {
     pub client_id: Option<String>,
 }
 
-
-pub async fn validate_token(token: &str, keys: &KeySet, auth: &AuthConfig) -> Result<Claims, AuthError> {
+pub async fn validate_token(
+    token: &str,
+    keys: &KeySet,
+    auth: &AuthConfig,
+) -> Result<Claims, AuthError> {
     // Decode only the header - this does not trust the payload
     let header = jsonwebtoken::decode_header(token)?;
     let kid = header.kid.ok_or(AuthError::MissingKid)?;
 
     // Pick the public key by kid (KeySet refreshes on miss in cognito mode)
     let key = keys.key_for(&kid).await?;
-
 
     // signature + exp + iss in one call
     let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::RS256);
@@ -39,8 +38,12 @@ pub async fn validate_token(token: &str, keys: &KeySet, auth: &AuthConfig) -> Re
     // dev tokens are minted with token_use=access
 
     if let AuthConfig::Cognito { client_id, .. } = auth {
-        if data.claims.token_use.as_deref() != Some("access") { return Err(AuthError::WrongTokenUse); }
-        if data.claims.client_id.as_deref() != Some(client_id) { return Err(AuthError::WrongClientId); }
+        if data.claims.token_use.as_deref() != Some("access") {
+            return Err(AuthError::WrongTokenUse);
+        }
+        if data.claims.client_id.as_deref() != Some(client_id) {
+            return Err(AuthError::WrongClientId);
+        }
     }
 
     Ok(data.claims)
@@ -67,7 +70,9 @@ mod tests {
     }
 
     fn dev_cfg() -> AuthConfig {
-        AuthConfig::Dev { jwks_path: dev_dir().join("jwks.json") }
+        AuthConfig::Dev {
+            jwks_path: dev_dir().join("jwks.json"),
+        }
     }
 
     /// Sign a claims blob with the dev private key. `kid: None` omits the header kid.
@@ -81,12 +86,15 @@ mod tests {
 
     /// A well-formed, currently-valid dev access token for `sub`.
     fn valid_token(sub: &str) -> String {
-        sign(serde_json::json!({
-            "sub": sub,
-            "iss": DEV_ISSUER,
-            "token_use": "access",
-            "exp": jsonwebtoken::get_current_timestamp() + 3600,
-        }), Some(KID))
+        sign(
+            serde_json::json!({
+                "sub": sub,
+                "iss": DEV_ISSUER,
+                "token_use": "access",
+                "exp": jsonwebtoken::get_current_timestamp() + 3600,
+            }),
+            Some(KID),
+        )
     }
 
     // valid token → Ok(Claims) with the right sub (happy path)
@@ -101,7 +109,9 @@ mod tests {
     // garbage string → Err(Jwt) (malformed input)
     #[tokio::test]
     async fn garbage_string_is_rejected() {
-        let err = validate_token("not-a-jwt", &dev_keyset(), &dev_cfg()).await.unwrap_err();
+        let err = validate_token("not-a-jwt", &dev_keyset(), &dev_cfg())
+            .await
+            .unwrap_err();
         assert!(matches!(err, AuthError::Jwt(_)), "got {err:?}");
     }
 
@@ -118,46 +128,63 @@ mod tests {
         segs[2] = format!("{replacement}{}", &sig[first.len_utf8()..]);
         let forged = segs.join(".");
 
-        let err = validate_token(&forged, &dev_keyset(), &dev_cfg()).await.unwrap_err();
+        let err = validate_token(&forged, &dev_keyset(), &dev_cfg())
+            .await
+            .unwrap_err();
         assert!(matches!(err, AuthError::Jwt(_)), "got {err:?}");
     }
 
     // exp in the past → Err(Jwt) (replay of a stale token)
     #[tokio::test]
     async fn expired_token_is_rejected() {
-        let token = sign(serde_json::json!({
-            "sub": "test-doc",
-            "iss": DEV_ISSUER,
-            "token_use": "access",
-            "exp": jsonwebtoken::get_current_timestamp() - 3600, // well past the 60s default leeway
-        }), Some(KID));
-        let err = validate_token(&token, &dev_keyset(), &dev_cfg()).await.unwrap_err();
+        let token = sign(
+            serde_json::json!({
+                "sub": "test-doc",
+                "iss": DEV_ISSUER,
+                "token_use": "access",
+                "exp": jsonwebtoken::get_current_timestamp() - 3600, // well past the 60s default leeway
+            }),
+            Some(KID),
+        );
+        let err = validate_token(&token, &dev_keyset(), &dev_cfg())
+            .await
+            .unwrap_err();
         assert!(matches!(err, AuthError::Jwt(_)), "got {err:?}");
     }
 
     // iss = someone else → Err(Jwt) (wrong-issuer token)
     #[tokio::test]
     async fn wrong_issuer_is_rejected() {
-        let token = sign(serde_json::json!({
-            "sub": "test-doc",
-            "iss": "https://evil.example",
-            "token_use": "access",
-            "exp": jsonwebtoken::get_current_timestamp() + 3600,
-        }), Some(KID));
-        let err = validate_token(&token, &dev_keyset(), &dev_cfg()).await.unwrap_err();
+        let token = sign(
+            serde_json::json!({
+                "sub": "test-doc",
+                "iss": "https://evil.example",
+                "token_use": "access",
+                "exp": jsonwebtoken::get_current_timestamp() + 3600,
+            }),
+            Some(KID),
+        );
+        let err = validate_token(&token, &dev_keyset(), &dev_cfg())
+            .await
+            .unwrap_err();
         assert!(matches!(err, AuthError::Jwt(_)), "got {err:?}");
     }
 
     // header without kid → Err(MissingKid) (key-selection integrity)
     #[tokio::test]
     async fn token_without_kid_is_rejected() {
-        let token = sign(serde_json::json!({
-            "sub": "test-doc",
-            "iss": DEV_ISSUER,
-            "token_use": "access",
-            "exp": jsonwebtoken::get_current_timestamp() + 3600,
-        }), None);
-        let err = validate_token(&token, &dev_keyset(), &dev_cfg()).await.unwrap_err();
+        let token = sign(
+            serde_json::json!({
+                "sub": "test-doc",
+                "iss": DEV_ISSUER,
+                "token_use": "access",
+                "exp": jsonwebtoken::get_current_timestamp() + 3600,
+            }),
+            None,
+        );
+        let err = validate_token(&token, &dev_keyset(), &dev_cfg())
+            .await
+            .unwrap_err();
         assert!(matches!(err, AuthError::MissingKid), "got {err:?}");
     }
 
@@ -172,15 +199,19 @@ mod tests {
         // iss must match the cognito config's issuer so we get *past* the iss check and reach the
         // token_use check that this test is about. Signed with the dev key (kid dev-key-1) so the
         // dev KeySet can still find the verification key.
-        let token = sign(serde_json::json!({
-            "sub": "test-doc",
-            "iss": cognito.issuer(),
-            "token_use": "id",
-            "client_id": "client-123",
-            "exp": jsonwebtoken::get_current_timestamp() + 3600,
-        }), Some(KID));
-        let err = validate_token(&token, &dev_keyset(), &cognito).await.unwrap_err();
+        let token = sign(
+            serde_json::json!({
+                "sub": "test-doc",
+                "iss": cognito.issuer(),
+                "token_use": "id",
+                "client_id": "client-123",
+                "exp": jsonwebtoken::get_current_timestamp() + 3600,
+            }),
+            Some(KID),
+        );
+        let err = validate_token(&token, &dev_keyset(), &cognito)
+            .await
+            .unwrap_err();
         assert!(matches!(err, AuthError::WrongTokenUse), "got {err:?}");
     }
 }
-

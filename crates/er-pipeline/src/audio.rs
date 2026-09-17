@@ -1,5 +1,5 @@
-use er_domain::{CaptureMode, EncounterId, PatientId};
 use crate::error::{PipelineError, PipelineResult};
+use er_domain::{CaptureMode, EncounterId, PatientId};
 
 /// Platform-agnostic audio capture interface.
 ///

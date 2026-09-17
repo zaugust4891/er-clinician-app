@@ -211,8 +211,11 @@ impl fmt::Display for PatientNote {
         write_section(f, "Physical Exam", self.note_sections.exam.as_deref())?;
         write_results(f, &self.results)?;
 
-        let med_lines: Vec<String> =
-            self.medication.iter().map(Medication::summary_line).collect();
+        let med_lines: Vec<String> = self
+            .medication
+            .iter()
+            .map(Medication::summary_line)
+            .collect();
         write_lines(f, "Medications", &med_lines)?;
 
         write_lines(f, "Data Reviewed", &self.data_reviewed)?;
@@ -285,7 +288,7 @@ pub fn write_results(f: &mut fmt::Formatter<'_>, results: &[ClinicalResult]) -> 
 /// Shared by `write_results` (note Display) and `assemble_objective_data`
 /// (the MDM prompt blob) so both render results identically.
 pub fn format_result_line(r: &ClinicalResult) -> String {
-   let result = match &r.result_type {
+    match &r.result_type {
         ResultType::Lab(lab) => {
             let abnormal_marker = if lab.is_abnormal { " abnormal" } else { "" };
             format!(
@@ -303,10 +306,7 @@ pub fn format_result_line(r: &ClinicalResult) -> String {
         ResultType::Vital(vital) => {
             format!("{:?}: {} {}", vital.vital_type, vital.value, vital.unit)
         }
-    };
-    result
-
-    
+    }
 }
 
 fn format_disposition(disposition: &Disposition) -> String {
@@ -359,7 +359,7 @@ impl PatientNote {
             encounters: Vec::new(),
             diagnoses: Vec::new(),
             medication: Vec::new(),
-            data_reviewed: Vec::new(), 
+            data_reviewed: Vec::new(),
             results: Vec::new(),
             note_sections: NoteSections::default(),
             section_history: Vec::new(),
@@ -387,7 +387,7 @@ impl PatientNote {
     ) {
         let version = self.version + 1;
 
-        if let Some(hpi) = &sections.hpi  {
+        if let Some(hpi) = &sections.hpi {
             self.section_history.push(NoteSectionVersion::new(
                 "hpi",
                 hpi.clone(),
@@ -416,7 +416,6 @@ impl PatientNote {
                 source_encounter_ids.to_vec(),
             ));
         }
-
     }
 
     /// Apply a state transition: take the state out, call the method,

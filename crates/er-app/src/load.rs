@@ -2,10 +2,10 @@ use std::sync::Arc;
 
 use dashmap::DashMap;
 
+use crate::error::AppResult;
 use er_domain::patient::PatientId;
 use er_domain::replay::{apply_event, replay};
 use er_domain::{NoteEvent, PatientNote};
-use crate::error::AppResult;
 use er_store::repository::Repository;
 
 // ---------------------------------------------------------------------------

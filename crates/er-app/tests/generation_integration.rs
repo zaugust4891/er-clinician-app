@@ -13,6 +13,7 @@ use std::sync::Arc;
 use chrono::Utc;
 use uuid::Uuid;
 
+use er_ai::summarizer::MockSummarizer;
 use er_app::EventBus;
 use er_app::encounter_driver::EncounterDriver;
 use er_app::load::{self as load};
@@ -21,10 +22,9 @@ use er_domain::{
     CaptureMode, ClinicalResult, Disposition, LabResult, NotePhase, PatientId, PatientRecord,
     ResultSource, ResultType, Shift,
 };
-use er_ai::summarizer::MockSummarizer;
 use er_pipeline::audio::MockAudioCapture;
-use er_store::repository::{Repository, SqliteRepository};
 use er_pipeline::stt::MockTranscriber;
+use er_store::repository::{Repository, SqliteRepository};
 
 // These tests drive everything through ShiftManager, whose sync command
 // methods block_on an internal runtime. They must therefore run on ordinary
@@ -226,7 +226,10 @@ fn seed_note_ready_for_mdm(
 
     // Objective data feeding the MDM (exercises every assemble_objective_data branch).
     manager
-        .add_lab(lab_result(patient_id, "Troponin", 0.04, "ng/mL"), Utc::now())
+        .add_lab(
+            lab_result(patient_id, "Troponin", 0.04, "ng/mL"),
+            Utc::now(),
+        )
         .unwrap();
     manager
         .record_medication(
@@ -326,7 +329,10 @@ fn generated_mdm_survives_reload() {
     assert_eq!(loaded.diagnoses.len(), 1);
     assert_eq!(loaded.diagnoses[0].text, "Acute PE");
     assert!(loaded.diagnoses[0].is_primary);
-    assert_eq!(loaded.data_reviewed, vec!["CTA chest: PE in RLL".to_string()]);
+    assert_eq!(
+        loaded.data_reviewed,
+        vec!["CTA chest: PE in RLL".to_string()]
+    );
 }
 
 /// trigger_mdm must be rejected when the note is not in Idle — e.g. a fresh

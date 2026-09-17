@@ -1,13 +1,18 @@
+use crate::error::{StoreError, StoreResult};
 use chrono::{DateTime, Utc};
-use sha2::{Digest, Sha256};
-use uuid::Uuid;
 use er_domain::NoteEvent;
 use er_domain::{PatientId, PatientNote};
-use crate::error::{StoreError, StoreResult};
+use sha2::{Digest, Sha256};
+use uuid::Uuid;
 
 #[async_trait::async_trait]
 pub trait Repository: Send + Sync {
-    async fn append_event(&self, patient_id: PatientId, event_id: Uuid, event: NoteEvent) -> StoreResult<u64>;
+    async fn append_event(
+        &self,
+        patient_id: PatientId,
+        event_id: Uuid,
+        event: NoteEvent,
+    ) -> StoreResult<u64>;
 
     async fn get_events(&self, patient_id: PatientId) -> StoreResult<Vec<StoredEvent>>;
 
@@ -24,7 +29,10 @@ pub trait Repository: Send + Sync {
         snapshot: &PatientNote,
     ) -> StoreResult<()>;
 
-    async fn get_latest_snapshot(&self, patient_id: PatientId) -> StoreResult<Option<(u64, PatientNote)>>;
+    async fn get_latest_snapshot(
+        &self,
+        patient_id: PatientId,
+    ) -> StoreResult<Option<(u64, PatientNote)>>;
 
     async fn event_count(&self) -> StoreResult<usize>;
 
@@ -54,65 +62,69 @@ impl SqliteRepository {
         conn.execute(sql, params).unwrap();
     }
 
-     /// Shared row → StoredEvent mapping for the get_events* queries.
+    /// Shared row → StoredEvent mapping for the get_events* queries.
     /// `sql` MUST select (sequence_id, event_id, payload, occurred_at) in that order.
-      fn query_stored_events(
-          &self,
-          sql: &str,
-          params: impl rusqlite::Params,
-      ) -> StoreResult<Vec<StoredEvent>> {
-          let conn = self.conn.lock().unwrap();
-          let mut stmt = conn.prepare(sql)?;
+    fn query_stored_events(
+        &self,
+        sql: &str,
+        params: impl rusqlite::Params,
+    ) -> StoreResult<Vec<StoredEvent>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(sql)?;
 
-          // The closure can only return rusqlite errors, and the Row borrow ends
-          // when it returns — so pull out the *raw* column values here and do the
-          // fallible Uuid/JSON/date parsing below, where we can return a StoreError.
-          let rows = stmt.query_map(params, |row| {
-              Ok((
-                  row.get::<_, i64>(0)?,    // sequence_id
-                  row.get::<_, String>(1)?, // event_id (TEXT)
-                  row.get::<_, String>(2)?, // payload JSON
-                  row.get::<_, String>(3)?, // occurred_at (RFC3339)
-              ))
-          })?;
+        // The closure can only return rusqlite errors, and the Row borrow ends
+        // when it returns — so pull out the *raw* column values here and do the
+        // fallible Uuid/JSON/date parsing below, where we can return a StoreError.
+        let rows = stmt.query_map(params, |row| {
+            Ok((
+                row.get::<_, i64>(0)?,    // sequence_id
+                row.get::<_, String>(1)?, // event_id (TEXT)
+                row.get::<_, String>(2)?, // payload JSON
+                row.get::<_, String>(3)?, // occurred_at (RFC3339)
+            ))
+        })?;
 
-          let mut events = Vec::new();
-          for row in rows {
-              let (seq_id, event_id_str, payload_json, occurred_at_str) = row?;
+        let mut events = Vec::new();
+        for row in rows {
+            let (seq_id, event_id_str, payload_json, occurred_at_str) = row?;
 
-              let event_id = Uuid::parse_str(&event_id_str).map_err(|e| StoreError::Parse {
-                  context: format!("event_id (sequence_id: {seq_id})"),
-                  source: Box::new(e),
-              })?;
+            let event_id = Uuid::parse_str(&event_id_str).map_err(|e| StoreError::Parse {
+                context: format!("event_id (sequence_id: {seq_id})"),
+                source: Box::new(e),
+            })?;
 
-              let event: NoteEvent =
-                  serde_json::from_str(&payload_json).map_err(|e| StoreError::Parse {
-                      context: format!("event payload (sequence_id: {seq_id})"),
-                      source: Box::new(e),
-                  })?;
+            let event: NoteEvent =
+                serde_json::from_str(&payload_json).map_err(|e| StoreError::Parse {
+                    context: format!("event payload (sequence_id: {seq_id})"),
+                    source: Box::new(e),
+                })?;
 
-              let occurred_at = DateTime::parse_from_rfc3339(&occurred_at_str)
-                  .map_err(|e| StoreError::Parse {
-                      context: format!("occurred_at (sequence_id: {seq_id})"),
-                      source: Box::new(e),
-                  })?
-                  .with_timezone(&Utc);
+            let occurred_at = DateTime::parse_from_rfc3339(&occurred_at_str)
+                .map_err(|e| StoreError::Parse {
+                    context: format!("occurred_at (sequence_id: {seq_id})"),
+                    source: Box::new(e),
+                })?
+                .with_timezone(&Utc);
 
-              events.push(StoredEvent {
-                  sequence_id: seq_id as u64,
-                  event_id,
-                  event,
-                  occurred_at,
-              });
+            events.push(StoredEvent {
+                sequence_id: seq_id as u64,
+                event_id,
+                event,
+                occurred_at,
+            });
         }
-          Ok(events)
+        Ok(events)
     }
-
 }
 
 #[async_trait::async_trait]
 impl Repository for SqliteRepository {
-    async fn append_event(&self, patient_id: PatientId, event_id: Uuid, event: NoteEvent) -> StoreResult<u64> {
+    async fn append_event(
+        &self,
+        patient_id: PatientId,
+        event_id: Uuid,
+        event: NoteEvent,
+    ) -> StoreResult<u64> {
         let conn = self.conn.lock().unwrap();
         let payload_json = serde_json::to_string(&event)?;
         let event_id_text = event_id.to_string();
@@ -131,16 +143,16 @@ impl Repository for SqliteRepository {
                 occurred_at_text
             ],
         )?;
-        
+
         if rows_inserted == 1 {
             // Fresh insert: this connection's last rowid IS the new row's sequence id
             Ok(conn.last_insert_rowid() as u64)
         } else {
-          // duplicate event_id (a retry)
-          // We must NOT use last_insert_rowid() here: after an ignored insert it
-          // still points at whatever this connection last inserted, not at the
-          // existing row. So look the original up by its event_id and return that —
-          // a duplicate append now returns the SAME sequence_id as the first call
+            // duplicate event_id (a retry)
+            // We must NOT use last_insert_rowid() here: after an ignored insert it
+            // still points at whatever this connection last inserted, not at the
+            // existing row. So look the original up by its event_id and return that —
+            // a duplicate append now returns the SAME sequence_id as the first call
             let seq: i64 = conn.query_row(
                 "SELECT sequence_id FROM events WHERE event_id = ?1",
                 rusqlite::params![event_id_text],
@@ -205,7 +217,10 @@ impl Repository for SqliteRepository {
         Ok(())
     }
 
-    async fn get_latest_snapshot(&self, patient_id: PatientId) -> StoreResult<Option<(u64, PatientNote)>> {
+    async fn get_latest_snapshot(
+        &self,
+        patient_id: PatientId,
+    ) -> StoreResult<Option<(u64, PatientNote)>> {
         let conn = self.conn.lock().unwrap();
 
         // 0 or 1 row — patient_id is the PRIMARY KEY.

@@ -2,9 +2,9 @@ use chrono::{DateTime, Utc};
 
 use crate::PatientNote;
 use crate::audit::{AuditAction, AuditEntry};
+use crate::error::{DomainError, DomainResult};
 use crate::note::NotePhase;
 use crate::result::ClinicalResult;
-use crate::error::{DomainError, DomainResult};
 // ---------------------------------------------------------------------------
 // NoteState trait — the core of the state pattern
 // ---------------------------------------------------------------------------
@@ -213,8 +213,11 @@ pub fn ingest_result(
     note.results.push(result);
     note.version += 1;
     note.updated_at = occurred_at;
-    note.audit_log
-        .push(AuditEntry::with_timestamp(AuditAction::ResultIngested, "", occurred_at));
+    note.audit_log.push(AuditEntry::with_timestamp(
+        AuditAction::ResultIngested,
+        "",
+        occurred_at,
+    ));
     Ok(())
 }
 

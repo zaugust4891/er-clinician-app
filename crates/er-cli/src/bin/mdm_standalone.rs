@@ -35,11 +35,11 @@
 
 use std::io::Read;
 
-use er_domain::{NoteSections, PatientRecord};
-use er_app::error::AppResult;
 use er_ai::claude::ClaudeSummarizer;
 use er_ai::deidentify::Deidentifier;
 use er_ai::summarizer::Summarizer;
+use er_app::error::AppResult;
+use er_domain::{NoteSections, PatientRecord};
 
 const DATA_SEP: &str = "---DATA---";
 const DISPO_SEP: &str = "---DISPO---";

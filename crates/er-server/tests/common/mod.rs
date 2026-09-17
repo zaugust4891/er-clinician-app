@@ -10,7 +10,7 @@ use std::{path::Path, sync::Arc};
 
 use axum::{
     body::Body,
-    http::{header, Request},
+    http::{Request, header},
 };
 use chrono::Utc;
 use sqlx::PgPool;
@@ -39,7 +39,8 @@ pub const ORG_B: Uuid = Uuid::from_u128(0x0B);
 pub async fn test_state(pool: PgPool) -> AppState {
     // cwd for integration tests is the crate dir (crates/er-server), so the repo-root
     // dev keys are two levels up.
-    let keys = Arc::new(KeySet::from_file(Path::new("../../dev/keys/jwks.json")).expect("dev jwks"));
+    let keys =
+        Arc::new(KeySet::from_file(Path::new("../../dev/keys/jwks.json")).expect("dev jwks"));
     AppState::for_tests(pool, keys)
 }
 
@@ -140,12 +141,13 @@ pub async fn ensure_test_audio_infra() -> AudioFixture {
     let queue = format!("stt-jobs-test-{suffix}");
     let dlq = format!("{queue}-dlq");
 
-    let queues = er_server::aws::ensure_audio_infra(&clients.s3, &clients.sqs, &bucket, &queue, &dlq)
-        .await
-        .expect(
-            "audio tests need MinIO + ElasticMQ and the dev AWS_* variables: \
+    let queues =
+        er_server::aws::ensure_audio_infra(&clients.s3, &clients.sqs, &bucket, &queue, &dlq)
+            .await
+            .expect(
+                "audio tests need MinIO + ElasticMQ and the dev AWS_* variables: \
              `docker compose up -d` and `set -a && . ./.env && set +a`",
-        );
+            );
 
     AudioFixture {
         s3: clients.s3,
@@ -163,7 +165,8 @@ fn endpoint_from_env(name: &str, fallback: &str) -> String {
 
 /// `test_state`, but pointed at this test's own bucket and queues.
 pub async fn test_state_with_audio(pool: PgPool, audio: &AudioFixture) -> AppState {
-    let keys = Arc::new(KeySet::from_file(Path::new("../../dev/keys/jwks.json")).expect("dev jwks"));
+    let keys =
+        Arc::new(KeySet::from_file(Path::new("../../dev/keys/jwks.json")).expect("dev jwks"));
     AppState::for_tests_with_audio(
         pool,
         keys,
@@ -248,7 +251,11 @@ pub async fn get(app: &axum::Router, path: &str, token: Option<&str>) -> u16 {
     if let Some(t) = token {
         req = req.header(header::AUTHORIZATION, format!("Bearer {t}"));
     }
-    let response = app.clone().oneshot(req.body(Body::empty()).unwrap()).await.unwrap();
+    let response = app
+        .clone()
+        .oneshot(req.body(Body::empty()).unwrap())
+        .await
+        .unwrap();
     response.status().as_u16()
 }
 
@@ -259,9 +266,15 @@ pub async fn get_json(app: &axum::Router, path: &str, token: &str) -> (u16, serd
         .method("GET")
         .uri(path)
         .header(header::AUTHORIZATION, format!("Bearer {token}"));
-    let response = app.clone().oneshot(req.body(Body::empty()).unwrap()).await.unwrap();
+    let response = app
+        .clone()
+        .oneshot(req.body(Body::empty()).unwrap())
+        .await
+        .unwrap();
     let status = response.status().as_u16();
-    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
     (status, serde_json::from_slice(&bytes).unwrap())
 }
 
@@ -273,15 +286,25 @@ pub async fn get_text(app: &axum::Router, path: &str, token: &str) -> (u16, Stri
         .method("GET")
         .uri(path)
         .header(header::AUTHORIZATION, format!("Bearer {token}"));
-    let response = app.clone().oneshot(req.body(Body::empty()).unwrap()).await.unwrap();
+    let response = app
+        .clone()
+        .oneshot(req.body(Body::empty()).unwrap())
+        .await
+        .unwrap();
     let status = response.status().as_u16();
     let content_type = response
         .headers()
         .get(header::CONTENT_TYPE)
         .map(|v| v.to_str().unwrap().to_owned())
         .unwrap_or_default();
-    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
-    (status, content_type, String::from_utf8_lossy(&bytes).into_owned())
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    (
+        status,
+        content_type,
+        String::from_utf8_lossy(&bytes).into_owned(),
+    )
 }
 
 /// POST a JSON body and hand back status + parsed response. `Json<T>` rejects a
@@ -302,7 +325,9 @@ pub async fn post_json(
         .unwrap();
     let response = app.clone().oneshot(req).await.unwrap();
     let status = response.status().as_u16();
-    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
     (status, serde_json::from_slice(&bytes).unwrap())
 }
 
@@ -341,11 +366,12 @@ pub async fn seed_org_and_clinician(pool: &PgPool, org_id: Uuid, sub: &str) {
 /// `REFERENCES clinicians(id)`, so `seed_org_and_clinician` must have run for this org first.
 pub async fn seed_registered_patient(pool: &PgPool, org_id: Uuid) -> Uuid {
     let patient_id = Uuid::now_v7();
-    let created_by: Uuid = sqlx::query_scalar("SELECT id FROM clinicians WHERE org_id = $1 LIMIT 1")
-        .bind(org_id)
-        .fetch_one(pool)
-        .await
-        .expect("seed_org_and_clinician must run before seeding a patient");
+    let created_by: Uuid =
+        sqlx::query_scalar("SELECT id FROM clinicians WHERE org_id = $1 LIMIT 1")
+            .bind(org_id)
+            .fetch_one(pool)
+            .await
+            .expect("seed_org_and_clinician must run before seeding a patient");
 
     PostgresRepository::for_org(pool.clone(), org_id)
         .register_patient(patient_id, created_by, "chest pain", None)
@@ -388,7 +414,9 @@ pub async fn post_empty(app: &axum::Router, path: &str, token: &str) -> (u16, se
         .unwrap();
     let response = app.clone().oneshot(req).await.unwrap();
     let status = response.status().as_u16();
-    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
     (status, serde_json::from_slice(&bytes).unwrap())
 }
 
@@ -409,7 +437,9 @@ pub async fn put_json(
         .unwrap();
     let response = app.clone().oneshot(req).await.unwrap();
     let status = response.status().as_u16();
-    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
     (status, String::from_utf8_lossy(&bytes).into_owned())
 }
 

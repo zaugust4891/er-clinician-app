@@ -1,8 +1,8 @@
 use crate::EventBus;
+use crate::error::{AppError, AppResult};
 use crate::load::PatientNoteStore;
 use er_domain::NoteEvent;
 use er_domain::{CaptureMode, EncounterId, PatientId};
-use crate::error::{AppError, AppResult};
 use er_pipeline::audio::AudioCapture;
 use er_pipeline::stt::Transcriber;
 
@@ -51,10 +51,12 @@ impl<A: AudioCapture, T: Transcriber> EncounterDriver<A, T> {
 
         self.audio.start(patient_id, encounter_id, mode.clone())?;
 
-        self.bus.publish(
-            NoteEvent::audio_started(patient_id, encounter_id, mode),
-            &self.store,
-        ).await?;
+        self.bus
+            .publish(
+                NoteEvent::audio_started(patient_id, encounter_id, mode),
+                &self.store,
+            )
+            .await?;
 
         self.active_encounter = Some(ActiveEncounter {
             patient_id,
@@ -64,7 +66,6 @@ impl<A: AudioCapture, T: Transcriber> EncounterDriver<A, T> {
         Ok(encounter_id)
     }
 
-   
     /// Purpose:
     /// Stop recording,
     /// Run speech-to-text on the captured audio,
@@ -84,22 +85,26 @@ impl<A: AudioCapture, T: Transcriber> EncounterDriver<A, T> {
 
         let pcm_bytes = self.audio.stop()?;
 
-        self.bus.publish(
-            NoteEvent::audio_stopped(active.patient_id, active.encounter_id),
-            &self.store,
-        ).await?;
+        self.bus
+            .publish(
+                NoteEvent::audio_stopped(active.patient_id, active.encounter_id),
+                &self.store,
+            )
+            .await?;
 
         let transcript_result = self.transcriber.transcribe(&pcm_bytes)?;
 
-        self.bus.publish(
-            NoteEvent::transcript_ready(
-                active.patient_id,
-                active.encounter_id,
-                transcript_result.text,
-                Utc::now(),
-            ),
-            &self.store,
-        ).await?;
+        self.bus
+            .publish(
+                NoteEvent::transcript_ready(
+                    active.patient_id,
+                    active.encounter_id,
+                    transcript_result.text,
+                    Utc::now(),
+                ),
+                &self.store,
+            )
+            .await?;
 
         Ok(active.encounter_id)
     }
@@ -135,7 +140,7 @@ impl<A: AudioCapture, T: Transcriber> EncounterDriver<A, T> {
     /// the system needs to:
     /// - stop the current encounter,
     /// - flush its audio/transcript, and start a new encounter for the new patient
-    ///  -- all atomically from the clinician's perspective.
+    ///   -- all atomically from the clinician's perspective.
     pub async fn switch_patient(
         &mut self,
         new_patient_id: PatientId,

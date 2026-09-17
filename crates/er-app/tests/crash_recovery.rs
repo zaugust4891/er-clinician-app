@@ -8,8 +8,8 @@ use er_app::load::{self as load, PatientNoteStore};
 use er_domain::NoteEvent;
 use er_domain::{CaptureMode, NotePhase, PatientId};
 use er_pipeline::audio::MockAudioCapture;
-use er_store::repository::{Repository, SqliteRepository};
 use er_pipeline::stt::MockTranscriber;
+use er_store::repository::{Repository, SqliteRepository};
 
 // These tests drive EncounterDriver / EventBus / load_patient_note directly
 // (no ShiftManager), so nothing block_on's internally. They run as
@@ -42,11 +42,6 @@ fn setup_crash_recovery_stack() -> CrashRecoverySetup {
         driver,
         patient_id: Uuid::now_v7(),
     }
-}
-
-#[test]
-fn crash_recovery_test_module_is_registered() {
-    assert!(true);
 }
 
 #[tokio::test]

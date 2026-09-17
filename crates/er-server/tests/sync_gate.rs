@@ -18,8 +18,8 @@ use er_store::repository::Repository;
 
 mod common;
 use common::{
-    event_row_count, get, get_json, mint, post_json, seed_org_and_clinician,
-    seed_registered_patient, test_state, ORG_A, ORG_B,
+    ORG_A, ORG_B, event_row_count, get, get_json, mint, post_json, seed_org_and_clinician,
+    seed_registered_patient, test_state,
 };
 
 /// One `EventUp` as JSON. Built by serializing a real `NoteEvent` rather than
@@ -74,7 +74,8 @@ async fn replayed_batch_is_idempotent(pool: PgPool) {
     let ids = [Uuid::now_v7(), Uuid::now_v7(), Uuid::now_v7()];
     let batch = encounter_batch(patient, ids);
 
-    let (first_status, first_body) = post_json(&app, &events_url(patient), &token, batch.clone()).await;
+    let (first_status, first_body) =
+        post_json(&app, &events_url(patient), &token, batch.clone()).await;
     let (second_status, second_body) = post_json(&app, &events_url(patient), &token, batch).await;
 
     assert_eq!(first_status, 200);
@@ -83,8 +84,14 @@ async fn replayed_batch_is_idempotent(pool: PgPool) {
     let first_seqs = sequence_ids(&first_body);
     let second_seqs = sequence_ids(&second_body);
     assert_eq!(first_seqs.len(), 3);
-    assert_eq!(first_seqs, second_seqs, "replay returns the ORIGINAL sequence_ids");
-    assert!(first_seqs.windows(2).all(|w| w[0] < w[1]), "monotonic within the batch");
+    assert_eq!(
+        first_seqs, second_seqs,
+        "replay returns the ORIGINAL sequence_ids"
+    );
+    assert!(
+        first_seqs.windows(2).all(|w| w[0] < w[1]),
+        "monotonic within the batch"
+    );
     assert_eq!(event_row_count(&pool, patient).await, 3, "3 rows, not 6");
 
     // The acks must also come back keyed to the ids the client sent, in order —
@@ -127,8 +134,16 @@ async fn event_patient_mismatch_is_400_and_writes_nothing(pool: PgPool) {
 
     assert_eq!(status, 400);
     assert_eq!(body["error"], "event_patient_mismatch");
-    assert_eq!(event_row_count(&pool, patient).await, 0, "the valid event must not land either");
-    assert_eq!(event_row_count(&pool, other).await, 0, "and certainly not the smuggled one");
+    assert_eq!(
+        event_row_count(&pool, patient).await,
+        0,
+        "the valid event must not land either"
+    );
+    assert_eq!(
+        event_row_count(&pool, other).await,
+        0,
+        "and certainly not the smuggled one"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -168,7 +183,11 @@ async fn appending_to_another_orgs_patient_is_404(pool: PgPool) {
     .await;
 
     assert_eq!(status, 404);
-    assert_eq!(event_row_count(&pool, patient_b).await, 0, "org A must not write into org B");
+    assert_eq!(
+        event_row_count(&pool, patient_b).await,
+        0,
+        "org A must not write into org B"
+    );
 
     // Sanity: the rightful owner can write the very same batch.
     let (owner_status, _) = post_json(
@@ -232,7 +251,11 @@ async fn oversized_batch_is_400(pool: PgPool) {
 
     assert_eq!(status, 400);
     assert_eq!(body["error"], "batch_too_large");
-    assert_eq!(event_row_count(&pool, patient).await, 0, "rejected before any insert");
+    assert_eq!(
+        event_row_count(&pool, patient).await,
+        0,
+        "rejected before any insert"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -270,13 +293,25 @@ async fn concurrent_appends_to_one_patient_all_land(pool: PgPool) {
 
     let mut seqs = Vec::with_capacity(WRITERS);
     for h in handles {
-        seqs.push(h.await.expect("task panicked").expect("append under contention"));
+        seqs.push(
+            h.await
+                .expect("task panicked")
+                .expect("append under contention"),
+        );
     }
 
     seqs.sort_unstable();
     seqs.dedup();
-    assert_eq!(seqs.len(), WRITERS, "every writer got a distinct sequence_id");
-    assert_eq!(event_row_count(&pool, patient).await, WRITERS as i64, "no lost writes");
+    assert_eq!(
+        seqs.len(),
+        WRITERS,
+        "every writer got a distinct sequence_id"
+    );
+    assert_eq!(
+        event_row_count(&pool, patient).await,
+        WRITERS as i64,
+        "no lost writes"
+    );
 
     // The stream reads back in sequence order with no duplicates — the ordering
     // guarantee downsync's cursor (S5) is about to depend on.
@@ -285,8 +320,14 @@ async fn concurrent_appends_to_one_patient_all_land(pool: PgPool) {
         .await
         .unwrap();
     let read_seqs: Vec<u64> = stored.iter().map(|e| e.sequence_id).collect();
-    assert!(read_seqs.windows(2).all(|w| w[0] < w[1]), "strictly increasing");
-    assert_eq!(read_seqs, seqs, "reader sees exactly what the writers were promised");
+    assert!(
+        read_seqs.windows(2).all(|w| w[0] < w[1]),
+        "strictly increasing"
+    );
+    assert_eq!(
+        read_seqs, seqs,
+        "reader sees exactly what the writers were promised"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -333,7 +374,11 @@ async fn event_id_colliding_across_orgs_fails_closed(pool: PgPool) {
     if let Ok(leaked) = result {
         assert_ne!(leaked, seq_a, "and certainly not org A's sequence_id");
     }
-    assert_eq!(event_row_count(&pool, patient_b).await, 0, "nothing stored for org B");
+    assert_eq!(
+        event_row_count(&pool, patient_b).await,
+        0,
+        "nothing stored for org B"
+    );
 }
 
 // ===========================================================================
@@ -452,7 +497,10 @@ async fn cursor_loop_visits_every_event_exactly_once(pool: PgPool) {
         }
     }
 
-    assert_eq!(seen, seqs, "the loop reconstructs the stream in order, once each");
+    assert_eq!(
+        seen, seqs,
+        "the loop reconstructs the stream in order, once each"
+    );
 }
 
 /// A caller already at the head of the stream gets an empty page, not an error
@@ -473,7 +521,10 @@ async fn cursor_at_head_returns_empty_page(pool: PgPool) {
     .await;
 
     assert_eq!(status, 200);
-    assert!(body["events"].as_array().unwrap().is_empty(), "nothing after the head");
+    assert!(
+        body["events"].as_array().unwrap().is_empty(),
+        "nothing after the head"
+    );
     assert_eq!(body["has_more"], false);
 }
 
@@ -489,7 +540,12 @@ async fn wire_replay_matches_local_replay(pool: PgPool) {
     let (local_events, _) = seed_five_events(&pool, ORG_A, patient).await;
     let app = routes::router(test_state(pool).await);
 
-    let (status, body) = get_json(&app, &events_query(patient, "?since=0"), &mint("doc-joey-a")).await;
+    let (status, body) = get_json(
+        &app,
+        &events_query(patient, "?since=0"),
+        &mint("doc-joey-a"),
+    )
+    .await;
     assert_eq!(status, 200);
 
     // Rebuild the domain events from the wire representation alone.
@@ -537,7 +593,10 @@ async fn wire_replay_matches_local_replay(pool: PgPool) {
             .collect::<Vec<_>>()
     };
     assert_eq!(audit_of(&from_wire), audit_of(&from_local));
-    assert!(!from_wire.audit_log.is_empty(), "the fixture must actually produce audit entries");
+    assert!(
+        !from_wire.audit_log.is_empty(),
+        "the fixture must actually produce audit entries"
+    );
 }
 
 /// Downsync is behind the same ownership guard as every other per-patient route.
@@ -550,8 +609,16 @@ async fn downsync_of_another_orgs_patient_is_404(pool: PgPool) {
     let app = routes::router(test_state(pool).await);
 
     let url = events_query(patient_b, "?since=0");
-    assert_eq!(get(&app, &url, Some(&mint("doc-joey-a"))).await, 404, "org A is refused");
-    assert_eq!(get(&app, &url, Some(&mint("doc-peppas-b"))).await, 200, "org B owns it");
+    assert_eq!(
+        get(&app, &url, Some(&mint("doc-joey-a"))).await,
+        404,
+        "org A is refused"
+    );
+    assert_eq!(
+        get(&app, &url, Some(&mint("doc-peppas-b"))).await,
+        200,
+        "org B owns it"
+    );
 }
 
 /// The paging off-by-one: a page that exactly consumes the remaining stream must
@@ -574,7 +641,10 @@ async fn exactly_full_page_does_not_claim_more(pool: PgPool) {
 
     assert_eq!(status, 200);
     assert_eq!(page_seqs(&body), seqs, "all five fit");
-    assert_eq!(body["has_more"], false, "the stream is exhausted, not one-short");
+    assert_eq!(
+        body["has_more"], false,
+        "the stream is exhausted, not one-short"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -604,7 +674,10 @@ async fn full_remote_lifecycle(pool: PgPool) {
         token.as_str(),
     ));
 
-    assert!(api.active_shift().await.unwrap().is_none(), "first boot of the day");
+    assert!(
+        api.active_shift().await.unwrap().is_none(),
+        "first boot of the day"
+    );
     let shift = api.start_shift().await.unwrap();
 
     let patient = Uuid::now_v7(); // client-stamped (D5.3)
@@ -621,7 +694,9 @@ async fn full_remote_lifecycle(pool: PgPool) {
     let bus = er_app::EventBus::new(1024, Some(Arc::clone(&repo)));
     let events = common::full_visit_events(patient, Uuid::now_v7());
     for event in &events {
-        bus.publish(event.clone(), &store).await.expect("publish over HTTP");
+        bus.publish(event.clone(), &store)
+            .await
+            .expect("publish over HTTP");
     }
     assert_eq!(store.get(&patient).unwrap().phase, NotePhase::Signed);
 
@@ -643,7 +718,11 @@ async fn full_remote_lifecycle(pool: PgPool) {
         .expect("the shift is still open on the server — that is the resume story");
     assert_eq!(resumed.shift_id, shift.shift_id);
     assert_eq!(
-        resumed.patients.iter().map(|p| p.patient_id).collect::<Vec<_>>(),
+        resumed
+            .patients
+            .iter()
+            .map(|p| p.patient_id)
+            .collect::<Vec<_>>(),
         vec![patient],
         "the roster comes back without any local state"
     );
@@ -681,7 +760,10 @@ async fn full_remote_lifecycle(pool: PgPool) {
     // --- The clipboard dialect: what actually gets pasted into Epic ---
     let text = loaner.export(patient).await.unwrap();
     assert!(text.contains("Chief Complaint: chest pain"), "got:\n{text}");
-    assert!(text.contains("55yo with substernal chest pressure"), "got:\n{text}");
+    assert!(
+        text.contains("55yo with substernal chest pressure"),
+        "got:\n{text}"
+    );
     assert!(text.contains("NSTEMI"), "got:\n{text}");
     assert!(text.contains("Troponin I"), "got:\n{text}");
 

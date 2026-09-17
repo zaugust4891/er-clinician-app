@@ -1,12 +1,11 @@
 use axum::extract::{FromRequestParts, State};
-use axum::http::header::HeaderMap; 
+use axum::http::header::HeaderMap;
 use axum::response::IntoResponse;
 
 use reqwest::StatusCode;
 
 use crate::auth::{AuthError, AuthedClinician, claims};
 use crate::state::AppState;
-
 
 /*
 Success — `authed = AuthedClinician { clinician_id: …0002, org_id: …0001 }`.
@@ -28,7 +27,11 @@ Failure (say, expired token → `Err(AuthError::Jwt(..))`):
   everything. Crucially, **`next` is never called** — the handler cannot run.
 
 */
-pub async fn require_auth(State(state): State<AppState>, mut req: axum::extract::Request, next: axum::middleware::Next) -> axum::response::Response {
+pub async fn require_auth(
+    State(state): State<AppState>,
+    mut req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
     match authenticate(&state, req.headers()).await {
         Ok(authed) => {
             req.extensions_mut().insert(authed);
@@ -40,8 +43,6 @@ pub async fn require_auth(State(state): State<AppState>, mut req: axum::extract:
         }
     }
 }
-
-
 
 //Tracing our `Bearer eyJ0…` header
 // **`.and_then(|v| v.strip_prefix("Bearer "))`** → `Option<&str>`. Checks the scheme *and* strips
@@ -62,9 +63,9 @@ The key insight: `org_id` comes from the *database row*, never from the token. T
 
 */
 
-
 async fn authenticate(state: &AppState, headers: &HeaderMap) -> Result<AuthedClinician, AuthError> {
-    let token = headers.get(axum::http::header::AUTHORIZATION)
+    let token = headers
+        .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .ok_or(AuthError::MissingToken)?;
@@ -79,11 +80,12 @@ impl<S: Send + Sync> FromRequestParts<S> for AuthedClinician {
     async fn from_request_parts(
         parts: &mut axum::http::request::Parts,
         _: &S,
-    ) -> Result<Self, Self::Rejection>
-    {
-        parts.extensions.get::<AuthedClinician>().cloned()
+    ) -> Result<Self, Self::Rejection> {
+        parts
+            .extensions
+            .get::<AuthedClinician>()
+            .cloned()
             .ok_or(StatusCode::UNAUTHORIZED)
-        
     }
 }
 
@@ -92,7 +94,7 @@ GET /v1/me HTTP/1.1
 host: localhost:8080
 authorization: Bearer eryeri8iIJCdpfmsd;vmsv;ksvs
 
-AppState (Build once at boot, cloned per request): 
+AppState (Build once at boot, cloned per request):
 -state.keys -> a KeySet trusting dev-key-1
 -state.resolver -> a ClinicianResolver whose clinicians table has one row:
     cognito_sub = "test-doc"-> id = ...0002, org_id = ...0001
@@ -101,7 +103,7 @@ AppState (Build once at boot, cloned per request):
 
 The decoded JQT payload we carry around:
 '''json
-{ 
+{
     "sub": "test-doc",
     "iss": "https://dev.local",
     "token_use": "access",

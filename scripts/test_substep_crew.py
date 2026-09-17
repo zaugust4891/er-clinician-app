@@ -170,6 +170,24 @@ class ExtractionAndSummaryTests(unittest.TestCase):
 
 
 class VerdictAndEngineTests(unittest.TestCase):
+    def test_claude_config_prefers_override_then_personal_then_default(self):
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            personal = home / ".claude-personal"
+            fallback = home / ".claude"
+            fallback.mkdir()
+
+            with mock.patch.object(crew.Path, "home", return_value=home), mock.patch.dict(
+                os.environ, {}, clear=True
+            ):
+                self.assertEqual(crew.default_claude_config_dir(), fallback)
+                personal.mkdir()
+                self.assertEqual(crew.default_claude_config_dir(), personal)
+
+                override = home / "explicit-claude-home"
+                os.environ["CLAUDE_CONFIG_DIR"] = str(override)
+                self.assertEqual(crew.default_claude_config_dir(), override)
+
     def test_verdict_validation_fails_closed(self):
         invalid = [
             "READY TO COMMIT",
@@ -195,6 +213,7 @@ class VerdictAndEngineTests(unittest.TestCase):
             captured = {}
             def fake_stream(argv, timeout, label, env=None, *, log_path=None, stdout_path=None):
                 captured["argv"] = argv
+                captured["env"] = env
                 Path(log_path).write_text("stderr diagnostic\n" + final, encoding="utf-8")
                 Path(stdout_path).write_text(final, encoding="utf-8")
                 return crew.Result(True, "bounded excerpt", .1, log_path=Path(log_path))
@@ -202,6 +221,8 @@ class VerdictAndEngineTests(unittest.TestCase):
                 result = crew.ClaudeEngine(permission_mode="plan").run("review", 5, schema=schema, log_path=transcript)
             self.assertEqual(result.output, final)
             self.assertIn("--json-schema", captured["argv"])
+            self.assertEqual(captured["env"]["CLAUDE_CONFIG_DIR"], str(crew.default_claude_config_dir()))
+            self.assertEqual(captured["env"]["PAI_DIR"], str(crew.default_claude_config_dir()))
             final_path = Path(td) / "01-review.final.json"
             self.assertTrue(final_path.exists())
             self.assertNotEqual(transcript.read_text(), final_path.read_text())

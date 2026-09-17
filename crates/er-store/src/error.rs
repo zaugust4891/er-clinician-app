@@ -24,9 +24,9 @@ pub enum StoreError {
 pub type StoreResult<T> = std::result::Result<T, StoreError>;
 
 /// Keeps er-store stays sqlx-free (it just holds a Box<dyn Error>), and in er-server
-/// convert sqlx failures with .map_err(StoreError::backend). serde_json 
+/// convert sqlx failures with .map_err(StoreError::backend). serde_json
 impl StoreError {
     pub fn backend(e: impl std::error::Error + Send + Sync + 'static) -> Self {
         StoreError::Backend(Box::new(e))
-    }    
+    }
 }

@@ -1,4 +1,8 @@
-use axum::{Json, http::StatusCode, response::{IntoResponse, Response}};
+use axum::{
+    Json,
+    http::StatusCode,
+    response::{IntoResponse, Response},
+};
 use serde_json::json;
 
 #[derive(Debug, thiserror::Error)]
@@ -26,11 +30,15 @@ pub enum ApiError {
 
 // Funnel the lower layers in so `?` just works in handlers.
 impl From<er_store::StoreError> for ApiError {
-    fn from(e: er_store::StoreError) -> Self { Self::Internal(e.into()) }
+    fn from(e: er_store::StoreError) -> Self {
+        Self::Internal(e.into())
+    }
 }
 
 impl From<sqlx::Error> for ApiError {
-    fn from(e: sqlx::Error) -> Self { Self::Internal(e.into()) }
+    fn from(e: sqlx::Error) -> Self {
+        Self::Internal(e.into())
+    }
 }
 
 impl IntoResponse for ApiError {
@@ -48,6 +56,5 @@ impl IntoResponse for ApiError {
         // Machine-readable, human-terse, PHI-free. Clients branch on status
         // the code string is for humans reading a debugger, not for parsing.
         (status, Json(json!({ "error": code }))).into_response()
-
     }
 }

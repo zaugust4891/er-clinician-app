@@ -2,10 +2,10 @@ use std::sync::Arc;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
+use crate::error::AppResult;
 use crate::load::PatientNoteStore;
 use er_domain::replay::apply_event;
 use er_domain::{NoteEvent, NotePhase, PatientNote};
-use crate::error::AppResult;
 use er_store::repository::Repository;
 
 /// Broadcast event bus — multiple consumers, single producer per event.
@@ -14,11 +14,9 @@ pub struct EventBus {
     sender: broadcast::Sender<NoteEvent>,
     repository: Option<Arc<dyn Repository>>,
 }
-///
 /// EventBus::publish()` takes a `&PatientNoteStore` parameter and updates
 /// the in-memory projection under the same control flow that persists the event.
 /// Snapshots fire when the resulting phase is `Idle`, `Finalizing`, or `Signed`.
-
 impl EventBus {
     pub fn new(capacity: usize, repository: Option<Arc<dyn Repository>>) -> Self {
         let (sender, _) = broadcast::channel(capacity);
@@ -34,7 +32,8 @@ impl EventBus {
         //    (Step 5) will instead carry an id the remote client already stamped.
         let seq_id = if let Some(repo) = &self.repository {
             let event_id = Uuid::now_v7();
-            repo.append_event(patient_id, event_id, event.clone()).await?
+            repo.append_event(patient_id, event_id, event.clone())
+                .await?
         } else {
             0
         };
@@ -47,35 +46,34 @@ impl EventBus {
             let mut entry = store
                 .entry(patient_id)
                 .or_insert_with(|| PatientNote::new(patient_id));
-            apply_event(&mut *entry, &event);
+            apply_event(&mut entry, &event);
             entry.phase.clone()
             // DashMap write lock on this shard is dropped - NotePhase escapes
         };
 
         // 3. Trigger snapshot on significant phase transitions.
         //    Only when we actually persisted (seq_id != 0) and a repo exists.
-        if seq_id != 0 {
-            if let Some(repo) = &self.repository {
-                if matches!(
-                    phase_after,
-                    NotePhase::Idle | NotePhase::Finalizing | NotePhase::Signed
-                ) {
-                    // Read the full note back from the store under a short-lived
-                    // borrow using store.get(&patient_id )for serialization. save_snapshot serializes
-                    // under its own lock, so we release the DashMap lock
-                    // first by cloning. Clones the PatientNote out of the ref immediately,
-                    // which then drops the read lock before save_snapshot is called.
-                    if let Some(snapshot) = store.get(&patient_id).map(|r| r.clone()) {
-                        // Best-effort — a snapshot failure should not kill the publish path. Log it and move on.
-                        if let Err(e) = repo.save_snapshot(patient_id, seq_id, &snapshot).await {
-                            tracing::warn!(
-                                patient_id = %patient_id,
-                                sequence_id = %seq_id,
-                                error = ?e,
-                                "snapshot save failed - continuing without"
-                            );
-                        }
-                    }
+        if seq_id != 0
+            && let Some(repo) = &self.repository
+            && matches!(
+                phase_after,
+                NotePhase::Idle | NotePhase::Finalizing | NotePhase::Signed
+            )
+        {
+            // Read the full note back from the store under a short-lived
+            // borrow using store.get(&patient_id )for serialization. save_snapshot serializes
+            // under its own lock, so we release the DashMap lock
+            // first by cloning. Clones the PatientNote out of the ref immediately,
+            // which then drops the read lock before save_snapshot is called.
+            if let Some(snapshot) = store.get(&patient_id).map(|r| r.clone()) {
+                // Best-effort — a snapshot failure should not kill the publish path. Log it and move on.
+                if let Err(e) = repo.save_snapshot(patient_id, seq_id, &snapshot).await {
+                    tracing::warn!(
+                        patient_id = %patient_id,
+                        sequence_id = %seq_id,
+                        error = ?e,
+                        "snapshot save failed - continuing without"
+                    );
                 }
             }
         }

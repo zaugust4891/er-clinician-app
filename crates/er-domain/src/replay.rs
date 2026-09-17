@@ -146,7 +146,6 @@ pub fn apply_event(note: &mut PatientNote, event: &NoteEvent) {
                 ));
             }
         }
-        
 
         NoteEvent::MdmGenerated {
             mdm_text,
@@ -454,10 +453,18 @@ mod tests {
         };
         apply_event(
             &mut note,
-            &NoteEvent::encounter_summarized(patient_id, encounter_id, sections, vec![encounter_id]),
+            &NoteEvent::encounter_summarized(
+                patient_id,
+                encounter_id,
+                sections,
+                vec![encounter_id],
+            ),
         );
 
-        assert_eq!(note.note_sections.hpi.as_deref(), Some("44yo M with chest pain"));
+        assert_eq!(
+            note.note_sections.hpi.as_deref(),
+            Some("44yo M with chest pain")
+        );
         assert_eq!(note.note_sections.exam.as_deref(), Some("RRR, lungs clear"));
     }
 
@@ -604,7 +611,10 @@ mod tests {
             &NoteEvent::diagnosis_assigned(patient_id, build_test_diagnosis(patient_id)),
         );
 
-        assert!(note.diagnoses.is_empty(), "signed note must reject diagnoses");
+        assert!(
+            note.diagnoses.is_empty(),
+            "signed note must reject diagnoses"
+        );
         assert_eq!(note.phase, NotePhase::Signed);
     }
 
@@ -625,7 +635,10 @@ mod tests {
             ),
         );
 
-        assert_eq!(note.disposition, None, "signed note must reject disposition");
+        assert_eq!(
+            note.disposition, None,
+            "signed note must reject disposition"
+        );
         assert_eq!(note.phase, NotePhase::Signed);
     }
 }

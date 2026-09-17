@@ -15,8 +15,8 @@ use er_store::repository::Repository;
 
 mod common;
 use common::{
-    get, get_json, get_text, mint, seed_org_and_clinician, seed_registered_patient, test_state,
-    ORG_A, ORG_B,
+    ORG_A, ORG_B, get, get_json, get_text, mint, seed_org_and_clinician, seed_registered_patient,
+    test_state,
 };
 
 fn note_url(patient: Uuid) -> String {
@@ -60,7 +60,12 @@ async fn signed_note_reads_back_fully_populated(pool: PgPool) {
     assert_eq!(body["patient_id"], patient.to_string());
 
     // Every narrative section survived the round trip.
-    assert!(body["hpi"].as_str().unwrap().contains("substernal chest pressure"));
+    assert!(
+        body["hpi"]
+            .as_str()
+            .unwrap()
+            .contains("substernal chest pressure")
+    );
     assert!(body["ros"].as_str().unwrap().contains("dyspnea"));
     assert!(body["exam"].as_str().unwrap().contains("diaphoretic"));
     assert!(body["mdm"].as_str().unwrap().contains("NSTEMI"));
@@ -70,7 +75,10 @@ async fn signed_note_reads_back_fully_populated(pool: PgPool) {
     assert_eq!(body["medications"].as_array().unwrap().len(), 1);
     assert_eq!(body["diagnoses"].as_array().unwrap().len(), 1);
     assert_eq!(body["data_reviewed"].as_array().unwrap().len(), 1);
-    assert!(body["disposition"].is_object(), "disposition must be present");
+    assert!(
+        body["disposition"].is_object(),
+        "disposition must be present"
+    );
     assert_eq!(body["encounter_count"], 1);
 }
 
@@ -131,8 +139,14 @@ async fn note_read_is_identical_via_snapshot_fast_path(pool: PgPool) {
         strip_created_at(replayed.clone()),
         "snapshot + delta must produce the same NoteView as a full replay"
     );
-    assert_eq!(via_snapshot["phase"], "Signed", "and it really is the finished note");
-    assert_eq!(via_snapshot["version"], replayed["version"], "same version either way");
+    assert_eq!(
+        via_snapshot["phase"], "Signed",
+        "and it really is the finished note"
+    );
+    assert_eq!(
+        via_snapshot["version"], replayed["version"],
+        "same version either way"
+    );
 
     // Pin the wart itself: if `created_at` ever becomes event-derived, this fails
     // and the exclusion above should be deleted along with it.
@@ -153,11 +167,19 @@ async fn export_returns_plain_text_with_the_note_content(pool: PgPool) {
     seed_signed_note(&pool, ORG_A, patient).await;
     let app = routes::router(test_state(pool).await);
 
-    let (status, content_type, text) = get_text(&app, &export_url(patient), &mint("doc-joey-a")).await;
+    let (status, content_type, text) =
+        get_text(&app, &export_url(patient), &mint("doc-joey-a")).await;
 
     assert_eq!(status, 200);
-    assert_eq!(content_type, "text/plain; charset=utf-8", "this is clipboard text, not JSON");
-    assert!(text.starts_with("ED PROVIDER NOTE"), "got: {:?}", &text[..text.len().min(80)]);
+    assert_eq!(
+        content_type, "text/plain; charset=utf-8",
+        "this is clipboard text, not JSON"
+    );
+    assert!(
+        text.starts_with("ED PROVIDER NOTE"),
+        "got: {:?}",
+        &text[..text.len().min(80)]
+    );
 
     // The chief complaint comes from the `patients` row, not the event stream —
     // it is the one field proving `patient_row` was actually consulted.
@@ -183,7 +205,11 @@ async fn export_of_an_eventless_patient_is_404(pool: PgPool) {
     let token = mint("doc-joey-a");
 
     assert_eq!(get(&app, &export_url(patient), Some(&token)).await, 404);
-    assert_eq!(get(&app, &note_url(patient), Some(&token)).await, 200, "but /note still answers");
+    assert_eq!(
+        get(&app, &note_url(patient), Some(&token)).await,
+        200,
+        "but /note still answers"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -206,8 +232,17 @@ async fn stats_match_the_repository_and_are_org_scoped(pool: PgPool) {
     // One snapshot in org A only.
     let repo_a = PostgresRepository::for_org(pool.clone(), ORG_A);
     let note_a = er_domain::replay::replay(patient_a, &events_a);
-    let head = repo_a.get_events(patient_a).await.unwrap().last().unwrap().sequence_id;
-    repo_a.save_snapshot(patient_a, head, &note_a).await.unwrap();
+    let head = repo_a
+        .get_events(patient_a)
+        .await
+        .unwrap()
+        .last()
+        .unwrap()
+        .sequence_id;
+    repo_a
+        .save_snapshot(patient_a, head, &note_a)
+        .await
+        .unwrap();
 
     let app = routes::router(test_state(pool.clone()).await);
     let (status, body) = get_json(&app, "/v1/stats", &mint("doc-joey-a")).await;
@@ -223,7 +258,11 @@ async fn stats_match_the_repository_and_are_org_scoped(pool: PgPool) {
 
     // Org B has its own events and no snapshot — proof the numbers are not global.
     let (_, body_b) = get_json(&app, "/v1/stats", &mint("doc-peppas-b")).await;
-    assert_eq!(body_b["event_count"], events_a.len() as u64, "same size stream, separately counted");
+    assert_eq!(
+        body_b["event_count"],
+        events_a.len() as u64,
+        "same size stream, separately counted"
+    );
     assert_eq!(body_b["snapshot_count"], 0, "org B never snapshotted");
 }
 
@@ -240,8 +279,16 @@ async fn read_endpoints_are_org_scoped(pool: PgPool) {
     let app = routes::router(test_state(pool).await);
 
     let intruder = mint("doc-joey-a");
-    assert_eq!(get(&app, &note_url(patient_b), Some(&intruder)).await, 404, "note");
-    assert_eq!(get(&app, &export_url(patient_b), Some(&intruder)).await, 404, "export");
+    assert_eq!(
+        get(&app, &note_url(patient_b), Some(&intruder)).await,
+        404,
+        "note"
+    );
+    assert_eq!(
+        get(&app, &export_url(patient_b), Some(&intruder)).await,
+        404,
+        "export"
+    );
 
     // Sanity: the owner reaches both.
     let owner = mint("doc-peppas-b");

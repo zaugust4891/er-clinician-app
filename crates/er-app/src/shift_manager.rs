@@ -1,25 +1,24 @@
 use crate::EventBus;
+use crate::conversions::disposition::format_disposition_for_mdm;
 use crate::encounter_driver::EncounterDriver;
+use crate::error::AppError::PatientNotFound;
+use crate::error::{AppError, AppResult};
+use crate::export::format_note;
 use crate::load::PatientNoteStore;
 use crate::objective_data::assemble_objective_data;
 use crate::shift_snapshot::ShiftSnapshot;
+use er_ai::deidentify::Deidentifier;
+use er_ai::summarizer::Summarizer;
 use er_domain::NoteEvent;
 use er_domain::NoteSections;
 use er_domain::replay::{apply_event, replay};
 use er_domain::{
     CaptureMode, ClinicalResult, Diagnosis, Disposition, DomainError, EncounterId, Medication,
-    MedicationKind,
-    NotePhase, PatientId, PatientNote, PatientRecord, Shift, ShiftId,
+    MedicationKind, NotePhase, PatientId, PatientNote, PatientRecord, Shift, ShiftId,
 };
-use crate::error::AppError::PatientNotFound;
-use crate::error::{AppError, AppResult};
-use er_ai::deidentify::Deidentifier;
-use er_ai::summarizer::Summarizer;
 use er_pipeline::audio::AudioCapture;
-use er_store::repository::Repository;
 use er_pipeline::stt::Transcriber;
-use crate::export::format_note;
-use crate::conversions::disposition::format_disposition_for_mdm;
+use er_store::repository::Repository;
 
 use chrono::{DateTime, Utc};
 use std::collections::{HashMap, HashSet};
@@ -53,6 +52,7 @@ where
     T: Transcriber,
     S: Summarizer,
 {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         shift: Shift,
         patients: HashMap<PatientId, PatientRecord>,
@@ -115,7 +115,8 @@ where
             AppError::Audio("No active patient. Please register and select one first.".to_string())
         })?;
 
-        self.runtime.block_on(self.driver.start_encounter(patient_id, mode))
+        self.runtime
+            .block_on(self.driver.start_encounter(patient_id, mode))
     }
 
     pub fn stop_encounter(&mut self) -> AppResult<EncounterId> {
@@ -170,28 +171,23 @@ where
 
     /// Called by stop_encounter - preserves re-eval if network or claude api error
     /// Deidentifies patient BEFORE sending over Network to AWS - name becomes 'Patient_A', 'Patient_B' etc.
-    /// Calls async summarize_encounter AFTER Deidentifying. 
-    fn summarize_encounter_deidentify_persist(&mut self, encounter_id: EncounterId) -> AppResult<()> {
+    /// Calls async summarize_encounter AFTER Deidentifying.
+    fn summarize_encounter_deidentify_persist(
+        &mut self,
+        encounter_id: EncounterId,
+    ) -> AppResult<()> {
         let patient_id = self.check_active_patient_id()?;
 
-         // Read fresh transcript + prior sections + encounter number from the store.
+        // Read fresh transcript + prior sections + encounter number from the store.
         let (transcript, prior, encounter_number) = {
-            let note = self
-                .store
-                .get(&patient_id)
-                .ok_or_else(|| AppError::NoteError(
-                    format!("No note found in PatientNoteStore for patient: {patient_id}"
-                )))?;
-            let enc = note
-                .encounters
-                .iter()
-                .find(|e| e.id == encounter_id);
-            
-            let transcript = enc
-                .and_then(
-                    |e| e.transcript
-                        .clone()
-                ).unwrap_or_default();
+            let note = self.store.get(&patient_id).ok_or_else(|| {
+                AppError::NoteError(format!(
+                    "No note found in PatientNoteStore for patient: {patient_id}"
+                ))
+            })?;
+            let enc = note.encounters.iter().find(|e| e.id == encounter_id);
+
+            let transcript = enc.and_then(|e| e.transcript.clone()).unwrap_or_default();
 
             (transcript, note.note_sections.clone(), note.encounter_count)
         };
@@ -202,28 +198,32 @@ where
         };
 
         // De-identify before the network call (F4 / HIPPA)
-        let patient = self.patients
+        let patient = self
+            .patients
             .get(&patient_id)
             .cloned()
             .ok_or(PatientNotFound(patient_id))?;
         let safe_transcript = self.deidentifier.deidentify(&transcript, &patient);
 
         // Bridge sync -> async
-        let generated = self.runtime.block_on(
-            self.summarizer.summarize_encounter(&safe_transcript, &prior, encounter_number)
-        )?;
+        let generated = self.runtime.block_on(self.summarizer.summarize_encounter(
+            &safe_transcript,
+            &prior,
+            encounter_number,
+        ))?;
 
-        // Persist 
-        self.runtime.block_on(self.bus.publish(NoteEvent::encounter_summarized(
-            patient_id, 
-            encounter_id, 
-            generated.value,
-            vec![encounter_id]),
-            &self.store, 
+        // Persist
+        self.runtime.block_on(self.bus.publish(
+            NoteEvent::encounter_summarized(
+                patient_id,
+                encounter_id,
+                generated.value,
+                vec![encounter_id],
+            ),
+            &self.store,
         ))?;
         Ok(())
     }
-
 
     pub fn stop_active_encounter_for_shutdown(&mut self) -> AppResult<Option<EncounterId>> {
         if self.driver.has_active_encounter() {
@@ -271,7 +271,8 @@ where
 
         let lab_result_event = NoteEvent::result_received(patient_id, result, clinical_occurred_at);
 
-        self.runtime.block_on(self.bus.publish(lab_result_event, &self.store))?;
+        self.runtime
+            .block_on(self.bus.publish(lab_result_event, &self.store))?;
 
         Ok(())
     }
@@ -355,10 +356,12 @@ where
         self.ensure_no_active_encounter("trigger MDM")?;
         self.ensure_active_phase(NotePhase::Idle, "TriggerMDM")?;
         // 1. Snapshot the note's current clinical picture.
-        // Tuple destructuring matches purely by position, not name — so the compiler won't warn you if the order is off. 
+        // Tuple destructuring matches purely by position, not name — so the compiler won't warn you if the order is off.
         // Just confirm the four values come out in the order you expect: (sections, objective_data, disposition_str, source_ids).
         let (sections, objective_data, disposition_str, source_ids) = {
-            let note = self.get_note(patient_id).ok_or_else(|| AppError::NoteError(format!("No Note found for this patient.")))?;
+            let note = self.get_note(patient_id).ok_or_else(|| {
+                AppError::NoteError("No Note found for this patient.".to_string())
+            })?;
             let sections = note.note_sections.clone();
             let objective_data = assemble_objective_data(&note);
 
@@ -376,34 +379,45 @@ where
                 ));
             }
 
-            let disposition_str = note.disposition.as_ref()
+            let disposition_str = note
+                .disposition
+                .as_ref()
                 .map(format_disposition_for_mdm)
                 .unwrap_or_else(|| "Disposition not yet determined".to_string());
             let source_ids = note.encounters.iter().map(|en| en.id).collect::<Vec<_>>();
             (sections, objective_data, disposition_str, source_ids)
         };
 
-
-         // 2. De-identify EVERY free-text blob before the model call.
-         //    Both objective_data and the disposition are free text that can carry
-         //    PHI (e.g. "f/u with Dr. Jones at 123 Main St", a callback number).
-         //    sections (HPI/ROS/Exam) were already de-identified at summarize time
-         //    because they are derived from the de-identified transcript.
-        let patient = self.patients.get(&patient_id).cloned().ok_or_else(|| PatientNotFound(patient_id.clone()))?;
+        // 2. De-identify EVERY free-text blob before the model call.
+        //    Both objective_data and the disposition are free text that can carry
+        //    PHI (e.g. "f/u with Dr. Jones at 123 Main St", a callback number).
+        //    sections (HPI/ROS/Exam) were already de-identified at summarize time
+        //    because they are derived from the de-identified transcript.
+        let patient = self
+            .patients
+            .get(&patient_id)
+            .cloned()
+            .ok_or(PatientNotFound(patient_id))?;
         let safe_objective_data = self.deidentifier.deidentify(&objective_data, &patient);
         let safe_disposition = self.deidentifier.deidentify(&disposition_str, &patient);
 
         // 3. Generate (sync → async bridge).
-        let generated = self.runtime.block_on(
-            self.summarizer.generate_mdm(&sections, &safe_objective_data, &safe_disposition,)
-        )?;
-        
+        let generated = self.runtime.block_on(self.summarizer.generate_mdm(
+            &sections,
+            &safe_objective_data,
+            &safe_disposition,
+        ))?;
 
         // 4. Persist the MDM, THEN drive the state transition.
         self.runtime.block_on(self.bus.publish(
-            NoteEvent::mdm_generated(patient_id, generated.value, source_ids), &self.store))?;
+            NoteEvent::mdm_generated(patient_id, generated.value, source_ids),
+            &self.store,
+        ))?;
 
-        self.runtime.block_on(self.bus.publish(NoteEvent::trigger_mdm(patient_id), &self.store))?;
+        self.runtime.block_on(
+            self.bus
+                .publish(NoteEvent::trigger_mdm(patient_id), &self.store),
+        )?;
         // Idle -> Finalizing
 
         Ok(())
@@ -415,7 +429,8 @@ where
         let patient_id = self.check_active_patient_id()?;
         let review_ready = NoteEvent::review_ready(patient_id);
 
-        self.runtime.block_on(self.bus.publish(review_ready, &self.store))?;
+        self.runtime
+            .block_on(self.bus.publish(review_ready, &self.store))?;
 
         Ok(())
     }
@@ -426,7 +441,8 @@ where
         let patient_id = self.check_active_patient_id()?;
         let signed_note = NoteEvent::sign(patient_id);
 
-        self.runtime.block_on(self.bus.publish(signed_note, &self.store))?;
+        self.runtime
+            .block_on(self.bus.publish(signed_note, &self.store))?;
 
         Ok(())
     }
@@ -505,23 +521,27 @@ where
         self.ensure_no_active_encounter("reload active patient")?;
         let patient_id = self.check_active_patient_id()?;
 
-        let (note, replayed_count) =
-            if let Some((sequence_id, mut note)) = self.runtime.block_on(self.repo.get_latest_snapshot(patient_id))? {
-                let delta = self.runtime.block_on(self.repo.get_events_since(patient_id, sequence_id))?;
-                for stored in &delta {
-                    apply_event(&mut note, &stored.event);
-                }
-                (note, delta.len())
+        let (note, replayed_count) = if let Some((sequence_id, mut note)) = self
+            .runtime
+            .block_on(self.repo.get_latest_snapshot(patient_id))?
+        {
+            let delta = self
+                .runtime
+                .block_on(self.repo.get_events_since(patient_id, sequence_id))?;
+            for stored in &delta {
+                apply_event(&mut note, &stored.event);
+            }
+            (note, delta.len())
+        } else {
+            let events = self.runtime.block_on(self.repo.get_events(patient_id))?;
+            if events.is_empty() {
+                (PatientNote::new(patient_id), 0)
             } else {
-                let events = self.runtime.block_on(self.repo.get_events(patient_id))?;
-                if events.is_empty() {
-                    (PatientNote::new(patient_id), 0)
-                } else {
-                    let owned_events: Vec<NoteEvent> =
-                        events.iter().map(|stored| stored.event.clone()).collect();
-                    (replay(patient_id, &owned_events), events.len())
-                }
-            };
+                let owned_events: Vec<NoteEvent> =
+                    events.iter().map(|stored| stored.event.clone()).collect();
+                (replay(patient_id, &owned_events), events.len())
+            }
+        };
 
         self.store.insert(patient_id, note);
         Ok(replayed_count)
@@ -602,7 +622,6 @@ where
 
         Ok((stopped_id, server_owns_transcript))
     }
-
 }
 
 fn sections_are_empty(sections: &NoteSections) -> bool {
@@ -645,7 +664,6 @@ fn results_text(note: &PatientNote) -> Option<String> {
 /// use its runtime to block_on a summarize_encounter call,
 /// and assert the mock HPI comes back.
 #[cfg(test)]
-
 mod tests {
     use super::*;
 
@@ -685,8 +703,7 @@ mod tests {
             Arc::new(er_store::repository::SqliteRepository::new(conn));
         let event_bus = Arc::new(EventBus::new(1024, Some(sql_lite_repo.clone())));
 
-        let store: crate::load::PatientNoteStore =
-            crate::load::new_store();
+        let store: crate::load::PatientNoteStore = crate::load::new_store();
         let audio = er_pipeline::audio::MockAudioCapture::new();
         let transcriber = er_pipeline::stt::MockTranscriber;
 
@@ -731,8 +748,7 @@ mod tests {
     #[test]
     fn remote_mode_makes_no_local_model_calls() {
         let conn = er_store::db::open_memory_db().unwrap();
-        let repo: Arc<dyn Repository> =
-            Arc::new(er_store::repository::SqliteRepository::new(conn));
+        let repo: Arc<dyn Repository> = Arc::new(er_store::repository::SqliteRepository::new(conn));
         let bus = Arc::new(EventBus::new(32, Some(repo.clone())));
         let store = crate::load::new_store();
         let driver = crate::encounter_driver::EncounterDriver::new(
@@ -769,8 +785,7 @@ mod tests {
     #[test]
     fn register_patient_with_id_keeps_the_callers_id_everywhere() {
         let conn = er_store::db::open_memory_db().unwrap();
-        let repo: Arc<dyn Repository> =
-            Arc::new(er_store::repository::SqliteRepository::new(conn));
+        let repo: Arc<dyn Repository> = Arc::new(er_store::repository::SqliteRepository::new(conn));
         let bus = Arc::new(EventBus::new(32, Some(repo.clone())));
         let store = crate::load::new_store();
         let driver = crate::encounter_driver::EncounterDriver::new(
