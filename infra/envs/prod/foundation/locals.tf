@@ -5,6 +5,12 @@ locals {
   environment  = "prod"
   manifest_key = "envs/prod/foundation-manifest.json"
 
+  # Global name, carrying the account and region for uniqueness and nothing else.
+  # Composed here so the network module's S3 gateway policy and the data module's bucket
+  # share one string without the two modules depending on each other in both directions.
+  audio_bucket_name = "${var.project}-${local.environment}-audio-${var.aws_account_id}-${var.aws_region}"
+  audio_bucket_arn  = "arn:aws:s3:::${local.audio_bucket_name}"
+
   # ---------------------------------------------------------------------------
   # The foundation manifest's payload
   # ---------------------------------------------------------------------------
@@ -12,8 +18,8 @@ locals {
   # Keys expected by the end of Step 8, in the order they arrive:
   #
   #   S4  vpc_id, private_subnet_ids, api_security_group_id, worker_security_group_id
-  #   S5  audio_bucket, stt_queue_url, stt_dlq_url, db_endpoint, db_port, db_name,
-  #       data_kms_key_arn
+  #   S5  audio_bucket, stt_queue_name, stt_queue_url, stt_dlq_url, db_endpoint,
+  #       db_port, db_name, data_kms_key_arn
   #   S6  api_task_role_arn, worker_task_role_arn, api_execution_role_arn,
   #       worker_execution_role_arn, migration_task_role_arn,
   #       migration_execution_role_arn
@@ -35,6 +41,17 @@ locals {
     migration_security_group_id  = module.network[0].security_group_ids.migration
     onboarding_security_group_id = module.network[0].security_group_ids.onboarding
     api_https_port               = tostring(module.network[0].api_https_port)
+
+    # S5. Names and endpoints only; the database login, its password and the RDS-managed
+    # master secret ARN stay out of the manifest, because no release needs them.
+    audio_bucket     = module.data[0].audio_bucket_name
+    stt_queue_name   = module.data[0].stt_queue_name
+    stt_queue_url    = module.data[0].stt_queue_url
+    stt_dlq_url      = module.data[0].stt_dlq_url
+    db_endpoint      = module.data[0].db_host
+    db_port          = tostring(module.data[0].db_port)
+    db_name          = module.data[0].db_name
+    data_kms_key_arn = module.data[0].kms_key_arn
   } : {})
 
   manifest_secret_refs = {}

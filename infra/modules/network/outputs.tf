@@ -39,6 +39,11 @@ output "s3_endpoint_id" {
   value = aws_vpc_endpoint.s3.id
 }
 
+output "s3_gateway_bucket_arns" {
+  description = "Application buckets the gateway policy grants object access to. S5 supplies the audio bucket; endpoint permission is a boundary, not an IAM grant."
+  value       = var.s3_bucket_arns
+}
+
 output "interface_endpoint_ids" {
   value = { for service, endpoint in aws_vpc_endpoint.interface : service => endpoint.id }
 }

@@ -22,3 +22,13 @@ network = {
   vpc_cidr           = "10.50.0.0/16"
   nat_per_az         = false
 }
+
+# S5 durable resources. Enabling this root without stating both of the values below
+# fails the plan on purpose: they decide how much clinical data an incident can lose,
+# and staging's synthetic numbers are not an answer for production. Audio retention and
+# any legal-hold requirement need the same explicit review before real patient data.
+data = {
+  db_multi_az              = true
+  db_backup_retention_days = 35
+  db_instance_class        = "db.t4g.small" # Size from measured production load.
+}

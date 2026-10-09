@@ -217,3 +217,31 @@ fn missing_app_env_exits_before_opening_a_developer_dotenv_or_network() {
         assert!(String::from_utf8_lossy(&output.stderr).contains("APP_ENV is required"));
     }
 }
+
+/// S5 provisions the cloud queue pair from these two facts, and Terraform has no way
+/// to read them: `infra/modules/data/queues.tf` creates `<name>` and `<name>-dlq`, and
+/// sets the queue's visibility timeout to the worker's lease. If either constant moves
+/// here, the deployed queues stop matching what the processes look up at startup —
+/// `resolve_queue_urls` fails on a name that does not exist, or SQS redelivers a job the
+/// worker is still running. Pin them so that rename fails here instead of in staging.
+#[test]
+fn deployed_queue_names_and_lease_match_the_provisioned_pair() {
+    let mut vars = values();
+    vars.insert("STT_QUEUE".into(), "ernote-staging-jobs".into());
+
+    assert_eq!(
+        Config::from_values(&vars).unwrap().stt_dlq(),
+        "ernote-staging-jobs-dlq",
+        "infra/modules/data/queues.tf names the dead-letter queue <queue>-dlq"
+    );
+    assert_eq!(
+        WorkerConfig::from_values(&vars).unwrap().stt_dlq(),
+        "ernote-staging-jobs-dlq",
+        "the worker must resolve the same dead-letter queue the API does"
+    );
+    assert_eq!(
+        er_server::config::WorkerLimits::default().visibility_seconds,
+        300,
+        "infra/modules/data/queues.tf sets visibility_timeout_seconds to this lease"
+    );
+}

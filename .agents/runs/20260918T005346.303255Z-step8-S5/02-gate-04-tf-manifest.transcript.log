@@ -1,0 +1,9 @@
+foundation-manifest guards
+  ok    secret_value_in_secret_refs        rejected
+  ok    non_secretsmanager_arn             rejected
+  ok    credential_named_resource          rejected
+  ok    api_key_named_resource             rejected
+  ok    empty_resource_value               rejected
+  ok    unknown_environment                rejected
+  ok    secretsmanager_arn_reference       accepted
+all guard checks passed

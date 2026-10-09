@@ -5,6 +5,14 @@ locals {
   environment  = "staging"
   manifest_key = "envs/staging/foundation-manifest.json"
 
+  # S3 bucket names are global, so this one carries the account and region to stay
+  # unique — and nothing else: no clinician, patient, or hospital identifier. It is
+  # composed here rather than inside the data module because the network module needs
+  # the same string for its S3 gateway endpoint policy. Passing one computed name into
+  # both modules keeps the dependency one-way (network -> data) instead of circular.
+  audio_bucket_name = "${var.project}-${local.environment}-audio-${var.aws_account_id}-${var.aws_region}"
+  audio_bucket_arn  = "arn:aws:s3:::${local.audio_bucket_name}"
+
   # ---------------------------------------------------------------------------
   # The foundation manifest's payload
   # ---------------------------------------------------------------------------
@@ -12,8 +20,8 @@ locals {
   # Keys expected by the end of Step 8, in the order they arrive:
   #
   #   S4  vpc_id, private_subnet_ids, api_security_group_id, worker_security_group_id
-  #   S5  audio_bucket, stt_queue_url, stt_dlq_url, db_endpoint, db_port, db_name,
-  #       data_kms_key_arn
+  #   S5  audio_bucket, stt_queue_name, stt_queue_url, stt_dlq_url, db_endpoint,
+  #       db_port, db_name, data_kms_key_arn
   #   S6  api_task_role_arn, worker_task_role_arn, api_execution_role_arn,
   #       worker_execution_role_arn, migration_task_role_arn,
   #       migration_execution_role_arn
@@ -35,6 +43,22 @@ locals {
     migration_security_group_id  = module.network[0].security_group_ids.migration
     onboarding_security_group_id = module.network[0].security_group_ids.onboarding
     api_https_port               = tostring(module.network[0].api_https_port)
+
+    # S5. `audio_bucket` and `stt_queue_name` are the literal values of the API's and
+    # worker's AUDIO_BUCKET and STT_QUEUE; the queue URLs are published for operators
+    # and S9 alarms, since the application resolves its own URLs with GetQueueUrl.
+    # `db_endpoint` is a hostname with no port, because `db.rs` verifies that hostname
+    # against the server certificate and composes the port separately.
+    # The database login, its password, and the RDS-managed master secret ARN are
+    # deliberately absent: S6 owns those, and no release needs them.
+    audio_bucket     = module.data[0].audio_bucket_name
+    stt_queue_name   = module.data[0].stt_queue_name
+    stt_queue_url    = module.data[0].stt_queue_url
+    stt_dlq_url      = module.data[0].stt_dlq_url
+    db_endpoint      = module.data[0].db_host
+    db_port          = tostring(module.data[0].db_port)
+    db_name          = module.data[0].db_name
+    data_kms_key_arn = module.data[0].kms_key_arn
   })
 
   manifest_secret_refs = {}

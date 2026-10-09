@@ -26,3 +26,13 @@ output "network" {
   description = "Non-secret S4 interfaces for foundation components and operator inspection; null while production is disabled."
   value       = module.network[0]
 }
+
+output "data" {
+  description = <<-EOT
+    Non-secret S5 interfaces: bucket, queue and database identifiers, the data key, and
+    the Secrets Manager ARN of the RDS-managed master credential. ARNs and names only —
+    the master credential's value stays in Secrets Manager, and S6's one-shot bootstrap
+    task is the only thing that reads it.
+  EOT
+  value       = module.data[0]
+}

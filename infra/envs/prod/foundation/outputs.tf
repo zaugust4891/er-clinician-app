@@ -26,3 +26,12 @@ output "network" {
   description = "Non-secret S4 interfaces for foundation components and operator inspection; null while production is disabled."
   value       = var.enabled ? module.network[0] : null
 }
+
+output "data" {
+  description = <<-EOT
+    Non-secret S5 interfaces: bucket, queue and database identifiers, the data key, and
+    the Secrets Manager ARN of the RDS-managed master credential — a pointer, never a
+    value. Null while production is disabled.
+  EOT
+  value       = var.enabled ? module.data[0] : null
+}

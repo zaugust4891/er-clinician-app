@@ -18,3 +18,18 @@ network = {
   vpc_cidr           = "10.40.0.0/16"
   nat_per_az         = false
 }
+
+# S5 durable resources. Everything here has a synthetic-staging default; these are the
+# values worth stating out loud in a review. Check the instance class and gp3 storage
+# combination is offered in the region before the first apply, and pin an exact
+# PostgreSQL 16 minor once you have verified it is available.
+data = {
+  db_instance_class        = "db.t4g.small"
+  db_allocated_storage     = 50
+  db_max_allocated_storage = 100
+  db_multi_az              = false
+  db_backup_retention_days = 7
+  audio_retention_days     = 7
+  queue_retention_days     = 4
+  dlq_retention_days       = 14
+}

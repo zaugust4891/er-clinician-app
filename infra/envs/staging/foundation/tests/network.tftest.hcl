@@ -1,6 +1,11 @@
 mock_provider "aws" {
   mock_data "aws_caller_identity" { defaults = { account_id = "000000000000" } }
   mock_data "aws_availability_zones" { defaults = { names = ["us-east-2c", "us-east-2b", "us-east-2a"] } }
+  mock_resource "aws_kms_key" {
+    # The RDS provider validates this ARN's shape, and a generated mock value is not a
+    # valid ARN. Everything else about the key stays mocked.
+    defaults = { arn = "arn:aws:kms:us-east-2:000000000000:key/00000000-0000-0000-0000-000000000000" }
+  }
 }
 variables {
   aws_account_id          = "000000000000"

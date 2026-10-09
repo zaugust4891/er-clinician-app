@@ -20,8 +20,12 @@ module "network" {
   client_ipv4_cidrs     = var.network.client_ipv4_cidrs
   http_redirect_enabled = var.network.http_redirect_enabled
   api_https_port        = var.network.api_https_port
-  s3_bucket_arns        = var.network.s3_bucket_arns
   interface_endpoints   = var.network.interface_endpoints
+
+  # S5's audio bucket is always in scope for the S3 gateway endpoint. The name is a
+  # local, not a `module.data` output, so the gateway policy does not make the network
+  # depend on the data module that depends on this network.
+  s3_bucket_arns = setunion(var.network.s3_bucket_arns, [local.audio_bucket_arn])
 
   depends_on = [terraform_data.account_guard]
 }

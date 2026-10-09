@@ -66,6 +66,59 @@ variable "enabled" {
   default     = false
 }
 
+variable "data" {
+  description = <<-EOT
+    S5 durable resources. The staging defaults are deliberately *not* inherited for the
+    two settings that decide how much data an incident can lose: an enabled production
+    plan must state `db_multi_az` and `db_backup_retention_days` itself, from production
+    recovery objectives rather than from a synthetic-staging convenience.
+  EOT
+  type = object({
+    postgres_version         = optional(string, "16")
+    db_instance_class        = optional(string, "db.t4g.small")
+    db_allocated_storage     = optional(number, 50)
+    db_max_allocated_storage = optional(number, 100)
+    db_multi_az              = optional(bool)
+    db_backup_retention_days = optional(number)
+    db_backup_window         = optional(string, "07:00-07:30")
+    db_maintenance_window    = optional(string, "sun:08:00-sun:09:00")
+    db_name                  = optional(string, "ernote")
+    db_master_username       = optional(string, "ernote_admin")
+    db_ca_cert_identifier    = optional(string)
+    db_deletion_protection   = optional(bool, true)
+    db_final_snapshot_suffix = optional(string, "v1")
+    db_apply_immediately     = optional(bool, false)
+
+    audio_retention_days                    = optional(number, 7)
+    audio_noncurrent_version_retention_days = optional(number, 7)
+    audio_abort_incomplete_multipart_days   = optional(number, 7)
+    bucket_administration_principal_arns    = optional(set(string), [])
+
+    queue_visibility_timeout_seconds = optional(number, 300)
+    queue_receive_wait_seconds       = optional(number, 20)
+    queue_max_receive_count          = optional(number, 3)
+    queue_retention_days             = optional(number, 4)
+    dlq_retention_days               = optional(number, 14)
+    dlq_operator_principal_arns      = optional(set(string), [])
+
+    kms_deletion_window_days = optional(number, 30)
+  })
+  default = {}
+
+  validation {
+    condition     = !var.enabled || var.data.db_backup_retention_days != null
+    error_message = "Set data.db_backup_retention_days from production recovery objectives before enabling this root; staging's 7-day synthetic value is not a production decision."
+  }
+
+  validation {
+    condition     = !var.enabled || var.data.db_multi_az != null
+    error_message = "Set data.db_multi_az explicitly before enabling this root; single-AZ is a staging cost choice, not a production availability decision."
+  }
+
+  # Production audio retention and legal holds are an expert-review decision recorded in
+  # the deployment contract, not something this file can settle with a number.
+}
+
 variable "network" {
   description = "S4 placement and egress. Closed ingress, one NAT, S3 gateway only by default. S5-S9 supply actual resource ARNs before endpoints are enabled."
   type = object({

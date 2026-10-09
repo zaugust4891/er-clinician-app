@@ -1,0 +1,3 @@
+Permission ask rule (../../../.claude-personal/settings.json): Write(~/.claude/settings.json) is not matched by file permission checks — only Edit(path) rules are. Use Edit(~/.claude/settings.json) instead (Edit rules cover all file-editing tools).
+Permission ask rule (../../../.claude-personal/settings.json): Write(~/.ssh/*) is not matched by file permission checks — only Edit(path) rules are. Use Edit(~/.ssh/*) instead (Edit rules cover all file-editing tools).
+You've hit your session limit · resets 11:30pm (America/New_York)

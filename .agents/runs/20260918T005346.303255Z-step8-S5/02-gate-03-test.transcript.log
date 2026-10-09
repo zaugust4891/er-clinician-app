@@ -1,0 +1,531 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.36s
+     Running unittests src/lib.rs (target/debug/deps/er_ai-a9fc79749df82399)
+
+running 17 tests
+test claude::tests::strips_optional_json_fences ... ok
+test claude::tests::system_is_serialized_as_a_block_array ... ok
+test model::tests::cost_micros_matches_the_price_table ... ok
+test model::tests::logical_model_names_resolve_for_both_transports ... ok
+test model::tests::overrides_cannot_change_family_or_smuggle_an_unpriced_profile ... ok
+test transport::tests::a_400_is_refused_and_a_429_is_retryable ... ok
+test transport::tests::bedrock_validation_is_permanent_and_throttling_is_retryable ... ok
+test transport::tests::missing_optional_usage_counters_default_to_zero ... ok
+test summarizer::tests::app_summarizer_mock_dispatches_generate_mdm ... ok
+test summarizer::tests::app_summarizer_mock_dispatches_summarize_encounter ... ok
+test claude::tests::mdm_prompt_clears_the_cache_minimum_conservatively ... ok
+test transport::tests::usage_is_parsed_not_discarded ... ok
+test deidentify::tests::stable_aliases_across_calls ... ok
+test deidentify::tests::strips_phone_numbers ... ok
+test deidentify::tests::strips_patient_name ... ok
+test deidentify::tests::stateless_scrub_removes_structured_identifiers_but_is_honest_about_names ... ok
+test transport::tests::direct_transport_debug_redacts_the_key ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests src/lib.rs (target/debug/deps/er_api-02628f7afc2e4a7c)
+
+running 6 tests
+test types::audio_wire_tests::chunk_view_tolerates_null_and_missing_optionals ... ok
+test types::audio_wire_tests::negative_chunk_index_is_rejected_at_the_door ... ok
+test types::audio_wire_tests::only_done_and_failed_are_terminal ... ok
+test types::job_wire_tests::job_status_treats_unknown_values_as_non_terminal ... ok
+test types::job_wire_tests::mdm_request_contains_only_the_client_stamped_id ... ok
+test types::audio_wire_tests::upload_request_field_names_are_the_wire_names ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/er_app-6c0bada196e0fa63)
+
+running 25 tests
+test conversions::diagnosis::tests::parses_quoted_text_with_primary_flag ... ok
+test conversions::diagnosis::tests::plain_text_without_flags_is_not_primary ... ok
+test conversions::diagnosis::tests::parses_trailing_icd10_code ... ok
+test conversions::diagnosis::tests::rejects_empty_text ... ok
+test conversions::disposition::tests::parses_discharge_with_quoted_instruction_and_follow_up ... ok
+test conversions::disposition::tests::parses_transfer_reason_tail ... ok
+test conversions::medication::tests::parses_given_medication_with_dose_and_route ... ok
+test conversions::medication::tests::parses_home_medication_without_optional_fields ... ok
+test conversions::medication::tests::rejects_missing_name ... ok
+test conversions::medication::tests::rejects_unknown_kind ... ok
+test export::tests::basic_note_format ... ok
+test export::tests::renders_medications_diagnoses_and_data_reviewed ... ok
+test objective_data::tests::blank_note_renders_empty_input ... ok
+test objective_data::tests::renders_all_populated_sections ... ok
+test encounter_driver::tests::double_start_returns_error ... ok
+test encounter_driver::tests::start_encounter_publishes_audio_started ... ok
+test encounter_driver::tests::audio_only_stop_publishes_no_device_transcript ... ok
+test encounter_driver::tests::stop_encounter_publishes_audio_stopped_then_transcript_ready ... ok
+test encounter_driver::tests::switch_patient_stops_old_and_starts_new ... ok
+test encounter_driver::tests::stop_without_start_returns_error ... ok
+test shift_manager::tests::construct_shift_manager_with_mock_summarizer ... ok
+test shift_manager::tests::server_owned_stop_publishes_only_audio_stopped_and_skips_summary ... ok
+test shift_manager::tests::implicit_stops_preserve_server_transcript_ownership ... ok
+test shift_manager::tests::remote_mode_makes_no_local_model_calls ... ok
+test shift_manager::tests::register_patient_with_id_keeps_the_callers_id_everywhere ... ok
+
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/crash_recovery.rs (target/debug/deps/crash_recovery-5e984ac3ab15dd56)
+
+running 3 tests
+test crash_recovery_setup_stack_compiles ... ok
+test switch_patient_mid_encounter_persists_both ... ok
+test full_lifecycle_survives_simulated_crash ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/generation_integration.rs (target/debug/deps/generation_integration-69b6d2f64f8ecc8c)
+
+running 6 tests
+test trigger_mdm_rejected_when_not_idle ... ok
+test trigger_mdm_rejected_when_note_is_empty ... ok
+test stop_encounter_populates_hpi_via_mock_summarizer ... ok
+test second_encounter_keeps_hpi_and_survives_reload ... ok
+test trigger_mdm_generates_persists_and_advances_phase ... ok
+test generated_mdm_survives_reload ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/persistence_integration.rs (target/debug/deps/persistence_integration-9b94ad14d99899cf)
+
+running 6 tests
+test load_nonexistent_patient_returns_none ... ok
+test corrupted_checksum_falls_back_to_full_replay ... ok
+test load_uses_snapshot_delta_path ... ok
+test disposition_set_after_sign_is_noop ... ok
+test store_and_sqlite_stay_consistent ... ok
+test publish_persists_projects_snapshots_and_loads ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/er_cli-cc9656bd6f6febc3)
+
+running 19 tests
+test interface::cli::tests::audio_extensions_map_to_the_server_allowlist ... ok
+test interface::cli::tests::an_initial_terminal_status_returns_without_a_get ... ok
+test interface::cli::tests::a_response_for_another_chunk_is_rejected_safely ... ok
+test interface::cli::tests::a_per_request_timeout_stops_observation_before_the_overall_deadline ... ok
+test interface::cli::tests::mdm_preview_returns_short_text_unchanged ... ok
+test interface::cli::tests::mdm_preview_handles_multibyte_boundary ... ok
+test interface::cli::tests::mdm_observation_polls_transitions_then_stops_on_done ... ok
+test interface::cli::tests::mdm_preview_truncates_long_text_with_ellipsis ... ok
+test interface::cli::tests::observation_prints_transitions_only_and_stops_on_done ... ok
+test tests::an_empty_shift_view_yields_an_empty_roster ... ok
+test interface::cli::tests::slow_responses_never_overlap_or_trigger_catch_up_requests ... ok
+test interface::cli::tests::unknown_status_and_a_stalled_get_are_bounded_by_the_overall_deadline ... ok
+test tests::remote_mode_needs_both_halves_and_ignores_blanks ... ok
+test tests::shift_and_roster_survive_the_trip_from_the_server ... ok
+test interface::cli::tests::status_failures_are_categorized_without_raw_diagnostics ... ok
+test interface::cli::tests::audio_and_transcript_commands_parse_and_local_audio_is_explanatory ... ok
+test interface::cli::tests::dispo_discharge_command_sets_note_disposition ... ok
+test interface::cli::tests::mdm_command_generates_mdm_and_returns_ok ... ok
+test interface::cli::tests::med_dx_data_commands_persist_onto_note ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running unittests src/bin/mdm_standalone.rs (target/debug/deps/mdm_standalone-c78e41bdd9b914ca)
+
+running 5 tests
+test tests::data_present_but_no_dispo_defaults ... ok
+test tests::empty_input_yields_empty_note_and_data ... ok
+test tests::no_separators_treats_everything_as_note ... ok
+test tests::splits_all_three_sections ... ok
+test tests::trims_whitespace_around_separators ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/spike_summarizer.rs (target/debug/deps/spike_summarizer-662f5a0a947a9ed3)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/er_domain-21b64e8ffea0d191)
+
+running 32 tests
+test events::tests::clinical_occurred_at_returns_the_events_clinical_time ... ok
+test events::tests::extract_encounter_id ... ok
+test events::tests::event_type_returns_correct_string_for_each_variant ... ok
+test events::tests::extract_patient_id ... ok
+test replay::tests::apply_event_audio_started_creates_encounter ... ok
+test note::tests::display_formats_patient_note_sections_and_results ... ok
+test replay::tests::apply_event_audio_stopped_closes_encounter ... ok
+test replay::tests::apply_event_data_reviewed_pushes_note ... ok
+test replay::tests::apply_event_diagnosis_assigned_after_sign_is_noop ... ok
+test replay::tests::apply_event_diagnosis_assigned_pushes_dx ... ok
+test replay::tests::apply_event_disposition_set_after_sign_is_noop ... ok
+test replay::tests::apply_event_disposition_set_records_disposition ... ok
+test replay::tests::apply_event_encounter_summarized_merges_hpi_and_exam ... ok
+test replay::tests::apply_event_mdm_generated_sets_mdm ... ok
+test replay::tests::apply_event_encounter_summarized_preserves_prior_mdm ... ok
+test replay::tests::apply_event_medication_recorded_pushes_med ... ok
+test replay::tests::apply_event_medication_recorded_after_sign_is_noop ... ok
+test replay::tests::apply_event_result_received_after_sign_is_noop ... ok
+test replay::tests::apply_event_transcript_attaches_to_encounter ... ok
+test replay::tests::replay_empty_events_returns_registered ... ok
+test replay::tests::replay_full_lifecycle_reaches_signed ... ok
+test replay::tests::replay_multi_encounter_increments_count ... ok
+test state::tests::clone_preserves_state ... ok
+test state::tests::debug_output_includes_state ... ok
+test state::tests::encountering_to_idle_on_audio_stop ... ok
+test state::tests::finalizing_can_return_to_encountering ... ok
+test state::tests::idle_encountering_cycle ... ok
+test state::tests::idle_to_finalizing_to_signed ... ok
+test state::tests::invalid_transition_is_noop ... ok
+test state::tests::registered_to_encountering_on_audio_start ... ok
+test state::tests::hydrate_reconstructs_state ... ok
+test state::tests::signed_rejects_results ... ok
+
+test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/er_pipeline-21ff5c8c5058e311)
+
+running 40 tests
+test deepgram::tests::a_blank_api_key_is_refused_at_construction ... ok
+test deepgram::tests::a_missing_duration_is_zero_rather_than_a_thrown_away_transcript ... ok
+test deepgram::tests::a_response_without_utterances_falls_back_to_the_flat_transcript ... ok
+test deepgram::tests::a_two_hundred_with_no_transcript_at_all_is_an_error ... ok
+test deepgram::tests::an_empty_utterances_array_falls_back_rather_than_returning_nothing ... ok
+test deepgram::tests::backoff_doubles_from_half_a_second ... ok
+test deepgram::tests::blank_turns_are_dropped_and_unlabelled_turns_keep_their_text ... ok
+test deepgram::tests::a_missing_content_type_is_rejected_before_any_network_call ... ok
+test deepgram::tests::debug_never_prints_the_api_key ... ok
+test deepgram::tests::incomplete_turns_cannot_hide_behind_an_empty_flat_transcript ... ok
+test deepgram::tests::invalid_numeric_metadata_cannot_escape_into_persistence ... ok
+test deepgram::http_tests::production_client_refuses_plain_http ... ok
+test deepgram::tests::malformed_utterances_without_a_flat_fallback_are_not_silence ... ok
+test deepgram::tests::only_429_and_5xx_are_worth_retrying ... ok
+test deepgram::tests::silence_transcribes_to_an_empty_string_not_an_error ... ok
+test deepgram::tests::empty_audio_is_rejected_before_any_network_call ... ok
+test deepgram::tests::the_retry_budget_fits_inside_the_sqs_visibility_timeout ... ok
+test deepgram::tests::the_transcriber_is_send_and_sync ... ok
+test deepgram::tests::unusable_or_partial_utterances_preserve_the_complete_flat_transcript ... ok
+test deepgram::tests::utterances_become_speaker_labelled_lines ... ok
+test deepgram::tests::well_formed_blank_turns_are_silence ... ok
+test speech_to_text::tests::a_missing_content_type_is_rejected ... ok
+test speech_to_text::tests::app_dispatch_forwards_to_the_mock_arm ... ok
+test speech_to_text::tests::canned_mode_ignores_the_audio_and_reports_a_duration ... ok
+test speech_to_text::tests::echo_mode_returns_the_wav_payload_without_the_header ... ok
+test speech_to_text::tests::echo_mode_returns_the_whole_buffer_when_it_is_not_a_container ... ok
+test speech_to_text::tests::echo_mode_survives_a_data_chunk_that_lies_about_its_length ... ok
+test speech_to_text::tests::echo_mode_walks_past_chunks_it_does_not_understand ... ok
+test speech_to_text::tests::the_returned_future_is_send ... ok
+test deepgram::http_tests::request_contract_and_dispatch_preserve_audio_and_privacy_flags ... ok
+test deepgram::tests::malformed_key_headers_are_rejected_without_disclosing_the_key ... ok
+test deepgram::tests::the_deepgram_arm_of_the_dispatch_enum_is_reachable ... ok
+test deepgram::http_tests::response_limits_cover_declared_and_chunked_bodies ... ok
+test deepgram::http_tests::timeouts_before_headers_and_during_body_are_not_retried ... ok
+test deepgram::http_tests::invalid_success_bodies_fail_once_without_echoing_content ... ok
+test deepgram::http_tests::permanent_statuses_fail_once_without_reading_the_error_body ... ok
+test deepgram::http_tests::redirects_cannot_replay_audio_or_credentials ... ok
+test deepgram::http_tests::broken_connections_before_headers_and_during_body_can_recover ... ok
+test deepgram::http_tests::retries_are_bounded_and_vendor_errors_never_include_content ... ok
+test deepgram::http_tests::transient_statuses_retry_then_succeed_with_identical_requests ... ok
+
+test result: ok. 40 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.16s
+
+     Running unittests src/lib.rs (target/debug/deps/er_server-3061af6268124e16)
+
+running 37 tests
+test audio::tests::metadata_is_not_trusted ... ok
+test audio::tests::streaming_cap_does_not_depend_on_metadata ... ok
+test audio::tests::an_unknown_length_stalled_stream_can_be_cancelled ... ok
+test auth::claims::tests::garbage_string_is_rejected ... ok
+test aws::tests::redrive_policy_points_at_dlq_and_limits_retries ... ok
+test queue::tests::an_unknown_job_kind_fails_to_decode ... ok
+test queue::tests::generate_mdm_is_tagged_and_carries_only_opaque_ids ... ok
+test queue::tests::transcribe_chunk_is_tagged_and_carries_only_an_id ... ok
+test worker::tests::a_chunk_that_transcribed_to_silence_contributes_nothing ... ok
+test db::tests::cloud_options_force_hostname_verified_tls_and_application_name ... ok
+test worker::tests::a_failed_chunk_becomes_a_visible_gap_not_a_silent_omission ... ok
+test aws::tests::cloud_config_has_no_shared_endpoint_or_profile_loader ... ok
+test worker::tests::a_missing_index_stalls_assembly_forever ... ok
+test worker::tests::a_nonsense_duration_cannot_panic_or_wrap ... ok
+test worker::tests::assembly_waits_until_every_index_is_terminal ... ok
+test worker::tests::chunks_after_the_final_index_are_excluded ... ok
+test worker::tests::clinical_time_is_the_last_chunk_moment_not_now ... ok
+test worker::tests::failure_codes_never_contain_error_payloads ... ok
+test worker::tests::finality_is_read_from_the_row_not_inferred_from_the_highest_index ... ok
+test worker::tests::lease_failure_or_timeout_cancels_work_before_visibility_expires ... ok
+test worker::tests::lease_renews_only_while_work_is_active ... ok
+test worker::tests::job_budget_reserves_terminal_bookkeeping_time ... ok
+test worker::tests::provider_deadline_is_retryable_and_includes_the_whole_future ... ok
+test worker::tests::shutdown_allows_a_short_job_to_finish_without_waiting_out_the_drain ... ok
+test worker::tests::shutdown_drains_with_lease_then_drops_unfinished_work ... ok
+test worker::tests::successful_renewals_do_not_extend_the_overall_job_deadline ... ok
+test worker::tests::the_event_id_is_a_pure_function_of_the_encounter ... ok
+test worker::tests::transcripts_join_in_index_order_regardless_of_arrival ... ok
+test worker::tests::wrapped_ai_errors_keep_their_retry_classification ... ok
+test auth::claims::tests::token_without_kid_is_rejected ... ok
+test auth::claims::tests::tampered_signature_is_rejected ... ok
+test auth::claims::tests::expired_token_is_rejected ... ok
+test auth::claims::tests::cognito_rejects_id_token ... ok
+test auth::claims::tests::valid_dev_token_is_accepted ... ok
+test db::tests::connection_failures_never_return_connection_strings ... ok
+test auth::claims::tests::wrong_issuer_is_rejected ... ok
+test repository::audio_worker_lookup_tests::worker_lookup_discovers_the_owning_org ... ok
+
+test result: ok. 37 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+     Running unittests src/bin/migrate.rs (target/debug/deps/er_migrate-83dddba4b318acb5)
+
+running 2 tests
+test tests::migration_lock_remains_enabled ... ok
+test tests::empty_database_then_noop_then_checksum_mismatch ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s
+
+     Running unittests src/main.rs (target/debug/deps/er_server-8c983dac00038c67)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/worker.rs (target/debug/deps/er_worker-a6dd5ba69a5ea669)
+
+running 2 tests
+test tests::direct_transport_without_a_key_uses_the_explicit_offline_mock ... ok
+test tests::direct_transport_is_activated_when_a_key_is_configured ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests src/bin/mint_dev_token.rs (target/debug/deps/mint_dev_token-ffef6df43d0953bb)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/ai_gate.rs (target/debug/deps/ai_gate-a084f69b3ab57d65)
+
+running 5 tests
+test interrupted_mdm_content_is_repaired_without_another_provider_call ... ok
+test empty_note_fails_the_job_without_calling_or_metering_the_model ... ok
+test mdm_job_persists_content_before_state_and_records_usage ... ok
+test a_repeated_mdm_request_enqueues_once_and_jobs_are_org_scoped ... ok
+test final_job_deadline_marks_mdm_receipt_failed_before_dlq ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.68s
+
+     Running tests/audio_complete_gate.rs (target/debug/deps/audio_complete_gate-3d0092781e303d58)
+
+running 6 tests
+test status_read_tracks_the_ledger_without_exposing_transcripts ... ok
+test oversized_or_mistyped_audio_is_not_marked_uploaded_or_enqueued ... ok
+test complete_after_put_marks_uploaded_and_enqueues_one_job ... ok
+test completion_without_bytes_is_409_and_enqueues_nothing ... ok
+test completion_and_status_are_org_scoped ... ok
+test repeated_completion_is_idempotent_and_finished_chunks_are_not_requeued ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.71s
+
+     Running tests/audio_limits.rs (target/debug/deps/audio_limits-c65c9e684b386f47)
+
+running 2 tests
+test unknown_length_s3_download_stops_at_the_byte_cap ... ok
+test download_deadline_includes_waiting_for_s3_headers ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+
+     Running tests/audio_repository.rs (target/debug/deps/audio_repository-f26292e061a879e8)
+
+running 3 tests
+test failed_chunk_is_terminal ... ok
+test encounter_chunks_are_ordered_and_org_scoped ... ok
+test chunk_status_helpers_enforce_forward_only_transitions ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.34s
+
+     Running tests/audio_upload_gate.rs (target/debug/deps/audio_upload_gate-f6c1c3cc98fb2b67)
+
+running 4 tests
+test mime_and_integer_boundaries_are_rejected_before_insert ... ok
+test retry_is_idempotent_and_chunk_contract_conflicts_are_409 ... ok
+test valid_intent_persists_pending_row_and_returns_scoped_put_url ... ok
+test ownership_guard_hides_missing_and_other_org_patients ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.52s
+
+     Running tests/auth_gate.rs (target/debug/deps/auth_gate-b526a19c7c6f0724)
+
+running 9 tests
+test no_token_is_401_and_healthz_is_open ... ok
+test dev_token_reaches_me ... ok
+test registering_twice_is_idempotent ... ok
+test registered_patient_with_no_events_is_200_not_404 ... ok
+test registration_without_an_active_shift_still_succeeds ... ok
+test empty_chief_complaint_is_400 ... ok
+test registration_attaches_to_the_active_shift ... ok
+test patient_registered_by_another_org_is_404 ... ok
+test cross_tenant_fails_closed_with_404 ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.68s
+
+     Running tests/config_gate.rs (target/debug/deps/config_gate-12adbcf46f642bb7)
+
+running 6 tests
+test deployed_queue_names_and_lease_match_the_provisioned_pair ... ok
+test environment_is_explicit_and_dev_providers_remain_optional ... ok
+test cloud_roles_require_only_their_own_dependencies ... ok
+test endpoint_pair_and_approved_model_family_are_enforced ... ok
+test unsafe_cloud_configuration_is_rejected_without_echoing_values ... ok
+test missing_app_env_exits_before_opening_a_developer_dotenv_or_network ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/read_gate.rs (target/debug/deps/read_gate-bd180fa6a1da4c29)
+
+running 7 tests
+test export_of_an_eventless_patient_is_404 ... ok
+test registered_but_quiet_patient_reads_as_a_fresh_note ... ok
+test signed_note_reads_back_fully_populated ... ok
+test export_returns_plain_text_with_the_note_content ... ok
+test stats_match_the_repository_and_are_org_scoped ... ok
+test note_read_is_identical_via_snapshot_fast_path ... ok
+test read_endpoints_are_org_scoped ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.54s
+
+     Running tests/remote_client.rs (target/debug/deps/remote_client-2e806c5d3526a7e8)
+
+running 10 tests
+test an_empty_page_that_claims_more_fails_instead_of_looping ... ok
+test presigned_put_sends_only_the_signed_content_type_and_scrubs_failures ... ok
+test an_unreachable_server_is_a_backend_error_not_a_remote_one ... ok
+test a_second_start_shift_surfaces_as_remote_409 ... ok
+test an_unusable_token_surfaces_as_remote_401 ... ok
+test a_snapshot_404_is_absence_but_a_write_404_is_an_error ... ok
+test a_downloaded_snapshot_arrives_hydrated ... ok
+test server_api_drives_the_whole_shift_lifecycle ... ok
+test the_app_layer_runs_unchanged_over_http ... ok
+test the_cursor_loop_returns_every_event_across_pages ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.01s
+
+     Running tests/repository_contract.rs (target/debug/deps/repository_contract-b9d86f78f57f3bef)
+
+running 6 tests
+test sqlite_repository_satisfies_contract ... ok
+test postgres_repositories_are_org_isolated ... ok
+test postgres_full_lifecycle_survives_reload ... ok
+test postgres_snapshot_checksum_mismatch_falls_back ... ok
+test postgres_repository_satisfies_contract ... ok
+test remote_repository_satisfies_contract ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.60s
+
+     Running tests/shift_gate.rs (target/debug/deps/shift_gate-9f26645f5368e5a1)
+
+running 11 tests
+test ending_a_shift_is_idempotent ... ok
+test start_shift_returns_an_active_shift ... ok
+test active_shift_is_404_before_any_shift_exists ... ok
+test get_shift_by_id_matches_the_active_shift ... ok
+test ending_an_unknown_shift_is_404 ... ok
+test unknown_shift_id_is_404 ... ok
+test starting_a_second_shift_is_409 ... ok
+test active_shift_resumes_with_the_roster_in_registration_order ... ok
+test different_clinicians_hold_separate_shifts ... ok
+test shifts_are_org_scoped ... ok
+test ending_clears_active_and_allows_a_new_shift ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.71s
+
+     Running tests/snapshot_gate.rs (target/debug/deps/snapshot_gate-1ee6cb879a7301c8)
+
+running 5 tests
+test missing_snapshot_is_404_and_replay_still_works ... ok
+test corrupted_snapshot_reads_as_absent_and_self_heals ... ok
+test snapshot_put_then_get_round_trips ... ok
+test repeated_put_replaces_rather_than_accumulates ... ok
+test snapshot_endpoints_are_org_scoped ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.55s
+
+     Running tests/sync_gate.rs (target/debug/deps/sync_gate-40b0e90b9ee8c7b2)
+
+running 16 tests
+test event_id_colliding_across_orgs_fails_closed ... ok
+test cursor_loop_visits_every_event_exactly_once ... ok
+test appending_to_another_orgs_patient_is_404 ... ok
+test cursor_at_head_returns_empty_page ... ok
+test empty_batch_is_400 ... ok
+test downsync_of_another_orgs_patient_is_404 ... ok
+test appending_to_an_unregistered_patient_is_404 ... ok
+test concurrent_appends_to_one_patient_all_land ... ok
+test event_patient_mismatch_is_400_and_writes_nothing ... ok
+test missing_query_params_default_to_the_whole_stream ... ok
+test exactly_full_page_does_not_claim_more ... ok
+test full_remote_lifecycle ... ok
+test replayed_batch_is_idempotent ... ok
+test wire_replay_matches_local_replay ... ok
+test oversized_batch_is_400 ... ok
+test page_limit_truncates_and_sets_has_more ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.17s
+
+     Running tests/worker_gate.rs (target/debug/deps/worker_gate-880f3eeea71d967e)
+
+running 12 tests
+test an_undecodable_message_is_not_deleted ... ok
+test worker_rechecks_size_and_type_before_transcribing ... ok
+test no_event_is_published_until_the_final_chunk_is_terminal ... ok
+test a_chunk_whose_audio_is_missing_becomes_a_visible_gap ... ok
+test the_published_event_id_is_the_uuidv5_of_the_encounter ... ok
+test the_transcript_is_scrubbed_before_the_model_sees_it ... ok
+test a_replayed_job_changes_nothing ... ok
+test an_encounter_assembles_in_index_order_after_arriving_out_of_order ... ok
+test a_job_for_an_unknown_chunk_does_not_stop_the_worker ... ok
+test a_wav_uploaded_through_the_client_lands_on_the_replayed_note ... ok
+test final_summary_deadline_retains_transcript_and_goes_to_dlq_without_second_provider_call ... ok
+test lease_renewal_shutdown_and_redelivery_recover_a_durable_transcript ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.29s
+
+     Running unittests src/lib.rs (target/debug/deps/er_store-b5a55c29b8c19d2b)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests er_ai
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests er_api
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests er_app
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests er_domain
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests er_pipeline
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests er_server
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests er_store
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

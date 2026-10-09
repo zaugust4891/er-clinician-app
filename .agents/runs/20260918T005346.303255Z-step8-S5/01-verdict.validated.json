@@ -1,0 +1,39 @@
+{
+  "verdict": "NOT_READY",
+  "summary": "The batch substantially implements S5 and all reported gates pass, but it is not ready. A confirmed S3 policy error rejects the headerless presigned uploads used by the application, production can silently inherit synthetic audio-retention values despite the unresolved production policy, and required live recovery/security acceptance evidence remains pending. The implementation guide itself was unchanged from HEAD.",
+  "substeps_covered": [
+    "Prerequisites \u2014 complete for code review: S4 supplies private database placement/security groups and the S3 gateway interface; S0 adopted the synthetic staging defaults. Production retention remains unresolved in the deployment contract.",
+    "S5.1 RDS provisioning \u2014 partial: PostgreSQL 16, db.t4g.small, single-AZ staging, 50 GiB gp3, capped autoscaling, scheduled maintenance/backups, encryption, deletion protection, and final snapshots are configured. Regional class/storage availability and an exact supported minor remain unverified.",
+    "S5.2 backups/recovery \u2014 partial: staging uses seven days and production requires an explicit database-backup decision. LatestRestorableTime and actual backup availability have not been verified because nothing has been applied.",
+    "S5.3 database TLS \u2014 complete in configuration: rds.force_ssl=1 is attached, and existing clients use verify-full with CA/hostname verification. Rotation guidance is documented.",
+    "S5.4 audio bucket \u2014 incorrect: public-access blocks, owner-enforced ownership, versioning, SSE-KMS defaults, Bucket Keys, and TLS policies exist, but the encryption-header deny conditions also deny requests with absent SSE headers, breaking the current presign contract.",
+    "S5.5 lifecycle \u2014 complete for synthetic staging: separate current/noncurrent expiry and multipart cleanup exist, with no archive transition or Object Lock. Production values are unsafe because unresolved policy defaults to staging's seven days.",
+    "S5.6 overwrite race \u2014 complete as an explicit deferral: documentation accurately states versioning is not immutability and requires version/checksum binding before PHI use in Step 9.",
+    "S5.7 queues \u2014 complete in default environment configuration: one standard queue plus DLQ, 300-second visibility, 20-second long polling, maxReceiveCount=3, 4/14-day retention, source-restricted redrive, SSE-KMS, and insecure-transport denies are present. Operator IAM remains correctly assigned to S6.",
+    "S5.8 key/data-copy boundaries \u2014 complete in design: application data uses a distinct rotating KMS key, security-log storage is not conflated with audio, and unrecoverability plus retained-copy implications are documented.",
+    "S5.9 exports \u2014 complete: no unsupported application export bucket was introduced.",
+    "Integration/later steps \u2014 complete at interface level: foundation manifests expose bucket, queue, database, and key identifiers; release roots require the application-facing values; S6/S8/S9/Step 9 obligations are documented without prematurely adding their resources.",
+    "HIPAA-focused review \u2014 no new authentication, session, tenant-isolation, URL, logging, or application authorization code was introduced. Confirmed findings concern storage availability and retention below; least-privilege runtime enforcement remains pending S6 and must not be treated as compliance evidence.",
+    "Validation \u2014 fmt, clippy, test, tf-manifest, and tf-network reportedly pass. Mock tests mostly inspect Terraform structure; they do not establish live AWS behavior, recovery, or HIPAA compliance."
+  ],
+  "blockers": [
+    {
+      "severity": "high",
+      "file": "infra/modules/data/audio.tf:138",
+      "problem": "Confirmed availability defect: both PutObject deny statements use StringNotEqualsIfExists. In an explicit Deny with a negated IfExists operator, a missing condition key still satisfies the deny. The application's presigner sends only Content-Type (crates/er-server/src/routes.rs:286), so ordinary headerless uploads are denied instead of receiving bucket-default SSE-KMS. This breaks every audio-upload workflow. The test at infra/modules/data/tests/data.tftest.hcl:115 merely asserts the mistaken policy shape and therefore validates the opposite of externally meaningful behavior.",
+      "required_fix": "Express each wrong-header denial so it applies only when that header is present, for example by combining an appropriate Null condition with StringNotEquals, while allowing both SSE headers to be absent. Add a behavioral/live policy test proving a current headerless presigned PUT succeeds and wrong algorithm/key requests fail."
+    },
+    {
+      "severity": "high",
+      "file": "infra/envs/prod/foundation/variables.tf:92",
+      "problem": "Confirmed retention/data-loss risk: production defaults current and noncurrent audio retention to the synthetic seven-day values, while validation only requires explicit database availability and backup decisions. Thus the example production configuration at infra/envs/prod/foundation/terraform.tfvars.example:30 can be enabled and automatically expire production audio under an unapproved policy. This contradicts the comment at lines 118-119 and the unresolved production retention/hold requirement at docs/ops/deployment-contract.md:45.",
+      "required_fix": "Require explicit production audio current-version and noncurrent-version retention decisions before enabled=true, sourced from the approved production retention/hold policy. Update the example and tests to prove production enablement fails when those decisions are omitted."
+    },
+    {
+      "severity": "medium",
+      "file": "docs/ops/data-verification.md:175",
+      "problem": "S5 acceptance remains unverifiable: the document records regional RDS class/storage and minor-version verification, applied-resource inspection, LatestRestorableTime, signed upload behavior, object encryption metadata, and runtime-role negative checks as pending. It also states that no database, bucket, queue, or key has been applied. Therefore the guide's cloud-inspection acceptance criteria are not yet satisfied despite the offline gates passing.",
+      "required_fix": "After correcting the policy and completing the dependent S6 permissions, apply to the approved synthetic staging account and record the required cloud/API evidence: supported RDS combination/minor, private/encrypted resources, advancing restore time, successful headerless signed upload, rejected public/insecure/wrong-encryption requests, expected object KMS metadata, queue/DLQ settings, and negative runtime-role control mutations."
+    }
+  ]
+}

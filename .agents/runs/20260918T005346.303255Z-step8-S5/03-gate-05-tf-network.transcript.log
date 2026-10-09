@@ -1,0 +1,50 @@
+Success! The configuration is valid.
+
+tests/network.tftest.hcl... in progress
+  run "closed_staging"... pass
+  run "selected_endpoints"... pass
+  run "per_az_nat_and_reviewed_ingress"... pass
+  run "reject_duplicate_az"... pass
+  run "reject_wrong_region_az"... pass
+  run "reject_ipv6_vpc"... pass
+  run "reject_noncanonical_vpc"... pass
+  run "reject_unpaired_ecr"... pass
+  run "reject_unknown_endpoint"... pass
+  run "reject_endpoint_wildcard"... pass
+  run "reject_empty_endpoint_scope"... pass
+  run "reject_wrong_service_scope"... pass
+  run "reject_wildcard_bucket"... pass
+tests/network.tftest.hcl... tearing down
+tests/network.tftest.hcl... pass
+
+Success! 13 passed, 0 failed.
+Success! The configuration is valid.
+
+tests/data.tftest.hcl... in progress
+  run "data_manifest_and_network_wiring"... pass
+  run "wrong_account_refused_before_any_data_resource"... pass
+tests/data.tftest.hcl... tearing down
+tests/data.tftest.hcl... pass
+tests/network.tftest.hcl... in progress
+  run "network_manifest"... pass
+  run "wrong_account_refused"... pass
+tests/network.tftest.hcl... tearing down
+tests/network.tftest.hcl... pass
+
+Success! 4 passed, 0 failed.
+Success! The configuration is valid.
+
+tests/data.tftest.hcl... in progress
+  run "disabled_production_creates_no_data_resources"... pass
+  run "enabling_without_a_retention_decision_is_refused"... pass
+  run "enabling_without_an_availability_decision_is_refused"... pass
+  run "production_explicitly_enabled_with_its_own_decisions"... pass
+tests/data.tftest.hcl... tearing down
+tests/data.tftest.hcl... pass
+tests/network.tftest.hcl... in progress
+  run "production_stays_disabled"... pass
+  run "production_explicitly_enabled"... pass
+tests/network.tftest.hcl... tearing down
+tests/network.tftest.hcl... pass
+
+Success! 6 passed, 0 failed.
