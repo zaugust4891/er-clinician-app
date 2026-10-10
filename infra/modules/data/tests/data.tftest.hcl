@@ -113,14 +113,18 @@ run "synthetic_staging_defaults" {
     error_message = "Plain HTTP and TLS below 1.2 must be denied, and no VPC-only condition may block an external presigned PUT."
   }
   assert {
-    # `StringNotEqualsIfExists` is the difference between "encryption is enforced" and
-    # "every presigned PUT the API mints today is rejected": the client sends no SSE
-    # header at all, and the bucket default supplies the key.
-    condition = (jsondecode(aws_s3_bucket_policy.audio.policy).Statement[2].Condition.StringNotEqualsIfExists["s3:x-amz-server-side-encryption"] == "aws:kms" &&
-      jsondecode(aws_s3_bucket_policy.audio.policy).Statement[3].Condition.StringNotEqualsIfExists["s3:x-amz-server-side-encryption-aws-kms-key-id"] == aws_kms_key.data.arn &&
+    # Missing SSE headers must not trigger these denies.
+    # Explicit wrong algorithms or keys must still trigger them.
+    condition = (
+      jsondecode(aws_s3_bucket_policy.audio.policy).Statement[2].Condition.Null["s3:x-amz-server-side-encryption"] == "false" &&
+      jsondecode(aws_s3_bucket_policy.audio.policy).Statement[2].Condition.StringNotEquals["s3:x-amz-server-side-encryption"] == "aws:kms" &&
+      jsondecode(aws_s3_bucket_policy.audio.policy).Statement[3].Condition.Null["s3:x-amz-server-side-encryption-aws-kms-key-id"] == "false" &&
+      jsondecode(aws_s3_bucket_policy.audio.policy).Statement[3].Condition.StringNotEquals["s3:x-amz-server-side-encryption-aws-kms-key-id"] == aws_kms_key.data.arn &&
       jsondecode(aws_s3_bucket_policy.audio.policy).Statement[2].Action == "s3:PutObject" &&
-    !strcontains(aws_s3_bucket_policy.audio.policy, "\"StringNotEquals\""))
-    error_message = "A missing encryption header must stay allowed while a wrong algorithm or key is denied."
+      jsondecode(aws_s3_bucket_policy.audio.policy).Statement[3].Action == "s3:PutObject" &&
+      !strcontains(aws_s3_bucket_policy.audio.policy, "StringNotEqualsIfExists")
+    )
+    error_message = "Encryption denies must require a present header and an incorrect algorithm or key."
   }
   assert {
     condition = (length(aws_s3_bucket_lifecycle_configuration.audio.rule) == 3 &&

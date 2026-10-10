@@ -61,14 +61,21 @@ Rerun logs are local at `/tmp/er-note-review-cargo-test.log`,
   `Null = false` with `StringNotEquals` for the same header key, so missing SSE headers
   do not trigger these denies and explicit wrong algorithms/keys still do.
   Corrected a typo in the KMS header's `Null` condition during review.
-  This records the code correction; matching tests and live upload evidence remain pending.
+  This records the code correction; matching mocked tests passed and live upload evidence remains pending.
   [AWS condition-operator documentation](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_elements_condition_operators.html#Conditions_IfExists).
-- [ ] **Correct the matching S3 test.**
-  [data.tftest.hcl](../../infra/modules/data/tests/data.tftest.hcl) currently asserts
-  that incorrect policy shape. Add evidence of actual allow/deny behavior; a green
-  mocked configuration assertion cannot prove uploads succeed. For wrong algorithm/key
-  probes, use correctly signed requests carrying those headers so a signature error
-  does not masquerade as proof of the encryption policy.
+- [x] **Correct the matching S3 test (local assertions).** Completed **2026-10-09**;
+  saved assertions reviewed in
+  [data.tftest.hcl](../../infra/modules/data/tests/data.tftest.hcl). Both denies now
+  require `Null = false` and `StringNotEquals` for their corresponding header keys;
+  the test also rejects `StringNotEqualsIfExists`. Operator-provided output from
+  `scripts/tf-data-check.sh` reports **22 passed, 0 failed**: data module 12,
+  staging foundation 4, production foundation 6. Providers were mocked.
+- [ ] **Verify actual audio upload allow/deny behavior.** Retained separately from
+  the completed local test correction: a green mocked configuration assertion cannot
+  prove uploads succeed. After provisioning and runtime IAM prerequisites, prove a
+  normal headerless presigned upload succeeds under bucket-default KMS encryption.
+  For wrong algorithm/key probes, use correctly signed requests carrying those headers
+  so a signature error does not masquerade as proof of the encryption policy.
 - [ ] **Review/fix S3 bootstrap policies too.**
   [bucket_policies.tf](../../infra/bootstrap/bucket_policies.tf) uses the same
   conditions for state and deployment-artifact buckets. Headerless uploads are denied
