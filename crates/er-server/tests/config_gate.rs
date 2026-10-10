@@ -134,13 +134,22 @@ fn cloud_roles_require_only_their_own_dependencies() {
     for key in ["COGNITO_REGION", "COGNITO_POOL_ID", "COGNITO_CLIENT_ID"] {
         vars.remove(key);
     }
+    for key in ["BEDROCK_SUMMARY_MODEL_ID", "BEDROCK_MDM_MODEL_ID"] {
+        vars.insert(key.into(), "us.anthropic.claude-sonnet-4-6".into());
+    }
     assert!(
         WorkerConfig::from_values(&vars).is_err(),
         "no mock STT in cloud"
     );
     vars.insert("DEEPGRAM_API_KEY".into(), "synthetic-key".into());
     assert!(WorkerConfig::from_values(&vars).is_ok());
-    for key in ["TRANSPORT", "SUMMARY_MODEL", "MDM_MODEL"] {
+    for key in [
+        "TRANSPORT",
+        "SUMMARY_MODEL",
+        "MDM_MODEL",
+        "BEDROCK_SUMMARY_MODEL_ID",
+        "BEDROCK_MDM_MODEL_ID",
+    ] {
         let mut missing = vars.clone();
         missing.remove(key);
         assert!(
@@ -154,6 +163,8 @@ fn cloud_roles_require_only_their_own_dependencies() {
     vars.remove("TRANSPORT");
     vars.remove("SUMMARY_MODEL");
     vars.remove("MDM_MODEL");
+    vars.remove("BEDROCK_SUMMARY_MODEL_ID");
+    vars.remove("BEDROCK_MDM_MODEL_ID");
     assert!(MigrationConfig::from_values(&vars).is_ok());
     vars.insert(
         "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI".into(),
@@ -183,18 +194,40 @@ fn endpoint_pair_and_approved_model_family_are_enforced() {
     let mut vars = cloud();
     vars.insert("DEEPGRAM_API_KEY".into(), "synthetic".into());
     for key in ["BEDROCK_SUMMARY_MODEL_ID", "BEDROCK_MDM_MODEL_ID"] {
+        vars.insert(key.into(), "us.anthropic.claude-sonnet-4-6".into());
+    }
+    assert!(WorkerConfig::from_values(&vars).is_ok());
+    for key in ["BEDROCK_SUMMARY_MODEL_ID", "BEDROCK_MDM_MODEL_ID"] {
         for id in [
             "future-sonnet-4-6",
             "anthropic.claude-haiku-4-5",
-            "us.anthropic.claude-sonnet-4-6",
+            "global.anthropic.claude-sonnet-4-6",
+            "eu.anthropic.claude-sonnet-4-6",
+            "us.anthropic.claude-haiku-4-5",
             "arn:aws:bedrock:profile",
         ] {
             let mut invalid = vars.clone();
             invalid.insert(key.into(), id.into());
-            assert!(WorkerConfig::from_values(&invalid).is_err());
+            assert!(
+                WorkerConfig::from_values(&invalid).is_err(),
+                "{key} accepted {id}"
+            );
         }
-        vars.insert(key.into(), "anthropic.claude-sonnet-4-6".into());
-        assert!(WorkerConfig::from_values(&vars).is_ok());
+        // The in-Region ID and the US geographic profile are the two reviewed routes.
+        for id in [
+            "anthropic.claude-sonnet-4-6",
+            "us.anthropic.claude-sonnet-4-6",
+        ] {
+            let mut valid = vars.clone();
+            valid.insert(key.into(), id.into());
+            let summarizer = WorkerConfig::from_values(&valid).unwrap().summarizer;
+            let chosen = if key == "BEDROCK_SUMMARY_MODEL_ID" {
+                summarizer.summary_model
+            } else {
+                summarizer.mdm_model
+            };
+            assert_eq!(chosen.bedrock, id, "{key} must route to exactly {id}");
+        }
     }
     vars.insert("DB_MAX_CONNECTIONS".into(), "1".into());
     assert!(

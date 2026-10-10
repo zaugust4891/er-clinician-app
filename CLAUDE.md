@@ -11,7 +11,7 @@ Key differentiator: **multi-encounter merging** — captures every interaction a
 ## What's Working
 
 - Domain model with PatientNote aggregate root, state machine (6 phases), event types
-- Claude summarizer (Sonnet 4) with multi-encounter merging and MDM generation
+- Claude summarizer (Sonnet 4.6) with multi-encounter merging and MDM generation
 - De-identification (regex-based PHI stripping before API calls)
 - Plain text note export
 - Serialization round-trip (hydrate test passes)
@@ -36,18 +36,26 @@ Key differentiator: **multi-encounter merging** — captures every interaction a
 - **Sync protocol (Step 5):** `POST/GET /v1/patients/{id}/events` (idempotent by `event_id`, cursor paging), snapshot PUT/GET, note + export + stats reads, shift start/active/end
 - **`er-api`:** the wire contract as a crate — DTOs for both sides, plus `ServerApi` + `RemoteRepository` behind the `client` feature
 - **Remote CLI mode (Step 5 S10):** `ER_SERVER_URL` + `ER_TOKEN` swap SQLite for the server; every command works unchanged over HTTP, and a second device resumes the shift with no local state
+- **Audio upload + transcription worker (Step 6):** presigned S3 PUT per chunk, `HeadObject`-verified completion, `TranscribeChunk {chunk_id}` on SQS, and `er-worker` transcribing with Deepgram and assembling one `TranscriptReady` per encounter — see *Phase 4 Steps 6–7*
+- **Server-side AI (Step 7):** the worker summarizes assembled encounters and runs async MDM jobs (`jobs` receipt → `GenerateMdm` → `MdmGenerated` + `TriggerMDM`), metering every call in `usage_log`; cloud uses Bedrock through the task role
+- **Cloud startup hardening (Step 8 S1–S2):** per-process fail-closed config outside dev, `verify-full` Postgres TLS, the one-shot `er-migrate` binary, and one pinned image carrying `er-server`, `er-worker` and `er-migrate`
+- **Terraform (Step 8 S3–S5, authored offline):** state bootstrap, five isolated roots, the foundation→release manifest, the two-AZ network, and the data stores (RDS, audio bucket, job queue + DLQ, data KMS key)
 
 ## What's Stubbed
 
 - No iOS platform layer (audio, FFI)
 - No EMR/FHIR integration
-- Real speech-to-text is not wired into the pipeline yet; Phase 2 uses `MockTranscriber`
+- Local mode still uses `MockTranscriber`; real speech-to-text (Deepgram) runs only in the server worker, on audio uploaded with the CLI's `audio <path>` command in remote mode
 - Real microphone capture is not wired into the pipeline yet; Phase 2 uses `MockAudioCapture`
 - Transcript compaction / ephemeral mode (G7) and structured exam templates (G8) are deferred to later phases
-- Audio upload (S3/SQS/worker) is Phase 4 Step 6; server-side STT and AI generation are Step 7 — today the summarizer still runs **inside the CLI**, and its output syncs up as an ordinary event
+- Local mode still summarizes and generates the MDM **inside the CLI** (`ShiftManager` `block_on`s the `Summarizer`). Remote mode (`generation_is_remote`) leaves both to the server worker
 - No device offline queue: if the server is unreachable in remote mode, `EventBus::publish` fails and the command errors visibly (Phase 5 device work)
-- No AWS deployment yet: Step 8 S3–S4 authored the Terraform roots and network under `infra/`, but nothing has
-  been applied to an AWS account and there is no CI. Everything still runs against docker-compose
+- No AWS deployment yet: Step 8 S3–S5 authored the Terraform roots, network and data stores under `infra/`, but nothing has
+  been applied to an AWS account and there is no CI. IAM roles and DB logins (S6), Cognito (S7), ECR/ECS/ALB (S8),
+  telemetry (S9) and CI/CD (S10–S11) remain. Everything still runs against docker-compose
+- The server listens on plain HTTP at `BIND_ADDR`; the HTTPS listener on 8443 that the network security groups expect is S8 work
+- The presigned-upload overwrite race is open: a URL can be replayed within its 15 minutes. Bucket versioning makes the
+  original recoverable, not immutable; binding a chunk to a version ID or checksum at completion is Step 9
 
 ## Completed: Phase 2 Audio Pipeline Wiring
 
@@ -131,8 +139,9 @@ All automated tests use `MockSummarizer` (no network, deterministic). `crates/er
 ## Completed: Phase 4 Steps 1–5 — Server, Auth, and the Sync Protocol
 
 Implemented per `docs/planning/phase4.md` and, for Step 5, the S0–S11 breakdown in
-`docs/planning/phase4-step5-implementation-steps.md`. Steps 6–10 (audio upload, server-side
-AI, Terraform, hardening, load) are not started.
+`docs/planning/phase4-step5-implementation-steps.md`. Steps 6–7 are summarized in the next
+section; Step 8 (deployment) is in progress with S0–S5 done offline; Steps 9–10 (hardening,
+load) are not started.
 
 | Step | What landed |
 |---|---|
@@ -193,7 +202,9 @@ and falls back to `POST /v1/shifts`; quitting deliberately writes nothing, leavi
 open (ending it is an explicit `POST /v1/shifts/{id}/end`). Only the `new` command is
 remote-aware, and it registers **server-first** so a failure can't leave a local ghost patient
 whose every later append would 404. Everything else — `start`, `stop`, `lab`, `mdm`, `sign`,
-`reload` — is untouched code that now crosses a network.
+`reload` — is untouched code that now crosses a network. (Since Step 7, remote `stop` leaves
+summarization to the worker, remote `mdm` goes through the job API, and `audio <path>`
+uploads a chunk — see the next section.)
 
 ### Test coverage (Step 5)
 
@@ -221,6 +232,70 @@ Tests that touch Postgres need it running and `DATABASE_URL` exported:
 
 ```bash
 docker compose up -d postgres
+set -a && . ./.env && set +a && cargo test --workspace
+```
+
+## Completed: Phase 4 Steps 6–7 — Audio Upload, the Worker, and Server-Side AI
+
+Implemented per `docs/planning/phase4-step6-implementation-steps.md` and
+`docs/planning/phase4-step7-implementation-steps.md`.
+
+```
+device ─ POST /v1/patients/{id}/encounters/{eid}/audio ─▶ audio_chunks row (pending) + 15-min presigned PUT
+device ═ PUT bytes ═══════════════════════════════════════▶ S3 (MinIO locally) — never through axum
+device ─ POST /v1/audio/{chunk_id}/complete ─▶ HeadObject check ─▶ uploaded ─▶ SQS TranscribeChunk {chunk_id}
+er-worker ◀─ long-poll ─ SQS ─▶ GetObject ─▶ Deepgram ─▶ chunk transcript ─▶ (all chunks terminal?) ─▶ TranscriptReady
+          ─▶ [de-identify] ─▶ summarize ─▶ EncounterSummarized + usage_log ─▶ DeleteMessage
+device ─ POST /v1/patients/{id}/mdm {job_id} ─▶ jobs row (queued) ─▶ SQS GenerateMdm ─▶ 202 Accepted
+er-worker ─▶ replay note ─▶ [de-identify] ─▶ generate_mdm ─▶ MdmGenerated ─▶ TriggerMDM ─▶ job done + usage_log
+```
+
+- **Queue messages carry IDs only.** `queue.rs`'s internally tagged `Job` enum holds opaque UUIDs;
+  audio lives in S3 and transcripts in Postgres, so a DLQ dump exposes nothing clinical. An
+  unknown job kind fails to decode instead of being guessed at.
+- **The worker has no token, so it resumes tenancy from the row.** `chunk_row_any_org` and
+  `job_row_any_org` exist only to discover the org; all work then goes through
+  `PostgresRepository::for_org`.
+- **At-least-once all the way down.** Completion is verify → mark → enqueue, so a failed send is
+  retried by the client. Duplicate deliveries are normal traffic: terminal chunks are a no-op,
+  `TranscriptReady`'s event ID is a UUIDv5 of the encounter ID, and transaction-scoped advisory
+  locks (`summary:{encounter}`, `mdm:{patient}`) make a second delivery wait and then observe the
+  first result instead of paying for a second model call.
+- **Assembly is a pure function of the rows**, ordered by the device-stamped `chunk_index`
+  (never arrival time), with a visible marker for a missing chunk. Whichever chunk finishes last
+  finds the encounter complete; a partial unique index allows exactly one final chunk per encounter.
+- **Time budgets are pinned together** in `WorkerLimits`: 300 s SQS visibility renewed every 60 s,
+  a 270 s job budget with 10 s reserved for terminal bookkeeping, 45 s per AI call, 20 s audio
+  download, 100 s shutdown drain. Three receives, then the DLQ. `infra/modules/data/queues.tf`
+  mirrors the 300 s lease and `config_gate.rs` pins it.
+- **Content before state, again.** The MDM job appends `MdmGenerated` before `TriggerMDM` and
+  repairs either crash window on redelivery without another provider call.
+- **Transport and metering.** `ClaudeTransport` is `DirectApi` (API key, dev only) or `Bedrock`
+  (`InvokeModel` signed by the ECS task role, required outside dev). `ModelId` carries both IDs;
+  `cost_micros` freezes cost at call time from `price_for`, and an unpriced model meters at zero.
+  Outside dev, `BEDROCK_SUMMARY_MODEL_ID` and `BEDROCK_MDM_MODEL_ID` are required and accept only
+  `anthropic.claude-sonnet-4-6` or the US profile `us.anthropic.claude-sonnet-4-6` (staging's
+  choice; see `docs/ops/deployment-contract.md`). Bedrock IDs are priced at the regional rate, 10%
+  over first-party; allowlist and price table change together.
+- **Deepgram sits behind a default-off feature.** `er-pipeline`'s `cloud-stt` feature is enabled
+  only by `er-server`, so the CLI and a future iOS build compile no STT HTTP client. Missing
+  provider keys fall back to loudly logged mocks in dev and are startup errors outside dev.
+
+### Test coverage (Steps 6–7)
+
+`audio_upload_gate.rs`, `audio_complete_gate.rs`, `audio_limits.rs` and `audio_repository.rs`
+cover the upload intent, completion checks and the chunk ledger. `worker_gate.rs` drives
+`poll_once` through out-of-order assembly, missing-audio gaps, replayed jobs, the UUIDv5 event
+ID, undecodable messages, scrubbing before the model, lease renewal and shutdown redelivery,
+the summary deadline → DLQ path, and a WAV uploaded through the real client landing on the
+replayed note. `ai_gate.rs` covers MDM jobs: enqueue-once and org scoping, content before
+state with a `usage_log` row, empty-note refusal without metering, crash repair without a
+second provider call, and the job deadline → DLQ path. `config_gate.rs` pins
+fail-closed cloud configuration, the queue names and lease, and the Bedrock allowlist. These need
+the whole compose stack, not just Postgres:
+
+```bash
+docker compose up -d
 set -a && . ./.env && set +a && cargo test --workspace
 ```
 
@@ -296,7 +371,9 @@ crates/
 ├── er-store/      # Repository trait + SqliteRepository + StoreError
 │   └── repository.rs db.rs error.rs
 ├── er-ai/         # claude.rs summarizer.rs (+ AppSummarizer) deidentify.rs
-├── er-pipeline/   # audio.rs stt.rs (mocks today)
+│                  # model.rs (model IDs, Bedrock allowlist, prices) transport.rs (direct | bedrock)
+├── er-pipeline/   # audio.rs stt.rs (on-device mocks) speech_to_text.rs
+│                  # deepgram.rs (behind the default-off `cloud-stt` feature)
 ├── er-app/        # orchestration: event_bus.rs load.rs shift_manager.rs
 │   ├── encounter_driver.rs shift_snapshot.rs export.rs
 │   ├── conversions/   # CLI arg → domain parsing
@@ -304,13 +381,15 @@ crates/
 ├── er-api/        # THE WIRE CONTRACT (Phase 4 Step 5)
 │   ├── types.rs   # DTOs — serde only, shared by both sides
 │   └── client.rs  # ServerApi + RemoteRepository, behind feature = "client"
-├── er-server/     # axum HTTP server (Phase 4 Steps 2–5)
-│   ├── routes.rs error.rs state.rs config.rs repository.rs (PostgresRepository)
+├── er-server/     # axum HTTP server + worker + migrator (Phase 4 Steps 2–8)
+│   ├── routes.rs error.rs state.rs config.rs db.rs repository.rs (PostgresRepository)
+│   ├── aws.rs queue.rs audio.rs worker.rs   # S3/SQS clients, Job enum, audio checks, worker logic
 │   ├── auth/      # claims keys extractor middleware resolver
-│   ├── migrations/  events_and_snapshots → tenancy → care_model
-│   ├── bin/mint_dev_token.rs
+│   ├── migrations/  events_and_snapshots → tenancy → care_model → audio_chunks → usage_and_jobs
+│   ├── bin/       # worker.rs (er-worker) migrate.rs (er-migrate) mint_dev_token.rs
 │   └── tests/     # auth_gate read_gate snapshot_gate shift_gate sync_gate
 │                  # repository_contract remote_client common/
+│                  # audio_* worker_gate ai_gate config_gate
 └── er-cli/        # interactive developer CLI + standalone bins
     ├── main.rs interface/cli.rs
     └── bin/       # mdm_standalone.rs spike_summarizer.rs
@@ -318,14 +397,17 @@ dev/keys/          # dev RSA keypair + JWKS for offline auth
 docs/              # architecture / product / planning / ops documents
 docker-compose.yml # postgres:5433, minio, elasticmq
 
-infra/             # Terraform (Phase 4 Step 8 S3–S4) — authored, not yet applied
+infra/             # Terraform (Phase 4 Step 8 S3–S5) — authored, not yet applied
 ├── bootstrap/         # state bucket + KMS key + artifact bucket + per-root IAM
 ├── modules/manifest/  # publishes the non-secret foundation→release contract
 ├── modules/network/   # two-AZ private placement, NAT, SGs and scoped endpoints
+├── modules/data/      # RDS Postgres 16, audio bucket, SQS jobs + DLQ, application-data KMS key
 └── envs/
     ├── staging/{foundation,release}/
     └── prod/{foundation,release}/   # enabled = false
-scripts/           # dev-token.sh, tf-manifest-guards.sh, tf-lock-check.sh, tf-network-check.sh
+scripts/           # dev-token.sh, tf-manifest-guards.sh, tf-lock-check.sh, tf-network-check.sh,
+                   # tf-data-check.sh
+Dockerfile         # one pinned linux/amd64 image: er-server (default), er-worker, er-migrate
 ```
 
 Only `er-cli` and `er-server` are binaries; everything else is a library. `er-server` depends
@@ -355,6 +437,19 @@ See `docs/ops/network-verification.md` for cost assumptions, S5–S9 integration
 pending live tests. The 8443 SG rule reserves S8's HTTPS listener; it does not add TLS
 to the server or enforce ECS/RDS public-access settings by itself.
 
+### Terraform data (S5)
+
+`modules/data` gives each foundation one customer-managed KMS key for application data
+(separate from the bootstrap state key), a private single-AZ `db.t4g.small` PostgreSQL 16
+instance on S4's isolated subnet group with `rds.force_ssl = 1`, statement logging pinned off,
+an RDS-managed master secret and deletion protection, a versioned SSE-KMS audio bucket with
+7-day staging expiry and a TLS/encryption-floor bucket policy, and the `<name>-jobs` queue plus
+`<name>-jobs-dlq` (300 s visibility, 20 s long poll, three receives). Queue names are a contract:
+the app derives the DLQ as `STT_QUEUE` + `-dlq`. The foundation manifest now publishes the
+bucket, queue and database host/port/name; credentials stay out of it. Production requires
+explicit Multi-AZ and retention values. `scripts/tf-data-check.sh` runs the mocked tests; see
+`docs/ops/data-verification.md` for costs and pending live checks.
+
 ## Key Files
 
 | File | Purpose |
@@ -378,13 +473,26 @@ to the server or enforce ECS/RDS public-access settings by itself.
 | `crates/er-ai/src/claude.rs` | Real Claude API client for HPI/ROS/Exam/MDM |
 | `crates/er-ai/src/summarizer.rs` | `Summarizer` trait, `MockSummarizer`, `AppSummarizer` enum |
 | `crates/er-ai/src/deidentify.rs` | PHI stripping before API calls |
+| `crates/er-ai/src/model.rs` | `ModelId` (direct + Bedrock IDs), `set_bedrock_id` allowlist, `price_for`/`cost_micros` |
+| `crates/er-ai/src/transport.rs` | `ClaudeTransport::{DirectApi, Bedrock}`, usage parsing, provider error classes |
+| `crates/er-pipeline/src/deepgram.rs` | Deepgram pre-recorded STT (`cloud-stt` feature, server worker only) |
 | `crates/er-api/src/types.rs` | Every request/response body (serde only), `NoteView::from` |
 | `crates/er-api/src/client.rs` | `ServerApi` (HTTP mechanics) + `RemoteRepository` (the trait over HTTP) |
 | `crates/er-server/src/routes.rs` | The whole v1 surface + `/healthz`; auth via `route_layer` |
 | `crates/er-server/src/repository.rs` | PostgresRepository (org-scoped, advisory-locked append), patient/shift rows |
 | `crates/er-server/src/error.rs` | ApiError → status + `{"error": code}`; PHI-free by type |
 | `crates/er-server/src/auth/` | JWKS/JWT validation, clinician resolution, `require_auth` middleware |
-| `crates/er-server/migrations/` | events+snapshots → tenancy (orgs/clinicians) → care_model (patients/shifts) |
+| `crates/er-server/src/config.rs` | Per-process fail-closed config (`Config`, `WorkerConfig`, `MigrationConfig`), `WorkerLimits` |
+| `crates/er-server/src/db.rs` | Pool bounds; `verify-full` TLS and redacted connection errors outside dev |
+| `crates/er-server/src/aws.rs` | S3/SQS clients (ECS credentials only in cloud); local bucket/queue bootstrap vs. URL lookup |
+| `crates/er-server/src/queue.rs` | `Job::{TranscribeChunk, GenerateMdm}` — the API→worker wire format, IDs only |
+| `crates/er-server/src/worker.rs` | Poll, transcribe, assemble, summarize, MDM jobs; leases, deadlines, idempotency |
+| `crates/er-server/src/bin/worker.rs` | `er-worker` boot: providers chosen once (Deepgram/Bedrock or loud mocks in dev) |
+| `crates/er-server/src/bin/migrate.rs` | `er-migrate` one-shot SQLx migrations with lock/statement/run timeouts |
+| `crates/er-server/migrations/` | events+snapshots → tenancy (orgs/clinicians) → care_model (patients/shifts) → audio_chunks → usage_log + jobs |
+| `crates/er-server/tests/worker_gate.rs` | Worker: assembly order, gaps, duplicates, leases, shutdown, DLQ |
+| `crates/er-server/tests/ai_gate.rs` | MDM jobs: enqueue-once, content before state, crash repair, usage |
+| `crates/er-server/tests/config_gate.rs` | Unsafe cloud config rejected; queue names, lease and Bedrock allowlist pinned |
 | `crates/er-cli/src/main.rs` | CLI startup: local/remote swap, shift boot, command loop |
 | `crates/er-cli/src/interface/cli.rs` | Command parsing and dispatch; `RemoteContext` for server-only ops |
 | `crates/er-cli/src/bin/spike_summarizer.rs` | End-to-end Claude test (chest pain case) |
@@ -398,6 +506,11 @@ to the server or enforce ECS/RDS public-access settings by itself.
 | `crates/er-server/tests/common/mod.rs` | Shared fixtures: mint, seeds, spawn_server, full_visit_events |
 | `docs/planning/phase4-step5-implementation-steps.md` | Step 5 S0–S11 with the concepts (§C1–§C9) |
 | `docs/planning/phase4-step6-implementation-steps.md` | Step 6 S0–S9: audio upload, SQS worker, Deepgram STT (§C1–§C8) |
+| `docs/planning/phase4-step7-implementation-steps.md` | Step 7 S0–S7: transports, model routing, cached prompts, metering, worker summaries, MDM jobs |
+| `docs/planning/phase4-step8-implementation-steps.md` | Step 8 S0–S12: Terraform, IAM, Cognito, ECS, telemetry, CI/CD, staging gate |
+| `Dockerfile` | Pinned cargo-chef build; one image with three binaries; RDS CA bundle checked by hash |
+| `infra/modules/data/` | S5: RDS, audio bucket, job queue + DLQ, application-data KMS key |
+| `docs/ops/data-verification.md` | S5 defaults, cost assumptions, live checks still pending |
 | `infra/README.md` | Root ownership map, why foundation/release are split, how to run a root |
 | `infra/bootstrap/iam.tf` | Per-root state policies: allow own key, deny every other root's |
 | `infra/modules/manifest/` | Foundation→release contract; rejects secret values by variable validation |

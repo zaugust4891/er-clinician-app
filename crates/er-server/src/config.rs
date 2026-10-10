@@ -350,7 +350,15 @@ impl WorkerConfig {
             );
             let mut model = configured_model(&name)
                 .ok_or_else(|| anyhow::anyhow!("{key} is not recognized"))?;
-            if let Some(id) = env.optional(override_key) {
+            // Cloud names its Bedrock route explicitly instead of inheriting the
+            // in-Region default: that default is not offered in every Region, and
+            // the choice decides where prompts may be processed and what they cost.
+            let bedrock_id = env.optional(override_key);
+            anyhow::ensure!(
+                !cloud || bedrock_id.is_some(),
+                "{override_key} must be set explicitly in cloud"
+            );
+            if let Some(id) = bedrock_id {
                 anyhow::ensure!(
                     ai_transport == AiTransportMode::Bedrock && model.set_bedrock_id(&id),
                     "{override_key} is not an approved, priced identifier for this family"

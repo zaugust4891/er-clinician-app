@@ -73,7 +73,7 @@ set application names `er-api`, `er-worker`, or `er-migration`.
 | Process | Additional required settings |
 |---|---|
 | API | `BIND_ADDR`, `AUTH_MODE=cognito`, `COGNITO_REGION`, `COGNITO_POOL_ID`, `COGNITO_CLIENT_ID`, `AUDIO_BUCKET`, `STT_QUEUE` |
-| Worker | `AUDIO_BUCKET`, `STT_QUEUE`, `DEEPGRAM_API_KEY`, `TRANSPORT=bedrock`, `SUMMARY_MODEL=sonnet`, `MDM_MODEL=sonnet` |
+| Worker | `AUDIO_BUCKET`, `STT_QUEUE`, `DEEPGRAM_API_KEY`, `TRANSPORT=bedrock`, `SUMMARY_MODEL=sonnet`, `MDM_MODEL=sonnet`, `BEDROCK_SUMMARY_MODEL_ID`, `BEDROCK_MDM_MODEL_ID` |
 | Migration config | None; no auth, queue or provider initialization |
 
 Cognito's region must match `AWS_REGION`. Deepgram credentials are rejected in
@@ -85,12 +85,17 @@ profile/endpoint configuration. ECS container credential URI/token settings
 remain supported. Local SSO/IMDS/web-identity fallback is deliberately unavailable
 on this ECS deployment path.
 
-`BEDROCK_SUMMARY_MODEL_ID` and `BEDROCK_MDM_MODEL_ID` accept only the existing
-exact, priced model-family IDs. They do not enable arbitrary ARNs or geographic
-inference profiles. Account access, actual supported invocation IDs, pricing and
-residency must be reviewed before deployment; if a profile is required, extend
-the explicit allowlist and its price mapping after that review. Startup does
-not probe a live model or claim that access has been verified.
+`BEDROCK_SUMMARY_MODEL_ID` and `BEDROCK_MDM_MODEL_ID` are required outside dev,
+so the worker never falls back to a default Bedrock route. For Sonnet they accept
+exactly two IDs: the in-Region model ID `anthropic.claude-sonnet-4-6` and the US
+geographic profile `us.anthropic.claude-sonnet-4-6`. Staging uses the US profile
+because Sonnet 4.6 has no in-Region inference in us-east-2; a request through it
+may be processed in us-east-1, us-east-2 or us-west-2. The global profile, other
+geographies and ARNs are rejected. Adding one means extending
+`ModelId::set_bedrock_id` and `price_for` together, after a residency, account-access
+and pricing review. Both accepted IDs are metered at Bedrock's regional rate, 10%
+above first-party pricing. Startup does not probe a live model or claim that access
+has been verified.
 
 ## Bounds and retry behavior
 

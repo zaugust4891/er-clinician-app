@@ -87,17 +87,22 @@ Rerun logs are local at `/tmp/er-note-review-cargo-test.log`,
   encrypted with the bucket-default KMS key. Explicit encryption headers on some clients
   do not validate the documented contract. Confirm signed wrong-algorithm/key uploads
   are denied. No live result is claimed by the local configuration correction above.
-- [ ] **Require explicit production audio decisions.**
-  In progress **2026-10-09**: saved guards/tests reviewed. Seven-day current/noncurrent
-  defaults removed from [production variables](../../infra/envs/prod/foundation/variables.tf);
-  all four enablement guards are present: backup retention, Multi-AZ, current audio,
-  and noncurrent audio. Separate audio-omission tests added and existing fixtures updated.
-  Latest operator-provided `scripts/tf-data-check.sh` run reports **24 passed, 0 failed**:
-  data module 12, staging foundation 4, production foundation 8, with mocked providers.
-  This successful run supersedes the prior failed attempts. Description/comment corrections
-  and the production example remain pending. Require approved current/noncurrent retention
-  values before `enabled = true` and record the legal-hold decision. Keep production
-  disabled until its contract is settled.
+- [x] **Require explicit production audio decisions (implementation and documentation).**
+  Completed **2026-10-09**; saved guards/tests/documentation reviewed. Seven-day
+  current/noncurrent defaults removed from
+  [production variables](../../infra/envs/prod/foundation/variables.tf); all four enablement
+  guards are present: backup retention, Multi-AZ, current audio, and noncurrent audio.
+  Separate audio-omission tests added and existing fixtures updated. Latest operator-provided
+  `scripts/tf-data-check.sh` run reports **24 passed, 0 failed**: data module 12,
+  staging foundation 4, production foundation 8, with mocked providers. This successful
+  run supersedes the prior failed attempts. Descriptions/comments corrected; the production
+  example keeps audio values `null` and `enabled = false`. The deployment contract records
+  the pending retention/legal-hold decision and distinguishes test values from approved inputs.
+- [ ] **Approve production audio retention and legal-hold requirements.** Record approved
+  current/noncurrent retention values, legal-hold requirements, approver, date and evidence
+  reference in the deployment contract before enabling production. The completed guards
+  enforce explicit values; they do not establish approval or implement legal holds.
+  Keep production disabled until its contract is settled.
 - [ ] **Resolve the Sonnet deployment mismatch.**
   [model.rs](../../crates/er-ai/src/model.rs) explicitly rejects
   `us.anthropic.claude-sonnet-4-6`, and its price mapping does not recognize that ID.
