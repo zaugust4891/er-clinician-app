@@ -1,8 +1,10 @@
 # S5 data boundary
 
-Shared by both foundation roots. Staging provisions this module; production calls it
-only with `enabled = true` and only after it has stated its own availability and
-retention decisions. No cloud apply has been performed. Run `scripts/tf-data-check.sh`
+Shared by both foundation roots. Staging is configured to provision this module;
+production calls it only with `enabled = true` and explicit Multi-AZ, backup-retention,
+current-audio-retention and noncurrent-audio-retention values. Production approvals
+remain pending and its example stays disabled with audio values unset. No cloud apply
+is recorded. Run `scripts/tf-data-check.sh`
 from the repository root for mocked provider checks.
 
 ## What it creates, and who consumes it
@@ -44,10 +46,11 @@ encryption context S3 sends.
 
 All four public-access blocks are on, ACLs are disabled, SSE-KMS is the bucket default
 with bucket keys, and the bucket policy denies plain HTTP, TLS below 1.2, and any upload
-that *overrides* the default encryption. The encryption conditions use
-`StringNotEqualsIfExists`: the presigned PUT the API mints today sends **no** SSE header,
-and rejecting header-less uploads would break every client. Requiring headers instead
-means changing `audio_upload_intent` and the device together, in one change.
+that *overrides* the default encryption. Each encryption deny combines `Null = false`
+and `StringNotEquals` for the same header: it applies only when the header is present
+and wrong. The presigned PUT the API mints sends **no** SSE header, so these denies do
+not apply and bucket-default encryption can be used. Correctly signed live uploads
+and KMS grants still need verification; mocked tests do not establish that they work.
 
 Three lifecycle rules run on separate clocks — current objects, superseded versions, and
 abandoned multipart uploads. There is no storage-class transition: the worker downloads

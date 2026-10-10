@@ -1,10 +1,19 @@
 # `infra/` — Terraform for the ER Clinician App
 
 Phase 4 Step 8 S3 created this tree. It establishes **where Terraform state lives, who
-may touch which part of it, and how a release learns what a foundation built**. S4 now adds the
-[network module](modules/network/README.md) to both foundations (production remains
-disabled). Data, identity, edge, telemetry and ECS follow in S5 through S9.
-No cloud resources have been applied.
+may touch which part of it, and how a release learns what a foundation built**. S4's
+[network module](modules/network/README.md) and S5's [data module](modules/data/README.md)
+are authored and wired into both foundations; production remains disabled. S6–S9
+still supply identity, compute, edge and telemetry. The release roots have manifest
+guards but no ECS services or task definitions yet.
+
+Status updated **2026-10-09**: the operator's latest mocked data/foundation checks
+passed **24 tests** (12 data module, 4 staging, 8 production). Audio and bootstrap
+encryption denies now allow missing SSE headers to fall through to bucket-default
+encryption, and production requires explicit current/noncurrent audio retention.
+These are local configuration results. No cloud apply is recorded, and current AWS
+account contents, upload behavior, IAM grants, connectivity and recovery remain
+unverified. See the [review checklist](../docs/ops/step8-s1-s5-review-checklist.md).
 
 Nothing in this tree processes patient data. Staging is synthetic-only; see
 [`docs/ops/deployment-contract.md`](../docs/ops/deployment-contract.md) for the
@@ -18,8 +27,8 @@ is what makes them separately permissioned and separately breakable.
 | Root | Owns | State key |
 |---|---|---|
 | `bootstrap/` | The state bucket, its KMS key, the deployment-artifact bucket, and the IAM policies and roles that gate access to them | `bootstrap/terraform.tfstate` |
-| `envs/staging/foundation/` | Network, data stores, identity, edge, observability, ECR, cluster. Publishes the staging manifest | `staging/foundation/terraform.tfstate` |
-| `envs/staging/release/` | ECS services and task definitions, and nothing else. Reads the staging manifest | `staging/release/terraform.tfstate` |
+| `envs/staging/foundation/` | Authored: network, data stores and manifest wiring. Planned: identity, edge, observability, ECR and cluster | `staging/foundation/terraform.tfstate` |
+| `envs/staging/release/` | Authored: manifest consumption and guards. Planned ownership: ECS services and task definitions only | `staging/release/terraform.tfstate` |
 | `envs/prod/foundation/` | Same as staging foundation. Authored, `enabled = false` | `prod/foundation/terraform.tfstate` |
 | `envs/prod/release/` | Same as staging release. Authored, `enabled = false` | `prod/release/terraform.tfstate` |
 
@@ -81,6 +90,7 @@ project does not match, and a manifest missing any resource key the release need
 ```bash
 terraform fmt -check -recursive infra/
 ./scripts/tf-network-check.sh    # mocked network, endpoint and foundation gates
+./scripts/tf-data-check.sh       # mocked data and foundation gates
 ./scripts/tf-manifest-guards.sh   # manifest cannot carry secret values
 ./scripts/tf-lock-check.sh        # two concurrent operations cannot share a lock
 ```

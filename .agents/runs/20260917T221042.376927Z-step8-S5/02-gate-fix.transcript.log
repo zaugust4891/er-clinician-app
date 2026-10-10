@@ -1,7 +1,0 @@
-Permission ask rule (../../../.claude/settings.json): Write(~/.claude/settings.json) is not matched by file permission checks — only Edit(path) rules are. Use Edit(~/.claude/settings.json) instead (Edit rules cover all file-editing tools).
-Permission ask rule (../../../.claude/settings.json): Write(~/.ssh/*) is not matched by file permission checks — only Edit(path) rules are. Use Edit(~/.ssh/*) instead (Edit rules cover all file-editing tools).
-Credit balance is too low
-SessionEnd hook [${PAI_DIR}/hooks/WorkCompletionLearning.hook.ts] failed: /bin/sh: 1: /home/zach/.claude/hooks/WorkCompletionLearning.hook.ts: not found
-
-SessionEnd hook [${PAI_DIR}/hooks/SessionSummary.hook.ts] failed: /bin/sh: 1: /home/zach/.claude/hooks/SessionSummary.hook.ts: not found
-

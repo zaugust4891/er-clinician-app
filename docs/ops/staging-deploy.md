@@ -1,10 +1,11 @@
 # Staging deployment runbook
 
-Written 2026-09-14 for Phase 4 Step 8. This document grows one section at a time as the
-step lands. **S3 is complete: everything under "State and ownership" below has been
-implemented and can be run.** S4 network code and offline checks are also implemented;
-its live checks await the complete foundation. The release, onboarding, and rollback sections are stubs
-naming the sub-step that will fill them in.
+Written 2026-09-14; status updated **2026-10-09** for Phase 4 Step 8. S3 state/bootstrap,
+S4 network and S5 data configuration are authored. Their local checks are distinct from
+live acceptance: no cloud apply is recorded and current AWS account contents have not
+been independently verified. The latest operator-provided data/foundation gate passed
+**24 mocked tests**. S6–S9 supply the roles, identity, compute, edge and telemetry needed
+for complete live checks. Release, onboarding and rollback sections remain stubs.
 
 Staging is **synthetic-only**. Nothing here authorises real patient audio, transcripts,
 or notes; the pre-PHI conditions in [`deployment-contract.md`](deployment-contract.md)
@@ -25,6 +26,7 @@ remain binding.
   - [6. Verify staging cannot touch production state](#6-verify-staging-cannot-touch-production-state)
   - [7. Verify the wrong-account guard](#7-verify-the-wrong-account-guard)
 - [Network and connectivity (S4)](#network-and-connectivity-s4)
+- [Data stores and acceptance (S5)](#data-stores-and-acceptance-s5)
 - [The foundation manifest](#the-foundation-manifest)
 - [Recovery procedures](#recovery-procedures)
 - [Not yet written](#not-yet-written)
@@ -264,10 +266,11 @@ done
 Then fill in each root's `terraform.tfvars` from its `terraform.tfvars.example`, using
 `$STATE_BUCKET` / `$DEPLOY_BUCKET` / `$STATE_KMS_KEY_ARN`.
 
-The staging foundation plan now includes S4 networking and its recurring NAT/IP
-charges. Review the network and budget section before applying. The release root
-requires an S4 manifest; an older S3-only manifest will fail its required-key guard.
-Data, identity, compute and telemetry are still added in S5–S9.
+The staging foundation plan includes S4 networking and S5 data resources, with
+recurring NAT/IP, RDS, storage and key charges. Review the full-stack budget before
+applying. The release root requires the authored S4/S5 manifest keys; an older S3-only
+manifest will fail its required-key guard. S6–S9 still add scoped roles, identity,
+compute, edge and telemetry. Production remains disabled.
 
 ### 5. Verify locking
 
@@ -383,7 +386,30 @@ and resolve the full-stack budget. The network alone is estimated at $36.50/mont
 at 730 hours in Ohio, before traffic and all later components. See the dated rates,
 connection matrix, safe commands, diagnostic prerequisites and pending evidence in
 [network-verification.md](network-verification.md). Run `scripts/tf-network-check.sh`
-for the local gate. Live checks remain unperformed until S5–S9 exist.
+for the local gate. S5 data configuration is authored; complete live task diagnostics
+still need S6 roles, S8 compute and safe telemetry. No live connectivity pass is recorded.
+
+## Data stores and acceptance (S5)
+
+`infra/modules/data/` is wired into both foundation roots. It defines private,
+KMS-encrypted PostgreSQL 16 with capped gp3 storage, backups and deletion protection;
+the versioned audio bucket with separate lifecycle clocks; a standard queue/DLQ pair;
+and a dedicated rotating application-data key. It publishes identifiers through the
+foundation manifest without runtime credentials or the master-credential secret ARN.
+
+The 2026-10-09 corrections make audio and bootstrap encryption denies conditional on
+header presence and require explicit production current/noncurrent audio retention.
+Production examples keep `enabled = false` and audio values unset pending approval.
+`scripts/tf-data-check.sh` passed **24 mocked tests** in the operator-provided run:
+12 data module, 4 staging foundation and 8 production foundation. Bootstrap also
+validated in a backend-disabled temporary copy with AWS provider 6.64.0.
+
+Before the complete foundation apply, verify identity, regional RDS options, retention
+inputs and budget; finish the S6–S9 dependencies with workloads disabled and ingress
+closed. Use [data-verification.md](data-verification.md) for the pending live inspections,
+correctly signed upload probes, KMS/IAM tests and backup evidence. Local assertions do
+not prove real uploads, state/lock writes, role isolation or restore capability.
+The audio overwrite/version binding and restore rehearsal remain Step 9 work.
 
 ## The foundation manifest
 
@@ -393,9 +419,9 @@ When the staging foundation root applies, it writes one JSON object:
 s3://<deploy bucket>/envs/staging/foundation-manifest.json
 ```
 
-It names what the release pipeline needs — subnet ids, security groups, the ECR
-repository, the cluster, log groups, queue URLs, and the ARNs of Secrets Manager
-secrets. **ARNs of secrets, never secret values.** The module validates that: a
+Its authored payload contains network interfaces, audio/queue/database identifiers
+and the data-key ARN. S6–S9 will add the runtime secret ARN references, ECR repository,
+cluster, edge and log groups. **ARNs of secrets, never secret values.** The module validates that: a
 `secret_refs` entry that is not a Secrets Manager ARN fails the plan, and a `resources`
 key named like a credential fails the plan. `./scripts/tf-manifest-guards.sh` exercises
 those rules offline.
@@ -436,7 +462,7 @@ key, and no policy grants deletion of state objects.
 
 | Section | Arrives with |
 |---|---|
-| Database, queue, and bucket provisioning | S5 |
+| Live database, queue and bucket acceptance | S5 configuration authored; S6–S9 dependencies and applied-resource evidence pending |
 | IAM roles, database logins, secret population, rotation | S6 |
 | Cognito pool and synthetic clinician onboarding | S7 |
 | ECS services, the HTTPS edge, first release | S8, S11 |

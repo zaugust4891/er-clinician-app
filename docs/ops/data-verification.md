@@ -1,7 +1,8 @@
 # Step 8 S5 data verification
 
-Written 2026-09-17. **Authored and tested offline; not applied to AWS.** No database,
-bucket, queue or key exists in any account. The live checks below need the applied
+Written 2026-09-17; status updated **2026-10-09**. **Authored and tested locally;
+no cloud apply is recorded.** Current AWS account contents have not been independently
+verified. The live checks below need the applied
 foundation, S6's roles and database logins, and an approved diagnostic image; their
 status is pending. Staging is synthetic-only — this record does not authorise patient
 audio, transcripts, or notes.
@@ -25,9 +26,11 @@ audio, transcripts, or notes.
 
 The older plan carried both numbers. **Synthetic staging uses 7 days**, matching S0's
 adopted retention. **Production sets its own**, from production recovery objectives: the
-production root refuses to plan until `db_multi_az` and `db_backup_retention_days` are
-stated explicitly, so staging's convenience cannot become a production default by
-inheritance. A retention period longer than 30 days cannot be fully covered by the KMS
+production root refuses enablement until `db_multi_az`, `db_backup_retention_days`,
+`audio_retention_days` and `audio_noncurrent_version_retention_days` are stated
+explicitly. Actual production retention and legal-hold approvals remain pending, and
+the example stays disabled with audio values unset. A retention period longer than
+30 days cannot be fully covered by the KMS
 deletion window AWS allows; record that gap when choosing a longer production value.
 
 Backups, S3 historical versions, transcripts in `audio_chunks`, raw `TranscriptReady`
@@ -72,7 +75,7 @@ roots. It excludes operator tfvars, state and backend settings, needs no AWS cre
 and creates nothing. Set `TF_DATA_PLUGIN_DIR` to a provider filesystem mirror for offline
 installation (`scripts/tf-network-check.sh` uses `TF_NETWORK_PLUGIN_DIR` the same way).
 
-Verified locally on 2026-09-17 with Terraform 1.10.4 and AWS provider 6.64.0:
+Historical local verification on 2026-09-17 with Terraform 1.10.4 and AWS provider 6.64.0:
 **22 test runs passed** — 12 in the module (defaults, explicit retention and operator
 grants, and ten rejected inputs), 4 in the staging foundation, 6 in production
 (disabled, both missing-decision refusals, and explicitly enabled). `tf-network-check.sh`
@@ -80,6 +83,13 @@ now runs 23 (its 13 module runs plus the foundation roots' network *and* data fi
 from 17), `tf-manifest-guards.sh` runs its 7 cases, and all five roots validate. `cargo test -p er-server --test config_gate` passes, including the new
 `deployed_queue_names_and_lease_match_the_provisioned_pair`, which pins the queue naming
 and 300-second lease this module mirrors.
+
+Latest operator-provided run on **2026-10-09**: **24 passed, 0 failed** — data module
+12, staging foundation 4, production foundation 8. This includes separate rejection
+tests for each omitted production audio-retention decision. The audio encryption
+assertions now check `Null = false` plus `StringNotEquals`; correctly signed live
+uploads remain pending. The network script's old 23-run result is historical; it was
+not rerun for this update. Script totals share foundation cases and are not unique-test totals.
 
 ## Inspect the applied resources
 
@@ -98,7 +108,7 @@ aws rds describe-db-instances --db-instance-identifier "$DATA_DB_ID" \
     protection:DeletionProtection,ca:CACertificateIdentifier,subnets:DBSubnetGroup.DBSubnetGroupName,
     groups:VpcSecurityGroups[].VpcSecurityGroupId,latestRestorable:LatestRestorableTime}'
 
-aws rds describe-db-parameters --db-parameter-group-name "${DATA_DB_ID%-pg}-pg-postgres16" \
+aws rds describe-db-parameters --db-parameter-group-name "$DATA_PG_GROUP" \
   --query 'Parameters[?ParameterName==`rds.force_ssl`].[ParameterValue,ApplyType]'
 
 aws s3api get-public-access-block --bucket "$DATA_BUCKET"
@@ -133,10 +143,16 @@ headers succeeds** while everything else fails. Test all five with synthetic byt
 | Case | Expected |
 |---|---|
 | Presigned PUT from outside the VPC, `Content-Type` only, no SSE headers | 200; the stored object shows `ServerSideEncryption=aws:kms` and the data key |
-| Same URL with `x-amz-server-side-encryption: AES256` | 403 |
-| Same URL with a different KMS key id | 403 |
+| Separately signed PUT including `x-amz-server-side-encryption: AES256` | AccessDenied from the encryption policy |
+| Separately signed PUT including a different KMS key id | AccessDenied from the encryption policy |
 | Unsigned/public `GET` of the stored key, and any `http://` request | 403 |
 | Presigned PUT replayed after `expires_in_secs` | 403 |
+
+For encryption-policy probes, sign each request with the intended headers included;
+do not append encryption headers to the normal Content-Type-only URL and count a
+signature mismatch as policy evidence. AWS CLI `s3api put-object` with the matching
+encryption options is one way to produce correctly signed probes. Inspect the error
+reason as well as the status; a KMS authorization error is not proof of the bucket deny.
 
 ```bash
 aws s3api head-object --bucket "$DATA_BUCKET" --key "$SYNTHETIC_KEY" \

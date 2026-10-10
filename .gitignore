@@ -27,6 +27,7 @@ approck-feasibility-analysis.md
 pricing-strategy.md
 infrastructure-cost-model.md
 docs/planning/*
+!docs/planning/phase4-step8-implementation-steps.md
 
 # LibreOffice lock files
 .~lock.*
@@ -35,6 +36,9 @@ docs/planning/*
 # Claude Code worktrees live INSIDE the working tree here, so `git add .`
 # would otherwise stage them as embedded-repo gitlinks.
 .claude/
+
+# Generated agent prompts, transcripts, verdicts and schemas stay local.
+/.agents/runs/
 
 # Local credentials, databases, recordings, exports, and Terraform artifacts.
 # Existing tracked paths are unaffected; review provenance before untracking.
