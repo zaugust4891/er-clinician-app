@@ -1,8 +1,13 @@
 # Repository artifact provenance and review boundary
 
-Reviewed **2026-10-09** against application HEAD `6845878`. This records filenames,
-source references and tracking status only. Artifact contents and historical contents
-were not classified; no synthetic-only or credential-safety conclusion is established.
+Initial metadata review **2026-10-09** against application HEAD `6845878`;
+owner confirmations added **2026-10-10**. The owner confirmed current and historical
+database/shift data were **synthetic only** throughout the project during the checklist
+walkthrough. This records data-origin confirmation for the database, its WAL/SHM
+companions and the shift file; the assistant did not independently inspect their
+contents or scan residual pages. The owner also confirmed the signing keys were
+intended solely for development/testing and have only ever been used that way.
+The remaining repository cleanup is described below.
 
 ## Generated agent runs
 
@@ -17,22 +22,28 @@ This does not remove anything from previously published history.
 
 | Paths | Source evidence | Remaining decision |
 | --- | --- | --- |
-| `er_notes.db`, `er_notes.db-wal`, `er_notes.db-shm` | `crates/er-cli/src/main.rs` uses `./er_notes.db` for local persistence | Owner must classify current and historical records and relevant caches privately; filenames do not establish synthetic data |
-| `shift.json` | The local CLI loads and saves this file; remote mode stores shift state on the server | Owner must classify current/history contents and decide retention and repository remediation |
-| `dev/keys/dev_private.pem`, `dev/keys/dev_public.pem`, `dev/keys/jwks.json` | Auth unit/integration tests read the dev private key/JWKS; `mint_dev_token` uses the key pair | These are active test dependencies. Owner must establish dev-only provenance and absence of live reuse before changing tracking or rotating/replacing them |
+| `er_notes.db` | `crates/er-cli/src/main.rs` uses `./er_notes.db` for local persistence; owner confirmed current and historical data are synthetic only on 2026-10-10 | Recommended: stop tracking runtime data while preserving the local file; cleanup pending |
+| `er_notes.db-wal`, `er_notes.db-shm` | SQLite companion files remain tracked; owner confirmed database data have always been synthetic on 2026-10-10 | Origin is owner-confirmed; residual pages were not independently scanned. Recommended: untrack alongside the database, retaining local copies |
+| `shift.json` | The local CLI loads and saves this file; owner confirmed current and historical data are synthetic only on 2026-10-10 | Recommended: stop tracking runtime state while preserving the local file; cleanup pending |
+| `dev/keys/dev_private.pem`, `dev/keys/dev_public.pem`, `dev/keys/jwks.json` | Auth unit/integration tests read the dev private key/JWKS; `mint_dev_token` uses the key pair. Owner confirmed exclusively development/test intent and usage on 2026-10-10 | Retain as development/test fixtures because existing auth tests depend on them |
 
 Existing ignore rules already cover these paths, but tracked files remain tracked.
 They are retained during this cleanup. The Docker source allowlist excludes local
 databases, shift files, development keys and agent runs; the public RDS trust bundle
 is a separate allowed asset.
 
-## Pending S0 provenance work
+## Inventory scope and remaining cleanup
 
-- Privately classify current/history artifacts and relevant build or backup caches;
-  record owner, date and evidence references in the deployment contract.
-- If live secrets or patient records are identified, agree the appropriate access,
-  rotation and remediation actions before changing shared history.
-- Decide whether to keep explicit synthetic test fixtures or generate replacements
-  before untracking the development keys that tests currently require.
+A filename-only workspace inventory on **2026-10-10** found only the four known
+database/shift paths among `.db`, SQLite, `.bak`, `.backup` and `shift.json` candidates.
+Dependency/tool/cache directories (`.git`, `target`, `node_modules`, `.agents`, `.aws`,
+`.codex`, `.claude`, `.terraform`, `.venv`, `venv`) and locations outside the workspace
+were excluded. This is a bounded inventory, not an inspection of all caches or backups.
+The Docker source allowlist continues to exclude the runtime data and development keys.
+
+- Untrack only `er_notes.db`, `er_notes.db-wal`, `er_notes.db-shm` and `shift.json`,
+  preserving all local files. Existing ignore rules will then apply to those paths.
+- Keep the three signing-key files tracked as development/test fixtures.
+- Verify the tracking changes and local-file preservation before completing the item.
 
 No database, shift file or development key was deleted or untracked by this cleanup.

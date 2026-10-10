@@ -142,11 +142,27 @@ Rerun logs are local at `/tmp/er-note-review-cargo-test.log`,
   allowed through its existing ignore rule so the durable S5 record can be reviewed.
   Source/history references and remaining artifact decisions are recorded in
   [repository-artifact-provenance.md](repository-artifact-provenance.md).
+- [x] **Classify the current local database and shift file.** Owner confirmed
+  **2026-10-10** that current `er_notes.db` records and `shift.json` are synthetic only.
+  This is owner-provided evidence; the assistant did not inspect their contents.
+  Historical provenance and development-key usage are recorded separately below.
+- [x] **Establish historical database/shift data provenance.** Owner confirmed
+  **2026-10-10** that database/shift data were synthetic throughout the project's
+  history. This records owner-provided origin evidence for the database, WAL/SHM
+  companions and shift file; no independent content or residual-page scan is claimed.
+- [x] **Establish development-key intent and usage.** Owner confirmed **2026-10-10**
+  that the private/public signing keys and JWKS were intended solely for development
+  and testing and have only ever been used that way. Retain these files as fixtures
+  because existing authentication tests depend on them.
 - [ ] **Finish the existing S0 artifact provenance/remediation decision.** Local DB,
   WAL/SHM, shift and dev-key paths remain tracked and unchanged. Auth tests use the
-  development keys; current/history contents and live reuse were not classified.
-  Review privately with the owner before untracking dependencies, deleting user data
-  or rewriting shared history. Generated-run cleanup does not erase published history.
+  development keys; their usage and current/historical database/shift origin are
+  owner-confirmed above. A bounded filename inventory found only the four known
+  database/shift paths; cache directories and outside locations were not inspected.
+  Remaining cleanup: untrack those four runtime files while retaining local copies,
+  keep the development keys as test fixtures, and verify the result. Evidence and
+  inventory scope: [artifact provenance record](repository-artifact-provenance.md).
+  Generated-run cleanup does not erase published history.
 - [x] **Update stale completion records after fixes.** Updated **2026-10-09**:
   the implementation guide, infrastructure README, staging/data runbooks, data module
   README and this checklist distinguish authored S5 code, dated local passes and
