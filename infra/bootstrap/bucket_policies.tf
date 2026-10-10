@@ -27,16 +27,23 @@ locals {
       },
       # The bucket already encrypts every object with the customer-managed key by
       # default, so an upload that sends no encryption header is still encrypted
-      # correctly. These two statements stop a caller from *overriding* that default
-      # with SSE-S3 or with some other key. `StringNotEqualsIfExists` means "if the
-      # header is present and wrong, deny; if it is absent, the default applies".
+      # correctly.
+      # Each deny requires the corresponding header to exist and contain a wrong value.
+      # Missing headers leave bucket-default encryption in effect.
       {
         Sid       = "DenyWrongEncryptionAlgorithm"
         Effect    = "Deny"
         Principal = "*"
         Action    = "s3:PutObject"
         Resource  = "${bucket.arn}/*"
-        Condition = { StringNotEqualsIfExists = { "s3:x-amz-server-side-encryption" = "aws:kms" } }
+        Condition = {
+          Null = {
+            "s3:x-amz-server-side-encryption" = "false"
+          }
+          StringNotEquals = {
+            "s3:x-amz-server-side-encryption" = "aws:kms"
+          }
+        }
       },
       {
         Sid       = "DenyWrongEncryptionKey"
@@ -44,7 +51,14 @@ locals {
         Principal = "*"
         Action    = "s3:PutObject"
         Resource  = "${bucket.arn}/*"
-        Condition = { StringNotEqualsIfExists = { "s3:x-amz-server-side-encryption-aws-kms-key-id" = aws_kms_key.state.arn } }
+        Condition = {
+          Null = {
+            "s3:x-amz-server-side-encryption-aws-kms-key-id" = "false"
+          }
+          StringNotEquals = {
+            "s3:x-amz-server-side-encryption-aws-kms-key-id" = aws_kms_key.state.arn
+          }
+        }
       },
     ]
   }

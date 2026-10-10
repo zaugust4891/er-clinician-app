@@ -76,12 +76,17 @@ Rerun logs are local at `/tmp/er-note-review-cargo-test.log`,
   normal headerless presigned upload succeeds under bucket-default KMS encryption.
   For wrong algorithm/key probes, use correctly signed requests carrying those headers
   so a signature error does not masquerade as proof of the encryption policy.
-- [ ] **Review/fix S3 bootstrap policies too.**
-  [bucket_policies.tf](../../infra/bootstrap/bucket_policies.tf) uses the same
-  conditions for state and deployment-artifact buckets. Headerless uploads are denied
-  despite its comments and runbook claiming bucket-default encryption is sufficient.
-  Verify actual backend state and `.tflock` writes as well as default-encrypted uploads;
-  explicit encryption headers on some clients do not validate the documented contract.
+- [x] **Review/fix S3 bootstrap policies (local configuration).** Completed
+  **2026-10-09**; saved code reviewed in
+  [bucket_policies.tf](../../infra/bootstrap/bucket_policies.tf). The shared state and
+  deployment-artifact guards now use `Null = false` with `StringNotEquals` for both
+  encryption headers, and the comments are corrected. Operator-provided temporary-copy
+  initialization/validation passed with locked AWS provider **6.64.0**.
+- [ ] **Verify live bootstrap state and upload behavior.** After the reviewed bootstrap
+  apply, verify actual backend state and `.tflock` writes as well as headerless uploads
+  encrypted with the bucket-default KMS key. Explicit encryption headers on some clients
+  do not validate the documented contract. Confirm signed wrong-algorithm/key uploads
+  are denied. No live result is claimed by the local configuration correction above.
 - [ ] **Require explicit production audio decisions.**
   [production variables](../../infra/envs/prod/foundation/variables.tf) defaults current
   and noncurrent audio retention to seven days. Only backup retention and Multi-AZ
