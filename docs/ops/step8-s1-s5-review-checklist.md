@@ -88,12 +88,16 @@ Rerun logs are local at `/tmp/er-note-review-cargo-test.log`,
   do not validate the documented contract. Confirm signed wrong-algorithm/key uploads
   are denied. No live result is claimed by the local configuration correction above.
 - [ ] **Require explicit production audio decisions.**
-  In progress **2026-10-09**: seven-day current/noncurrent defaults removed from
-  [production variables](../../infra/envs/prod/foundation/variables.tf). Saved validations
-  still check backup retention and Multi-AZ only; audio enablement guards and description
-  corrections remain pending. Require approved current/noncurrent retention values before
-  `enabled = true`, record the legal-hold decision, update the example and add rejection
-  tests for omitted decisions. Keep production disabled until its contract is settled.
+  In progress **2026-10-09**: saved guards/tests reviewed. Seven-day current/noncurrent
+  defaults removed from [production variables](../../infra/envs/prod/foundation/variables.tf);
+  all four enablement guards are present: backup retention, Multi-AZ, current audio,
+  and noncurrent audio. Separate audio-omission tests added and existing fixtures updated.
+  Latest operator-provided `scripts/tf-data-check.sh` run reports **24 passed, 0 failed**:
+  data module 12, staging foundation 4, production foundation 8, with mocked providers.
+  This successful run supersedes the prior failed attempts. Description/comment corrections
+  and the production example remain pending. Require approved current/noncurrent retention
+  values before `enabled = true` and record the legal-hold decision. Keep production
+  disabled until its contract is settled.
 - [ ] **Resolve the Sonnet deployment mismatch.**
   [model.rs](../../crates/er-ai/src/model.rs) explicitly rejects
   `us.anthropic.claude-sonnet-4-6`, and its price mapping does not recognize that ID.

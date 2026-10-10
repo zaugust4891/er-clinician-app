@@ -68,10 +68,10 @@ variable "enabled" {
 
 variable "data" {
   description = <<-EOT
-    S5 durable resources. The staging defaults are deliberately *not* inherited for the
-    two settings that decide how much data an incident can lose: an enabled production
-    plan must state `db_multi_az` and `db_backup_retention_days` itself, from production
-    recovery objectives rather than from a synthetic-staging convenience.
+    S5 durable resources. Enabled production requires explicit db_multi_az,
+    db_backup_retention_days, audio_retention_days, and
+    audio_noncurrent_version_retention_days values. Production recovery and
+    retention decisions must be recorded in the deployment contract.
   EOT
   type = object({
     postgres_version         = optional(string, "16")
@@ -107,23 +107,27 @@ variable "data" {
 
   validation {
     condition     = !var.enabled || var.data.db_backup_retention_days != null
-    error_message = "Set data.db_backup_retention_days explicitly before enabling production; staging's synthetic retention is not a production decision."
+    error_message = "Set data.db_backup_retention_days explicitly before enabling production."
   }
+
   validation {
     condition     = !var.enabled || var.data.db_multi_az != null
-    error_message = "Set data.db_multi_az explicitly before enabling this root; superseded audio versions ened their own retention decision."
+    error_message = "Set data.db_multi_az explicitly before enabling production."
   }
-  # Production audio retention and legal holds are an expert-review decision recorded in
-  # the deployment contract, not something this file can settle with a number.
+
+  validation {
+    condition     = !var.enabled || var.data.audio_retention_days != null
+    error_message = "Set data.audio_retention_days explicitly before enabling production."
+  }
+
+  validation {
+    condition     = !var.enabled || var.data.audio_noncurrent_version_retention_days != null
+    error_message = "Set data.audio_noncurrent_version_retention_days explicitly before enabling production."
+  }
 }
 
 variable "network" {
-  description = <<-EOT
-    S5 durable resources. Enabled production requires explicit db_multi_az,
-    db_backup_retention_days, audio_retention_days, and
-    audio_noncurrent_version_retention_days values. Production recovery and
-    retention decisions must be recorded in the deployment contract.
-  EOT
+  description = "S4 placement and egress. Closed ingress, one NAT, S3 gateway only by default. S5-S9 supply actual resource ARNs before endpoints are enabled."
   type = object({
     availability_zones    = optional(list(string))
     vpc_cidr              = optional(string, "10.50.0.0/16")

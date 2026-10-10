@@ -46,6 +46,7 @@ The operator's model listing also showed `anthropic.claude-haiku-4-5-20251001-v1
 | AWS BAA / other agreements | AWS account and organization BAAs reported active; evidence and other agreements pending | Authorized legal/privacy owner: record the AWS agreement scope, acceptance date, and access-controlled evidence reference. Confirm Deepgram and other applicable vendor/customer agreements separately. Do not treat an AWS BAA as covering every provider. |
 | Tracked artifact provenance | Unknown; filenames inventoried only | Security/project owner: classify tracked `er_notes.db` and WAL/SHM, `shift.json`, and `dev/keys/dev_{private,public}.pem` and inspect relevant history/caches without publishing their contents. The RDS CA bundle is a public trust bundle. Escalate actual PHI/live-secret exposure; do not casually rewrite history or delete user data. |
 | Current app authorization | Authenticated and provisioned clinicians are resolved to a database organization | Product/security owner: approve this for synthetic testing only. Role limits, patient assignment, emergency access, revocation delay, and audit-access design remain pre-PHI decisions. |
+| Production audio retention and legal holds | Pending; production remains disabled | Record approved current/noncurrent retention days, legal-hold requirements, approver, date, and evidence reference before enabling production. Mocked test values are not approved production settings. |
 
 ## Terraform state and ownership (S3, implemented)
 

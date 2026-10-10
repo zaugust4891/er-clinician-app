@@ -27,7 +27,12 @@ run "production_explicitly_enabled" {
     network = { availability_zones = ["us-east-2a", "us-east-2b"], nat_per_az = true }
     # S5 requires production to state its own availability and retention decisions
     # before this root can be enabled at all; see tests/data.tftest.hcl.
-    data = { db_multi_az = true, db_backup_retention_days = 35 }
+    data = {
+      db_multi_az                             = true
+      db_backup_retention_days                = 35
+      audio_retention_days                    = 30
+      audio_noncurrent_version_retention_days = 30
+    }
   }
   assert {
     condition     = length(module.network) == 1 && length(module.network[0].nat_gateway_ids) == 2 && local.manifest_resources.vpc_id == module.network[0].vpc_id && length(data.aws_availability_zones.network) == 0

@@ -1,7 +1,7 @@
-# S5 durable resources. Authored, and created only when this root is explicitly enabled.
-# Production must state its own availability and retention decisions: the `data` variable
-# refuses an enabled plan that has not chosen `db_multi_az` and `db_backup_retention_days`,
-# so the synthetic-staging defaults cannot be inherited by accident.
+# S5 durable resources, created only when this root is explicitly enabled.
+# Production enablement requires explicit Multi-AZ, backup-retention,
+# current-audio-retention and noncurrent-audio-retention decisions.
+# Approved values and the legal-hold decision belong in the deployment contract.
 
 module "data" {
   source = "../../../modules/data"
