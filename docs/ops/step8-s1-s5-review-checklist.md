@@ -55,13 +55,13 @@ Rerun logs are local at `/tmp/er-note-review-cargo-test.log`,
 
 ## Fixes and decisions before provisioning or release
 
-- [ ] **Fix S5's audio encryption denies.** In
-  [audio.tf](../../infra/modules/data/audio.tf), `Effect = Deny` combined with
-  `StringNotEqualsIfExists` also denies a request when the SSE header is absent.
-  The application's normal presigned PUT sends no SSE headers, so it is rejected.
-  Make the denial conditional on header presence (for example, `Null = false`
-  combined with `StringNotEquals` for the same key). Preserve rejection of explicit
-  wrong algorithms/keys. This is confirmed policy semantics, not a live upload result.
+- [x] **Fix S5's audio encryption denies.** Completed **2026-10-09**;
+  operator confirmed and saved code reviewed. In
+  [audio.tf](../../infra/modules/data/audio.tf), both encryption denies now combine
+  `Null = false` with `StringNotEquals` for the same header key, so missing SSE headers
+  do not trigger these denies and explicit wrong algorithms/keys still do.
+  Corrected a typo in the KMS header's `Null` condition during review.
+  This records the code correction; matching tests and live upload evidence remain pending.
   [AWS condition-operator documentation](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_elements_condition_operators.html#Conditions_IfExists).
 - [ ] **Correct the matching S3 test.**
   [data.tftest.hcl](../../infra/modules/data/tests/data.tftest.hcl) currently asserts
