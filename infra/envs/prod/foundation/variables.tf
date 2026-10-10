@@ -89,8 +89,8 @@ variable "data" {
     db_final_snapshot_suffix = optional(string, "v1")
     db_apply_immediately     = optional(bool, false)
 
-    audio_retention_days                    = optional(number, 7)
-    audio_noncurrent_version_retention_days = optional(number, 7)
+    audio_retention_days                    = optional(number)
+    audio_noncurrent_version_retention_days = optional(number)
     audio_abort_incomplete_multipart_days   = optional(number, 7)
     bucket_administration_principal_arns    = optional(set(string), [])
 
@@ -107,20 +107,23 @@ variable "data" {
 
   validation {
     condition     = !var.enabled || var.data.db_backup_retention_days != null
-    error_message = "Set data.db_backup_retention_days from production recovery objectives before enabling this root; staging's 7-day synthetic value is not a production decision."
+    error_message = "Set data.db_backup_retention_days explicitly before enabling production; staging's synthetic retention is not a production decision."
   }
-
   validation {
     condition     = !var.enabled || var.data.db_multi_az != null
-    error_message = "Set data.db_multi_az explicitly before enabling this root; single-AZ is a staging cost choice, not a production availability decision."
+    error_message = "Set data.db_multi_az explicitly before enabling this root; superseded audio versions ened their own retention decision."
   }
-
   # Production audio retention and legal holds are an expert-review decision recorded in
   # the deployment contract, not something this file can settle with a number.
 }
 
 variable "network" {
-  description = "S4 placement and egress. Closed ingress, one NAT, S3 gateway only by default. S5-S9 supply actual resource ARNs before endpoints are enabled."
+  description = <<-EOT
+    S5 durable resources. Enabled production requires explicit db_multi_az,
+    db_backup_retention_days, audio_retention_days, and
+    audio_noncurrent_version_retention_days values. Production recovery and
+    retention decisions must be recorded in the deployment contract.
+  EOT
   type = object({
     availability_zones    = optional(list(string))
     vpc_cidr              = optional(string, "10.50.0.0/16")

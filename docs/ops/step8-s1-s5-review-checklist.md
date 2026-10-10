@@ -88,9 +88,10 @@ Rerun logs are local at `/tmp/er-note-review-cargo-test.log`,
   do not validate the documented contract. Confirm signed wrong-algorithm/key uploads
   are denied. No live result is claimed by the local configuration correction above.
 - [ ] **Require explicit production audio decisions.**
-  [production variables](../../infra/envs/prod/foundation/variables.tf) defaults current
-  and noncurrent audio retention to seven days. Only backup retention and Multi-AZ
-  have enablement guards. Require approved current/noncurrent retention values before
+  In progress **2026-10-09**: seven-day current/noncurrent defaults removed from
+  [production variables](../../infra/envs/prod/foundation/variables.tf). Saved validations
+  still check backup retention and Multi-AZ only; audio enablement guards and description
+  corrections remain pending. Require approved current/noncurrent retention values before
   `enabled = true`, record the legal-hold decision, update the example and add rejection
   tests for omitted decisions. Keep production disabled until its contract is settled.
 - [ ] **Resolve the Sonnet deployment mismatch.**
