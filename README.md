@@ -1,4 +1,4 @@
-# ER Clinician App (Work in Progress)
+# ER Clinician App (Backend)
 
 `er-clinician-app` is a Rust-based ambient clinical documentation system built for Emergency Department workflows.
 
