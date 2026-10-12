@@ -171,3 +171,9 @@ All core code lives under:
 
 `/home/runner/work/er-clinician-app/er-clinician-app`
 
+## Development tooling
+
+The [substep crew code tour](docs/substep-crew-code-tour.md) explains the
+Claude/Codex edit-review loop, its modules and functions, and the validation flow
+with Mermaid diagrams.
+

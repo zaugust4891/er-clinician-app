@@ -7,7 +7,6 @@ Algorithm timings are isolated microbenchmarks, not end-to-end harness timings.
 
 import contextlib
 import difflib
-import importlib.util
 import os
 from pathlib import Path
 import resource
@@ -16,11 +15,46 @@ import tempfile
 import time
 import tracemalloc
 
-SPEC = importlib.util.spec_from_file_location("substep_crew", Path(__file__).with_name("substep_crew.py"))
-crew = importlib.util.module_from_spec(SPEC)
-assert SPEC.loader
-sys.modules[SPEC.name] = crew
-SPEC.loader.exec_module(crew)
+if __package__:
+    from .substep_crew_lib import processes
+else:
+    from substep_crew_lib import processes
+
+
+# Kept here for comparison with the retired end-of-substep critique algorithm.
+def repeated_blockers(prev: dict, cur: dict, thresh: float = 0.72) -> list[str]:
+    """Return current blockers matching prior same-file findings.
+
+    The index costs O(previous blocker text) memory. Exact normalized matches are
+    constant-time. Reworded findings still use SequenceMatcher with current text
+    first; difficult comparisons within one file remain quadratic worst-case.
+    real_quick_ratio/quick_ratio prefilters were benchmarked but are not used:
+    representative small and large same-file inputs showed overhead without a
+    timing win, while exact matches benefit substantially from the set index.
+    """
+    by_file: dict[str, list[str]] = {}
+    exact_by_file: dict[str, set[str]] = {}
+    for blocker in prev.get("blockers", []):
+        file_name = blocker.get("file", "?")
+        problem = (blocker.get("problem", "") or "").lower()
+        by_file.setdefault(file_name, []).append(problem)
+        exact_by_file.setdefault(file_name, set()).add(problem)
+
+    out: list[str] = []
+    for blocker in cur.get("blockers", []):
+        file_name = blocker.get("file", "?")
+        current = (blocker.get("problem", "") or "").lower()
+        candidates = by_file.get(file_name, ())
+        matched = current in exact_by_file.get(file_name, set())
+        if not matched:
+            for previous in candidates:
+                matcher = difflib.SequenceMatcher(None, current, previous)
+                if matcher.ratio() >= thresh:
+                    matched = True
+                    break
+        if matched:
+            out.append(f"{file_name}: {blocker.get('problem', '')[:120]}")
+    return out
 
 
 def measure(label, function, repeats=1):
@@ -38,7 +72,7 @@ def measure(label, function, repeats=1):
 def transcript_case(size):
     def run():
         with tempfile.TemporaryDirectory() as td, open(os.devnull, "w") as sink, contextlib.redirect_stdout(sink):
-            result = crew._stream(
+            result = processes.run_process(
                 [sys.executable, "-c", f"import os; b=b'x'*16384; n={size}; [os.write(1,b[:min(len(b),n-i)]) for i in range(0,n,len(b))]"],
                 30,
                 "bench",
@@ -112,10 +146,10 @@ def main():
     for count in (8, 600):
         previous, current = matching_case(count)
         measure(f"old nested fuzzy ({count})", lambda p=previous,c=current: old_match(p,c), repeats=3)
-        measure(f"indexed fuzzy ({count})", lambda p=previous,c=current: crew.repeated_blockers(p,c), repeats=3)
+        measure(f"indexed fuzzy ({count})", lambda p=previous,c=current: repeated_blockers(p,c), repeats=3)
         measure(f"indexed + upper bounds ({count})", lambda p=previous,c=current: indexed_filtered_match(p,c), repeats=3)
         exact_previous, exact_current = matching_case(count, exact=True)
-        measure(f"indexed exact fast path ({count})", lambda p=exact_previous,c=exact_current: crew.repeated_blockers(p,c), repeats=3)
+        measure(f"indexed exact fast path ({count})", lambda p=exact_previous,c=exact_current: repeated_blockers(p,c), repeats=3)
 
     print("\nNotes: ru_maxrss is cumulative whole-process peak (Linux KiB), so later rows cannot decrease. "
           "tracemalloc covers Python allocations, not child-process or OS pipe buffers. Small inputs may "
