@@ -3,7 +3,8 @@
 Initial review **2026-10-01 (America/New_York)** against `master`, HEAD
 `5e0cfe4`, including the then-uncommitted S5 working tree. Follow-up updated
 **2026-10-09** against application HEAD `6845878`, after S5 source and corrections
-were committed. This covers **Phase 4, Step 8**, using the
+were committed. Operator identity evidence added **2026-10-11**. This covers
+**Phase 4, Step 8**, using the
 [implementation guide](../planning/phase4-step8-implementation-steps.md).
 Checked boxes below mean verified evidence; unchecked boxes are actions still to do.
 The file-review checkboxes are left open for your own review.
@@ -13,6 +14,8 @@ authored; targeted local checks pass; live AWS acceptance remains pending.** The
 historical full-workspace result below is not a full rerun of the October 9 changes.
 No cloud apply is recorded, and this follow-up did not inspect current account contents.
 The expired-token STS attempt belongs to the October 1 review, not a new identity check.
+Operator-provided STS output on October 11 confirms the intended staging account
+and Identity Center administrator role; this does not inspect deployed resources.
 Budget, image/registry provenance, runtime IAM and live connectivity/storage/provider
 evidence remain open. No AWS resources were changed during these reviews.
 
@@ -53,7 +56,7 @@ they do not re-establish every earlier gate against current HEAD.
 | [x] | `scripts/tf-lock-check.sh` against local MinIO | Second concurrent operation denied the lock with HTTP **412 PreconditionFailed**. Does not exercise AWS IAM, KMS or bucket policies. |
 | [x] | Existing image `er-note-app:s2-verify` smoke inspection | `linux/amd64`, UID/GID `65532:65532`, API entrypoint, three executable binaries, shared libraries resolve, RDS CA checksum matches. Each exact binary entrypoint rejects missing `APP_ENV`/invalid migration config with networking disabled. |
 | [ ] | Fresh image build from reviewed tracked sources; registry publication by digest | Not run. Existing image ID is `sha256:d874ced05317b0d32dd2ae7648919a6cce0b1a8b16a67e461d7d6865c43facfd`, created September 12; `RepoDigests` is empty. This local image ID is not an ECR manifest digest. |
-| [ ] | AWS identity and all live S3/RDS/SQS/ECS/IAM/provider gates | October 1 STS attempt failed with an expired SSO token. No new identity or live pass is claimed. |
+| [ ] | AWS identity and all live S3/RDS/SQS/ECS/IAM/provider gates | Identity portion passed via operator-provided STS output on 2026-10-11; account `657615279057`, SSO administrator role, session `zach-admin`. Live resource/provider gates remain pending. The October 1 expired-token failure is historical. |
 
 Migration coverage includes an empty database, a successful no-op rerun, rejection
 of a changed applied checksum, and assertions that migration locking remains enabled.
@@ -154,15 +157,15 @@ Rerun logs are local at `/tmp/er-note-review-cargo-test.log`,
   that the private/public signing keys and JWKS were intended solely for development
   and testing and have only ever been used that way. Retain these files as fixtures
   because existing authentication tests depend on them.
-- [ ] **Finish the existing S0 artifact provenance/remediation decision.** Local DB,
-  WAL/SHM, shift and dev-key paths remain tracked and unchanged. Auth tests use the
-  development keys; their usage and current/historical database/shift origin are
-  owner-confirmed above. A bounded filename inventory found only the four known
-  database/shift paths; cache directories and outside locations were not inspected.
-  Remaining cleanup: untrack those four runtime files while retaining local copies,
-  keep the development keys as test fixtures, and verify the result. Evidence and
-  inventory scope: [artifact provenance record](repository-artifact-provenance.md).
-  Generated-run cleanup does not erase published history.
+- [x] **Finish the existing S0 artifact provenance/remediation decision.** Completed
+  **2026-10-10**. Owner confirmed synthetic-only database/shift history and exclusively
+  development/test key usage. The four runtime database/shift paths are untracked and
+  ignored; local copies remain present and all four pre-cleanup checksum checks pass.
+  The three development signing files remain tracked as authentication-test fixtures.
+  A bounded filename inventory found only the four known database/shift paths;
+  cache directories and outside locations were not inspected. Evidence and scope:
+  [artifact provenance record](repository-artifact-provenance.md). Untracking does
+  not erase previously committed versions from history.
 - [x] **Update stale completion records after fixes.** Updated **2026-10-09**:
   the implementation guide, infrastructure README, staging/data runbooks, data module
   README and this checklist distinguish authored S5 code, dated local passes and
@@ -178,10 +181,18 @@ BAAs were previously reported. Verify and record them; they are not established 
 missing just because this workspace's token expired. See the
 [deployment contract](deployment-contract.md) for the evidence register.
 
-- [ ] Refresh `ernote-staging-admin` SSO and verify STS account/assumed-role identity.
-  The recorded **candidate** staging account is `657615279057`, not a newly verified value.
-- [ ] Confirm application Region `us-east-2`, account-owner/root MFA, and intended
-  staging/production account boundary. Production account selection remains open.
+- [x] Refresh `ernote-staging-admin` SSO and verify STS account/assumed-role identity.
+  Completed **2026-10-11** using operator-provided STS output. Account
+  `657615279057` matches the owner's intended staging account; ARN:
+  `arn:aws:sts::657615279057:assumed-role/AWSReservedSSO_AdministratorAccess_e78c48e0012d97ab/zach-admin`.
+  This confirms the active identity; resource inventory and runtime-role permissions
+  remain separate checks.
+- [x] Confirm application Region `us-east-2`, account-owner/root MFA, and intended
+  staging/production account boundary. Completed **2026-10-11** via owner confirmation:
+  Ohio is the intended application Region, root MFA is enabled, and the owner controls
+  the account-owner/root email. Account `657615279057` is for synthetic staging;
+  production remains disabled and no production account ID has been recorded.
+  Root-MFA status is owner-confirmed; no numeric IAM response was supplied.
 - [ ] Recheck Bedrock's US Sonnet profile in **us-east-2**; record ID, status,
   destination Regions, model terms/first-use prerequisites and applied account quotas.
 - [ ] After the account owner has reviewed model terms/payment, perform a synthetic
