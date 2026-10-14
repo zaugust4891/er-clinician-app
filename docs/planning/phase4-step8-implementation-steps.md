@@ -7,8 +7,10 @@ S0-S3 have since been implemented; S4/S5 code and offline checks are now impleme
 [S3 implementation record](#implementation-record--s3-2026-09-14) and
 [S4 implementation record](#implementation-record--s4-2026-09-14) and
 [S5 implementation record](#implementation-record--s5-2026-10-09), authoritative for their
-respective outlines. Live S3–S5 verification is pending. S6 onward remain a plan.
-No cloud apply is recorded; current account contents have not been independently verified.*
+respective outlines. **2026-10-14:** approved S3 bootstrap is applied and remote-state
+verification passes; current local gates and account/provider discovery are recorded in
+the [dated audit](../ops/step8-audit-2026-10-14.md). S4/S5 application resources remain
+unapplied pending budget and S6–S9 dependencies; S6 onward remain a plan.*
 
 **Sources:** [Phase 4 playbook](phase4-implementation-guide.md), [Phase 4 plan](phase4.md),
 [Step 3 Postgres guide](phase4-step3-postgres-guide.md),
@@ -636,7 +638,7 @@ For **S0, you do not need to create any AWS access-key pairs**. Your Cognito poo
      --query 'inferenceProfileSummaries[].inferenceProfileId' --output table
    ```
 
-   Listing a model or getting an `ACTIVE` profile does **not** prove this account can invoke it. The current code only accepts the bare Sonnet ID, so explicit US-profile support and priced usage mapping are still required before deployment; global routing is not an automatic fallback. See the [S0 contract](../ops/deployment-contract.md) for evidence status and blockers. [Bedrock access](https://docs.aws.amazon.com/us_en/bedrock/latest/userguide/model-access.html) · [Sonnet 4.6 Region support](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-sonnet-4-6.html) · [Quotas](https://docs.aws.amazon.com/bedrock/latest/userguide/quotas-runtime.html)
+   Listing a model or getting an `ACTIVE` profile does **not** prove this account can invoke it. The October 9 code supports the approved US Sonnet profile and priced usage mapping; Ohio rates and one administrator invocation were verified October 14. Worker-role invocation remains pending; global routing is not an automatic fallback. See the [S0 contract](../ops/deployment-contract.md) for evidence status and blockers. [Bedrock access](https://docs.aws.amazon.com/us_en/bedrock/latest/userguide/model-access.html) · [Sonnet 4.6 Region support](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-sonnet-4-6.html) · [Quotas](https://docs.aws.amazon.com/bedrock/latest/userguide/quotas-runtime.html)
 
 6. **Collect the remaining S0 identifiers and decisions.** Check **Route 53 → Hosted zones** for the domain, hosted-zone ID, and who controls its registrar; check **Billing and Cost Management → Budgets** for a monthly threshold and alert email; and check **AWS Artifact → Agreements** for BAA status without accepting legal terms on your own. Also record the GitHub repository/default branch, staging account ID, alarm contact, staging retention choices, and whether production will have a separate account. These are S0 records, not access keys. [Route 53 guidance](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/dns-configuring-new-domain.html) · [Budget setup](https://docs.aws.amazon.com/cost-management/latest/userguide/create-cost-budget.html) · [AWS Artifact guidance](https://docs.aws.amazon.com/pdfs/artifact/latest/ug/artifact-ug.pdf)
 

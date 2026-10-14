@@ -2,13 +2,20 @@
 # everyone — including an account administrator. They are the floor that no IAM policy
 # can raise.
 
+module "encryption_guards" {
+  source      = "../modules/s3-encryption-guards"
+  for_each    = { state = aws_s3_bucket.state.arn, deploy = aws_s3_bucket.deploy.arn }
+  bucket_arn  = each.value
+  kms_key_arn = aws_kms_key.state.arn
+}
+
 locals {
   # Reused by both buckets. `Principal = "*"` inside a Deny means "nobody", not
   # "everybody": a Deny with a wildcard principal denies the action for every caller
   # whose request matches the condition.
   bucket_guard_statements = {
     for name, bucket in { state = aws_s3_bucket.state, deploy = aws_s3_bucket.deploy } :
-    name => [
+    name => concat([
       {
         Sid       = "DenyInsecureTransport"
         Effect    = "Deny"
@@ -25,42 +32,7 @@ locals {
         Resource  = [bucket.arn, "${bucket.arn}/*"]
         Condition = { NumericLessThan = { "s3:TlsVersion" = "1.2" } }
       },
-      # The bucket already encrypts every object with the customer-managed key by
-      # default, so an upload that sends no encryption header is still encrypted
-      # correctly.
-      # Each deny requires the corresponding header to exist and contain a wrong value.
-      # Missing headers leave bucket-default encryption in effect.
-      {
-        Sid       = "DenyWrongEncryptionAlgorithm"
-        Effect    = "Deny"
-        Principal = "*"
-        Action    = "s3:PutObject"
-        Resource  = "${bucket.arn}/*"
-        Condition = {
-          Null = {
-            "s3:x-amz-server-side-encryption" = "false"
-          }
-          StringNotEquals = {
-            "s3:x-amz-server-side-encryption" = "aws:kms"
-          }
-        }
-      },
-      {
-        Sid       = "DenyWrongEncryptionKey"
-        Effect    = "Deny"
-        Principal = "*"
-        Action    = "s3:PutObject"
-        Resource  = "${bucket.arn}/*"
-        Condition = {
-          Null = {
-            "s3:x-amz-server-side-encryption-aws-kms-key-id" = "false"
-          }
-          StringNotEquals = {
-            "s3:x-amz-server-side-encryption-aws-kms-key-id" = aws_kms_key.state.arn
-          }
-        }
-      },
-    ]
+    ], module.encryption_guards[name].statements)
   }
 }
 

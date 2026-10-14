@@ -1,70 +1,64 @@
 # Step 8 S1–S5 review and AWS setup checklist
 
-Initial review **2026-10-01 (America/New_York)** against `master`, HEAD
-`5e0cfe4`, including the then-uncommitted S5 working tree. Follow-up updated
-**2026-10-09** against application HEAD `6845878`, after S5 source and corrections
-were committed. Operator identity evidence added **2026-10-11**. This covers
-**Phase 4, Step 8**, using the
-[implementation guide](../planning/phase4-step8-implementation-steps.md).
-Checked boxes below mean verified evidence; unchecked boxes are actions still to do.
-The file-review checkboxes are left open for your own review.
+Updated **2026-10-14 (America/New_York)** against application HEAD `329f4ed` and the
+current Terraform working tree, after the owner delegated verification. Earlier
+October 1/9/11 evidence is historical. Checked boxes record completed evidence;
+unchecked boxes identify remaining actions. File-reading rows at the end remain
+available for the owner's manual review; automated checks do not certify every
+review focus as a live pass.
 
-**Current result: S5 source and the encryption/production-retention corrections are
-authored; targeted local checks pass; live AWS acceptance remains pending.** The
-historical full-workspace result below is not a full rerun of the October 9 changes.
-No cloud apply is recorded, and this follow-up did not inspect current account contents.
-The expired-token STS attempt belongs to the October 1 review, not a new identity check.
-Operator-provided STS output on October 11 confirms the intended staging account
-and Identity Center administrator role; this does not inspect deployed resources.
-Budget, image/registry provenance, runtime IAM and live connectivity/storage/provider
-evidence remain open. No AWS resources were changed during these reviews.
+**Current result: local gates pass; approved bootstrap is applied and protected remote
+state is verified. Application network/data/workloads remain undeployed.** The current
+full local suite is 304 passing tests; Sonnet has one approved synthetic administrator
+invocation. The $50 budget is unchanged; the reviewed always-on scenario is $166.32/month
+before provider/traffic charges. Domain registration and S6–S9 implementation remain
+open. Production stays disabled. Details and limits:
+[audit evidence](step8-audit-2026-10-14.md),
+[cost worksheet](staging-cost-review-2026-10-14.md),
+[implementation guide](../planning/phase4-step8-implementation-steps.md).
 
 ## What changed
 
 | Substep | Change boundary | Current assessment |
 | --- | --- | --- |
-| S1 — startup/resource safeguards | Commit `eb410eb` (2026-09-11), Sonnet routing/pricing/config correction `6845878` (2026-10-09) | Local behavior gates passed; US-profile support and explicit cloud model IDs now pass targeted tests. Cloud TLS/permissions/provider access and Ohio rate verification remain open. |
-| S2 — image and migrations | Commit `5394122` (2026-09-12): embedded `er-migrate`, pinned build/runtime images, three binaries, RDS CA, source allowlist | Migration tests and existing-image smoke checks passed. A fresh clean-source build and registry digest/provenance are not established by this review. |
-| S3 — Terraform ownership/state | Commit `f8844db` (2026-09-14), bootstrap encryption correction `91dce5e` (2026-10-09) | Offline checks passed; header-presence conditions corrected and bootstrap validation passed. Live state protection/isolation/locking/recovery gates remain open. |
+| S1 — startup/resource safeguards | Commit `eb410eb` (2026-09-11), Sonnet routing/pricing/config correction `6845878` (2026-10-09) | Local behavior gates passed; US-profile support and explicit cloud model IDs now pass targeted tests. Ohio rates and one administrator invocation verified October 14; cloud task TLS/runtime permissions remain open. |
+| S2 — image and migrations | Commit `5394122` (2026-09-12): embedded `er-migrate`, pinned build/runtime images, three binaries, RDS CA, source allowlist | Migration tests and existing-image smoke checks passed. Fresh clean-source image build and six startup probes passed October 14; ECR publication/digest remains open. |
+| S3 — Terraform ownership/state | Commit `f8844db` (2026-09-14), bootstrap encryption correction `91dce5e` (2026-10-09) | Offline checks passed; header-presence conditions corrected and bootstrap validation passed. Approved bootstrap apply, remote-state migration, bucket probes, real locking/recovery and existing cross-root-object denials passed October 14. Published-manifest denial remains open. |
 | S4 — network | Same `f8844db`: two AZs, six subnets, isolated DB placement, one NAT, separate SGs, S3 gateway | Offline checks passed. Private-task connectivity and outside-access denial remain unverified. The 8443 SG rule does not implement server TLS. |
-| S5 — data | Source committed in `3698415`; October 9 follow-ups correct audio encryption conditions, tests and production-retention enablement | Latest operator-provided data/foundation gate: 24 mocked tests passed. Production requires explicit current/noncurrent retention and remains disabled. Actual approvals, upload/IAM/backup checks and live acceptance are pending. |
+| S5 — data | Source committed in `3698415`; October 9 follow-ups correct audio encryption conditions, tests and production-retention enablement | Latest audit data gate: 25 runs passed, including the shared encryption-policy module. Production requires explicit current/noncurrent retention and remains disabled. Actual approvals, upload/IAM/backup checks and live acceptance are pending. |
 
 The historical September orchestration record is
 `.agents/runs/20260918T005346.303255Z-step8-S5/03-gates.summary.md` and
 `03-verdict.validated.json`: its five automated gates passed, but the review returned
 `NOT_READY` before the October 9 corrections. The earlier September 17 run failed.
-The fixes and targeted results below supersede those local defect descriptions;
-the formal orchestration review and live acceptance were not rerun. These transient
+The fixes and current results below supersede those local defect descriptions.
+The formal orchestration review was not rerun; bootstrap live acceptance is now
+recorded separately, and application live acceptance remains pending. These transient
 records are retained locally and excluded from tracking by the cleanup below.
 
-## Historical full review gates and subsequent targeted evidence
-
-Unless a later date is stated, these results belong to the **2026-10-01** review.
-October 9 targeted Sonnet and data checks are recorded under their completed items;
-they do not re-establish every earlier gate against current HEAD.
+## Current local and bootstrap gates — 2026-10-14
 
 | Done | Gate | Result and practical limit |
 | --- | --- | --- |
-| [x] | `cargo fmt --all -- --check` | Passed. |
-| [x] | `SQLX_OFFLINE=true cargo clippy --workspace --all-targets -- -D warnings` | Passed. |
-| [x] | `cargo test --workspace --locked` with explicit dev variables and local Compose services | **302 passed, 0 failed, 0 ignored**. Includes config, audio, worker/AI, migration, tenancy and sync suites. No live AWS/provider inference exercised. |
-| [x] | `terraform fmt -check -recursive infra/` | Passed with Terraform **1.10.4**. |
-| [x] | Backend-disabled initialization and validation of all five roots in temporary copies | Passed using the committed AWS provider **6.64.0** locks. Does not test remote state or live AWS planning. |
-| [x] | `scripts/tf-manifest-guards.sh` | **7/7**: rejects credential values/keys and invalid inputs; accepts a Secrets Manager ARN reference. |
-| [x] | `scripts/tf-network-check.sh` | **23 runs**: network module 13, staging foundation 4, production foundation 6. AWS providers mocked. |
-| [x] | `scripts/tf-data-check.sh` | Historical: 22 runs. Latest operator-provided run **2026-10-09: 24 passed, 0 failed** (data module 12, staging foundation 4, production foundation 8). Foundation cases overlap the network script. |
-| [x] | `scripts/tf-lock-check.sh` against local MinIO | Second concurrent operation denied the lock with HTTP **412 PreconditionFailed**. Does not exercise AWS IAM, KMS or bucket policies. |
-| [x] | Existing image `er-note-app:s2-verify` smoke inspection | `linux/amd64`, UID/GID `65532:65532`, API entrypoint, three executable binaries, shared libraries resolve, RDS CA checksum matches. Each exact binary entrypoint rejects missing `APP_ENV`/invalid migration config with networking disabled. |
-| [ ] | Fresh image build from reviewed tracked sources; registry publication by digest | Not run. Existing image ID is `sha256:d874ced05317b0d32dd2ae7648919a6cce0b1a8b16a67e461d7d6865c43facfd`, created September 12; `RepoDigests` is empty. This local image ID is not an ECR manifest digest. |
-| [ ] | AWS identity and all live S3/RDS/SQS/ECS/IAM/provider gates | Identity portion passed via operator-provided STS output on 2026-10-11; account `657615279057`, SSO administrator role, session `zach-admin`. Live resource/provider gates remain pending. The October 1 expired-token failure is historical. |
+| [x] | Rust formatting and locked workspace Clippy with warnings denied | Passed. |
+| [x] | Locked workspace tests with explicit dev variables and isolated emulators | **304 passed, 0 failed, 0 ignored**. Synthetic local integrations. |
+| [x] | `er-ai --no-default-features` | **18 passed**; overlaps workspace coverage. |
+| [x] | Terraform formatting and all five backend-disabled root validations | Passed: Terraform **1.10.4**, committed provider **6.64.0**. |
+| [x] | Manifest guard script | **7/7**, plus provider-failure injection correctly fails. |
+| [x] | Network gate | **25 passed**: network 13, staging 4, prod 8. Mocked AWS. |
+| [x] | Data gate | **25 passed**: shared policy 1, data 12, staging 4, prod 8. Foundation cases overlap network gate. |
+| [x] | Bootstrap policy test | **1 mocked plan-only test passed**. |
+| [x] | Local and actual AWS lock collisions | Both returned **412 PreconditionFailed**; AWS lock encrypted and normally released. |
+| [x] | Fresh image from tracked HEAD and runtime probes | `er-note-app:checklist-20261014-329f4ed`; Linux/amd64, non-root, three binaries/CA verified, six startup rejections passed. |
+| [ ] | Registry publication and immutable ECR manifest digest | Local image ID is not an ECR digest; S8 remains pending. |
+| [x] | AWS identity, root MFA, Sonnet metadata/quotas/pricing | Independently verified through AWS APIs. |
+| [x] | One approved synthetic Sonnet request | Response `OK.`, 11 input/5 output tokens, estimated **$0.0001188**. Administrator identity only. |
+| [x] | Approved bootstrap and remote state | **32 additions**, remote migration and no-change plans; five scoped backends initialized. |
+| [ ] | Application runtime, network, RDS, audio, queues and worker provider gates | Foundation/workloads and S6–S9 prerequisites remain undeployed. |
 
-Migration coverage includes an empty database, a successful no-op rerun, rejection
-of a changed applied checksum, and assertions that migration locking remains enabled.
-It does not establish the later CI rule that failed migrations prevent service updates.
-
-Rerun logs are local at `/tmp/er-note-review-cargo-test.log`,
-`/tmp/er-note-review-tf-network.log`, `/tmp/er-note-review-tf-data.log` and
-`/tmp/er-note-review-tf-lock.log`. They are temporary evidence, not committed artifacts.
+Migration tests include empty/no-op databases, checksum mismatch rejection and enabled
+migration locking. Logs and exact image ID are in the [dated audit](step8-audit-2026-10-14.md).
+These local results do not establish CI deployment or application cloud acceptance.
 
 ## Fixes and decisions before provisioning or release
 
@@ -95,11 +89,10 @@ Rerun logs are local at `/tmp/er-note-review-cargo-test.log`,
   deployment-artifact guards now use `Null = false` with `StringNotEquals` for both
   encryption headers, and the comments are corrected. Operator-provided temporary-copy
   initialization/validation passed with locked AWS provider **6.64.0**.
-- [ ] **Verify live bootstrap state and upload behavior.** After the reviewed bootstrap
-  apply, verify actual backend state and `.tflock` writes as well as headerless uploads
-  encrypted with the bucket-default KMS key. Explicit encryption headers on some clients
-  do not validate the documented contract. Confirm signed wrong-algorithm/key uploads
-  are denied. No live result is claimed by the local configuration correction above.
+- [x] **Verify live bootstrap state and upload behavior.** Completed **2026-10-14**;
+  see the [audit](step8-audit-2026-10-14.md). Actual encrypted remote state, scoped lock
+  writes, headerless/correct-key uploads, signed wrong-algorithm/real-wrong-key/omitted-key/
+  SSE-C denials, signed HTTP/unsigned-read denials and disposable recovery passed.
 - [x] **Require explicit production audio decisions (implementation and documentation).**
   Completed **2026-10-09**; saved guards/tests/documentation reviewed. Seven-day
   current/noncurrent defaults removed from
@@ -129,16 +122,21 @@ Rerun logs are local at `/tmp/er-note-review-cargo-test.log`,
   --workspace --all-targets -- -D warnings`. All tests passed; no live provider invocation
   or database integration suite was run in this verification. Regional price constants
   match [Anthropic's documented base prices and 10% regional premium](https://platform.claude.com/docs/en/about-claude/pricing).
-- [ ] **Verify Sonnet account access, source-Region rates and live invocation.** Verify
-  STS identity and the approved US profile from `us-east-2`, record destination Regions,
-  confirm Ohio's token/cache rows in AWS pricing, and collect the separate synthetic
-  invocation evidence after model-terms prerequisites. Repeat with the eventual worker
-  task role and check IAM/SCP coverage of all destinations. Local tests above do not
-  establish these live gates. [AWS model card](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-sonnet-4-6.html).
-- [ ] **Reprice the full stack and resolve the budget.** Existing docs estimate S4 at
-  $36.50/month and S5 at about $31/month, totaling about $67.50 before ECS, ALB, WAF,
-  logs and providers. These are historical planning estimates, not current verified
-  prices or bills. The reported $50 budget needs a full-stack decision before apply.
+- [x] **Verify Sonnet administrator access, Ohio prices and one synthetic invocation.**
+  Completed **2026-10-14**: profile/destinations, first-use form, applied quotas,
+  source-Region rates and one owner-approved request verified. Agreement subsequently
+  reports AVAILABLE. See [audit evidence](step8-audit-2026-10-14.md).
+- [ ] **Repeat provider access with the actual worker role.** S6/S8 must implement the
+  role and verify destination-Region IAM/SCP permissions; administrator success does
+  not prove worker access.
+- [x] **Reprice the reviewed full-stack scenario.** Official AWS price dimensions and
+  assumptions recorded in the [cost worksheet](staging-cost-review-2026-10-14.md):
+  **$166.32/month** before providers/traffic/additional operational choices.
+- [x] **Choose the cost planning direction.** Owner selected planning for the **$166+**
+  always-on scenario on **2026-10-14**, with deployment pending.
+- [ ] **Resolve the full-stack budget and variable provider costs.** Existing monthly
+  budget is **$50** and unchanged. Final limit/provider/traffic allowances and approval
+  of the actual budget update remain open; this is separate from the chosen direction.
 - [x] **Keep generated runs out of the proposed commit.** Updated **2026-10-09**:
   `/.agents/runs/` is ignored and its 65 previously tracked files are removed from
   the index while preserving local copies. The implementation guide is explicitly
@@ -192,22 +190,30 @@ missing just because this workspace's token expired. See the
   Ohio is the intended application Region, root MFA is enabled, and the owner controls
   the account-owner/root email. Account `657615279057` is for synthetic staging;
   production remains disabled and no production account ID has been recorded.
-  Root-MFA status is owner-confirmed; no numeric IAM response was supplied.
-- [ ] Recheck Bedrock's US Sonnet profile in **us-east-2**; record ID, status,
-  destination Regions, model terms/first-use prerequisites and applied account quotas.
-- [ ] After the account owner has reviewed model terms/payment, perform a synthetic
-  invocation; later repeat using the actual worker task role. An `ACTIVE` profile is
-  discovery evidence, not an invocation pass. Review IAM/SCP coverage for all destinations.
-- [ ] Verify `zamos.co` zone `Z0831458W40X3W46HV0S` is public and properly delegated;
-  identify registrar control and choose the staging API hostname for S8's ACM/DNS work.
-- [ ] Record budget period/scope/thresholds/recipient, reprice the full stack, and choose
-  a monitored alarm destination with verified delivery.
-- [ ] Finish the existing synthetic retention decisions: 7-day audio, 30-day app logs,
-  7-day RDS backups, plus a DB-record expiry/rebuild procedure. S3 expiry alone does
-  not remove transcripts, events, snapshots or backups.
-- [ ] Record AWS BAA acceptance dates/scope/evidence references and resolve the
-  existing Deepgram/vendor agreement tasks. Production approvals and data policies
-  remain separate from synthetic staging readiness.
+  AWS IAM independently verified root MFA enabled and zero root access keys on
+  **2026-10-14**; this account is also the organization management account.
+- [x] Recheck Ohio Sonnet profile/destination Regions, first-use form, agreement and
+  applied quotas. Verified **2026-10-14**, details in the dated audit.
+- [x] Perform the one owner-approved synthetic administrator invocation after terms
+  review. Agreement subsequently AVAILABLE; no further paid request made.
+- [ ] Repeat using the eventual worker task role and verify all destination permissions.
+- [x] Verify hosted zone `Z0831458W40X3W46HV0S` is public and inspect its name servers.
+- [ ] Register `zamos.co`, delegate to the existing zone and choose the staging API
+  hostname. Owner confirms it is unregistered; authoritative parent returns NXDOMAIN.
+- [x] Record the $50 MONTHLY COST budget, primary billing-view scope, three thresholds
+  and configured recipient reference; reprice the stack. Private recipient details
+  remain outside Git. No notification sent.
+- [x] Confirm the budget recipient is controlled/monitored and delivery works.
+  Owner confirmed prior delivery on **2026-10-14**; assistant sent no test message.
+- [x] Choose the $166+ scenario for planning, leaving application deployment pending.
+- [ ] Choose the application alarm destination and approve the final budget limit/
+  provider allowances and actual budget update before foundation apply.
+- [ ] Finish synthetic retention: 7-day audio/backups source settings are explicit;
+  30-day app logs and a DB-record expiry/rebuild procedure still need implementation.
+- [x] Verify AWS Artifact account and organizations BAAs are ACTIVE; record effective
+  dates/scope/agreement IDs in the [audit](step8-audit-2026-10-14.md).
+- [ ] Retain acceptance/signature evidence in a durable controlled location and resolve
+  Deepgram/other vendor agreements. API effective-start dates do not prove signature dates.
 
 Run AWS commands in a fresh shell that has not sourced the emulator `.env`:
 
@@ -225,23 +231,28 @@ aws bedrock get-inference-profile \
 
 ### 2. Establish protected Terraform state — S3
 
-No operator `terraform.tfvars`, `backend.hcl` or local state files were found in the
-five roots during this review. Fill verified inputs locally from the committed examples.
-Follow [staging-deploy.md](staging-deploy.md) after correcting the policies above.
+Bootstrap and staging foundation inputs and all five backend configurations are now
+prepared as ignored local files. Approved bootstrap is applied and migrated; see
+[the dated audit](step8-audit-2026-10-14.md). No application foundation/release was applied.
 
-- [ ] Fill bootstrap account/Region/project inputs and narrow state-role trust to the
+- [x] Fill bootstrap account/Region/project inputs and narrow state-role trust to the
   intended stable Identity Center role ARNs where practical.
-- [ ] Review and apply **bootstrap only**: state/artifact buckets, rotating KMS key,
+- [x] Review and apply **bootstrap only**: state/artifact buckets, rotating KMS key,
   five state-access policies and five operator roles.
-- [ ] Record bucket names and key ARN, enable bootstrap's commented S3 backend, and
+- [x] Record bucket names and key ARN, enable bootstrap's commented S3 backend, and
   migrate bootstrap state to its remote key. Supply the **KMS key ARN**, not its alias.
-- [ ] Verify the remote copy before handling local state/backups; keep state and plans
+- [x] Verify the remote copy before handling local state/backups; keep state and plans
   outside Git and images.
-- [ ] Initialize the four environment backends at their distinct committed keys;
+- [x] Initialize the four environment backends at their distinct committed keys;
   fill staging foundation inputs from bootstrap outputs. Keep both prod roots disabled.
-- [ ] Prove real S3 lock contention, version recovery on a disposable object, transport/
-  encryption/public-access controls, staging-to-prod denial and the reverse direction,
-  and a wrong-account refusal. Record assertion results and dates.
+- [x] Prove real S3 lock contention, disposable version recovery, live encryption/public/
+  HTTP controls, both directions of cross-root denial on existing probes, and wrong-account
+  refusal. Each role passed its own lock Get/Put/Delete checks. TLS-floor condition
+  simulation passed; live TLS 1.1 policy evaluation was not performed.
+- [x] Simulate deployed-policy explicit denies on actual other-root state paths and the
+  opposite environment's manifest. No published manifests exist yet.
+- [ ] Verify live denial of an existing published opposite-environment manifest after
+  foundation publication. Missing-key 404 responses are not permission proof.
 - [ ] Verify a versioned foundation manifest contains identifiers/secret ARNs only;
   record its version/checksum and pin the manifest version for a later release.
 
@@ -253,11 +264,13 @@ normal state access does not require deleting the state object.
 
 - [ ] Pin the reviewed AZ pair, check CIDR overlap, retain closed client ingress and
   choose the one-NAT/endpoint availability and cost tradeoff explicitly.
-- [ ] Query PostgreSQL 16 minors and orderable `db.t4g.small`/gp3 options in `us-east-2`;
-  select a supported minor and record 50 GiB allocation/100 GiB cap and backup windows.
-- [ ] Review synthetic audio current/noncurrent expiry and multipart cleanup separately;
+- [x] Query PostgreSQL 16 minors and orderable `db.t4g.small`/gp3 options in `us-east-2`;
+  **16.15** selected in staging inputs on **2026-10-14**; 50 GiB/100 GiB cap, backup
+  07:00–07:30 UTC, maintenance Sunday 08:00–09:00 UTC recorded.
+- [x] Review synthetic audio current/noncurrent expiry and multipart cleanup separately;
   review 300-second queue visibility, 20-second polling, three deliveries and 4/14-day
-  queue/DLQ retention. Match queue names and lease settings to application configuration.
+  queue/DLQ retention. Source settings and application queue/lease tests match; live
+  inspection and actual expiry remain pending foundation deployment.
 - [ ] Finish S6–S9 foundation components before expecting the complete live gate:
   scoped roles/secrets/DB bootstrap, Cognito, ECR/cluster/edge, and telemetry.
   The current foundation creates network and data; release roots still have no ECS services.
@@ -331,7 +344,7 @@ check both staging and production; production enablement is especially important
 | --- | --- | --- | --- |
 | [ ] | S1.1 environment/process split | `crates/er-server/src/config.rs`, `crates/er-server/src/main.rs`, `crates/er-server/src/bin/worker.rs`, `crates/er-server/src/bin/migrate.rs`, `crates/er-server/tests/config_gate.rs`, `.env.example` | Explicit `APP_ENV`; dev-only dotenv; each process requires only its own dependencies. `crates/er-server/src/` and `crates/er-server/tests/` here are under `crates/er-server/`. |
 | [ ] | S1.2 endpoint/credential guards | `crates/er-server/src/config.rs`, `crates/er-server/src/aws.rs`, `crates/er-server/tests/config_gate.rs` | Reject dev endpoints/auth/static credentials in cloud; use ECS credentials and preserve legitimate container credential settings. |
-| [ ] | S1.3 model routing/pricing | `crates/er-ai/src/model.rs`, `crates/er-ai/src/transport.rs`, `crates/er-server/src/config.rs`, `crates/er-server/tests/config_gate.rs` | Approved IDs/family and cost mapping; US-profile code/tests pass, account access and Ohio rates remain unverified. |
+| [ ] | S1.3 model routing/pricing | `crates/er-ai/src/model.rs`, `crates/er-ai/src/transport.rs`, `crates/er-server/src/config.rs`, `crates/er-server/tests/config_gate.rs` | Approved IDs/family and cost mapping; US-profile code/tests pass, administrator access and Ohio rates verified October 14; worker-role access pending. |
 | [ ] | S1.4 DB TLS/pools | `crates/er-server/src/db.rs`, `crates/er-server/src/config.rs`, `certs/rds-global-bundle.pem` | `verify-full`, CA/hostname checking, limits/timeouts and safe errors; live negative TLS probes pending. |
 | [ ] | S1.5 audio bounds | `crates/er-server/src/audio.rs`, `crates/er-server/src/routes.rs`, `crates/er-server/src/state.rs`, `crates/er-server/tests/audio_limits.rs`, `crates/er-server/tests/audio_complete_gate.rs` | 16 MiB cap, content-type agreement, unknown-length streaming cap and download deadline. |
 | [ ] | S1.6 operation/job deadlines | `crates/er-server/src/config.rs`, `crates/er-server/src/worker.rs`, `crates/er-server/src/aws.rs`, `crates/er-server/tests/worker_gate.rs`, `crates/er-server/tests/ai_gate.rs`, `crates/er-ai/src/transport.rs` | Total retry-inclusive deadlines; terminal failures preserve durable state and reach DLQ correctly. |
@@ -351,14 +364,14 @@ Reference: [server startup README](../../crates/er-server/README.md).
 | [ ] | S2.5 runtime contents | `Dockerfile`, `certs/rds-global-bundle.pem`, `crates/er-server/README.md` | Three binaries, non-root user, shared libraries/CA and trust-bundle rotation. |
 | [ ] | S2.6 entrypoints | `Dockerfile`, `crates/er-server/README.md` | API default; worker/migrate absolute `entryPoint` overrides in future ECS definitions. |
 | [ ] | S2.7 source context | `.dockerignore`, `Dockerfile` | Allowlist excludes keys/env/DB/state/audio/docs and intermediate layers use the approved context. |
-| [ ] | S2.8 artifact tracking | `.gitignore`, `docs/ops/deployment-contract.md` | Existing tracked DB/dev-key artifacts require provenance/remediation; ignores do not untrack them. |
+| [ ] | S2.8 artifact tracking | `.gitignore`, `docs/ops/deployment-contract.md` | Runtime DB/shift paths are untracked/ignored with owner-confirmed synthetic history; tracked dev keys are test fixtures. |
 
 ### S3 — state and ownership
 
 | Done | Task | Files | Review focus |
 | --- | --- | --- | --- |
 | [ ] | S3.1 versions/locking | `.terraform-version`, `infra/bootstrap/versions.tf`, each environment root's `versions.tf`, `.terraform.lock.hcl`, `backend.tf`, `scripts/tf-lock-check.sh` | Tested versions, committed locks, native `use_lockfile`, emulator versus real-S3 proof. |
-| [ ] | S3.2 protected storage/principals | `infra/bootstrap/state.tf`, `infra/bootstrap/bucket_policies.tf`, `infra/bootstrap/iam.tf`, `infra/bootstrap/variables.tf`, `infra/bootstrap/locals.tf` | Rotation/versioning/public-access/retention/destroy protection, trust and per-root isolation; header conditions corrected, actual state/lock writes still pending. |
+| [ ] | S3.2 protected storage/principals | `infra/bootstrap/state.tf`, `infra/bootstrap/bucket_policies.tf`, `infra/bootstrap/iam.tf`, `infra/bootstrap/variables.tf`, `infra/bootstrap/locals.tf` | Rotation/versioning/public-access/retention/destroy protection, trust and per-root isolation; shared four encryption guards; actual bootstrap state/lock writes passed October 14. |
 | [ ] | S3.3 backend migration/recovery | `infra/bootstrap/backend.tf`, `infra/bootstrap/outputs.tf`, `.gitignore`, `docs/ops/staging-deploy.md` | Local-to-remote migration, key ARN input, secure state handling and version recovery. |
 | [ ] | S3.4 root separation | `infra/bootstrap/iam.tf`, `infra/bootstrap/locals.tf`, `infra/envs/{staging,prod}/{foundation,release}/backend.tf` | Five keys/policies; separate lock operations; explicit cross-environment denial. |
 | [ ] | S3.5 account/Region guards | `infra/bootstrap/{providers,guard,variables}.tf`, `infra/envs/{staging,prod}/{foundation,release}/{providers,guard,variables}.tf` | Expected account, allowed Regions, wrong-account rejection and disabled production. |
@@ -385,8 +398,8 @@ Gate files: `scripts/tf-network-check.sh`,
 
 | Done | Task | Files | Review focus |
 | --- | --- | --- | --- |
-| [ ] | S5.1 RDS configuration | `infra/modules/data/database.tf`, `infra/modules/data/variables.tf`, both foundation roots' `data.tf`/`infra/modules/data/variables.tf`/`terraform.tfvars.example` | Supported PG16 minor/class/gp3, capped autoscaling, private encrypted instance, deletion protection/final snapshot. |
-| [ ] | S5.2 backups/key lifetime | `infra/modules/data/database.tf`, `infra/modules/data/main.tf`, `infra/modules/data/variables.tf`, production foundation `infra/modules/data/variables.tf`, `docs/ops/data-verification.md` | Explicit staging/prod backup decisions, advancing restore time, retained backups' key availability; 35-day retention exceeds a 30-day deletion window. |
+| [ ] | S5.1 RDS configuration | `infra/modules/data/database.tf`, `infra/modules/data/variables.tf`, both foundation roots' `data.tf`/`variables.tf`/`terraform.tfvars.example` | Supported PG16 minor/class/gp3, capped autoscaling, private encrypted instance, deletion protection/final snapshot. |
+| [ ] | S5.2 backups/key lifetime | `infra/modules/data/database.tf`, `infra/modules/data/main.tf`, `infra/modules/data/variables.tf`, production foundation `variables.tf`, `docs/ops/data-verification.md` | Explicit staging/prod backup decisions, advancing restore time, retained backups' key availability; 35-day retention exceeds a 30-day deletion window. |
 | [ ] | S5.3 DB TLS/rotation | `infra/modules/data/database.tf`, `crates/er-server/src/db.rs`, `certs/rds-global-bundle.pem`, `crates/er-server/README.md` | `rds.force_ssl=1` plus verified client TLS and CA rotation; inspect the applied parameter group. |
 | [ ] | S5.4 audio security | `infra/modules/data/audio.tf`, `infra/modules/data/tests/data.tftest.hcl`, `crates/er-server/src/audio.rs`, `crates/er-server/src/routes.rs`, `docs/ops/data-verification.md` | Header-presence conditions and assertions corrected. Live evidence must prove headerless default-KMS uploads and signed wrong-override denial; external presigned uploads remain part of the contract. |
 | [ ] | S5.5 lifecycle/production decisions | `infra/modules/data/audio.tf`, `infra/modules/data/variables.tf`, `infra/envs/prod/foundation/variables.tf`, `infra/envs/prod/foundation/terraform.tfvars.example`, `infra/envs/prod/foundation/tests/data.tftest.hcl`, `docs/ops/deployment-contract.md` | Separate current/noncurrent/multipart clocks, no archive transitions; enablement guards/tests implemented. Actual production retention/legal-hold approvals and live lifecycle inspection remain pending. |

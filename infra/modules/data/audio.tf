@@ -107,6 +107,12 @@ resource "aws_s3_bucket_lifecycle_configuration" "audio" {
 # A bucket policy binds every caller, including an account administrator and including
 # Terraform. It is the floor no IAM policy can raise.
 
+module "encryption_guards" {
+  source      = "../s3-encryption-guards"
+  bucket_arn  = local.audio_bucket_arn
+  kms_key_arn = aws_kms_key.data.arn
+}
+
 locals {
   # Zero or one element: a tuple the optional statement is projected from, so the policy
   # stays one expression instead of a conditional whose branches have different types.
@@ -129,42 +135,7 @@ locals {
       Resource  = [local.audio_bucket_arn, "${local.audio_bucket_arn}/*"]
       Condition = { NumericLessThan = { "s3:TlsVersion" = "1.2" } }
     },
-    # The presigned PUT the device performs carries a signature and a Content-Type and
-    # no encryption headers at all, and the bucket default encrypts it correctly. These
-    # two statements stop a caller from *overriding* that default with SSE-S3 or with a
-    # different key.
-    # Each deny requires the corresponding header to exist and contain a wrong value.
-    # Missing headers leave bucket-default encryption in effect.
-    {
-      Sid       = "DenyWrongEncryptionAlgorithm"
-      Effect    = "Deny"
-      Principal = "*"
-      Action    = "s3:PutObject"
-      Resource  = "${local.audio_bucket_arn}/*"
-      Condition = {
-        Null = {
-          "s3:x-amz-server-side-encryption" = "false"
-        }
-        StringNotEquals = {
-          "s3:x-amz-server-side-encryption" = "aws:kms"
-        }
-      }
-    },
-    {
-      Sid       = "DenyWrongEncryptionKey"
-      Effect    = "Deny"
-      Principal = "*"
-      Action    = "s3:PutObject"
-      Resource  = "${local.audio_bucket_arn}/*"
-      Condition = {
-        Null = {
-          "s3:x-amz-server-side-encryption-aws-kms-key-id" = "false"
-        }
-        StringNotEquals = {
-          "s3:x-amz-server-side-encryption-aws-kms-key-id" = aws_kms_key.data.arn
-        }
-      }
-    }],
+    ], module.encryption_guards.statements,
     # Opt-in: pin the bucket's own controls to named principals. Runtime roles are kept
     # away from these actions by their S6 policies; this statement is the second layer,
     # and it is empty by default because locking a bucket to the wrong ARN list is its

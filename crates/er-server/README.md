@@ -57,10 +57,10 @@ rotation time.
 The Docker context allows only manifests, source, prompts, migrations, SQLx
 metadata, the toolchain file, and this public CA bundle. No development keys,
 `.env`, local database, shift state, test data, or Terraform output enters any
-build layer. `.gitignore` blocks newly created local artifacts; existing
-tracked databases and development keys remain tracked until S0 provenance
-review determines a safe remediation. Do not publish a source archive or
-shared build cache containing those files.
+build layer. The runtime database/shift paths are untracked and ignored; the owner
+confirmed synthetic-only history on 2026-10-10. Development signing files remain
+tracked authentication-test fixtures and are excluded from the image context.
+See [artifact provenance](../../docs/ops/repository-artifact-provenance.md).
 
 ## Cloud configuration contract
 

@@ -22,14 +22,23 @@ network = {
 # S5 durable resources. Everything here has a synthetic-staging default; these are the
 # values worth stating out loud in a review. Check the instance class and gp3 storage
 # combination is offered in the region before the first apply, and pin an exact
-# PostgreSQL 16 minor once you have verified it is available.
+# PostgreSQL minor below was verified orderable in us-east-2 on 2026-10-14.
+# Recheck availability before applying this example later.
 data = {
-  db_instance_class        = "db.t4g.small"
-  db_allocated_storage     = 50
-  db_max_allocated_storage = 100
-  db_multi_az              = false
-  db_backup_retention_days = 7
-  audio_retention_days     = 7
-  queue_retention_days     = 4
-  dlq_retention_days       = 14
+  postgres_version                        = "16.15"
+  db_instance_class                       = "db.t4g.small"
+  db_allocated_storage                    = 50
+  db_max_allocated_storage                = 100
+  db_multi_az                             = false
+  db_backup_retention_days                = 7
+  audio_retention_days                    = 7
+  audio_noncurrent_version_retention_days = 7
+  audio_abort_incomplete_multipart_days   = 7
+  db_backup_window                        = "07:00-07:30"
+  db_maintenance_window                   = "sun:08:00-sun:09:00"
+  queue_visibility_timeout_seconds        = 300
+  queue_receive_wait_seconds              = 20
+  queue_max_receive_count                 = 3
+  queue_retention_days                    = 4
+  dlq_retention_days                      = 14
 }

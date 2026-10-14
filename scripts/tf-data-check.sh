@@ -12,7 +12,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 work="$(mktemp -d)"
 trap 'rm -rf "${work}"' EXIT
 
-for relative in modules/data modules/network modules/manifest envs/staging/foundation envs/prod/foundation; do
+for relative in modules/data modules/network modules/manifest modules/s3-encryption-guards envs/staging/foundation envs/prod/foundation; do
   source_dir="${repo_root}/infra/${relative}"
   test_dir="${work}/infra/${relative}"
   mkdir -p "${test_dir}"
@@ -26,7 +26,7 @@ for relative in modules/data modules/network modules/manifest envs/staging/found
 done
 cp "${repo_root}/infra/envs/staging/foundation/.terraform.lock.hcl" "${work}/infra/modules/data/"
 
-for relative in modules/data envs/staging/foundation envs/prod/foundation; do
+for relative in modules/s3-encryption-guards modules/data envs/staging/foundation envs/prod/foundation; do
   test_dir="${work}/infra/${relative}"
   # A local filesystem provider mirror is optional; the lock still verifies it.
   init_args=()

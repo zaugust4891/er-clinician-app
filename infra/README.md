@@ -7,13 +7,14 @@ are authored and wired into both foundations; production remains disabled. S6–
 still supply identity, compute, edge and telemetry. The release roots have manifest
 guards but no ECS services or task definitions yet.
 
-Status updated **2026-10-09**: the operator's latest mocked data/foundation checks
-passed **24 tests** (12 data module, 4 staging, 8 production). Audio and bootstrap
-encryption denies now allow missing SSE headers to fall through to bucket-default
-encryption, and production requires explicit current/noncurrent audio retention.
-These are local configuration results. No cloud apply is recorded, and current AWS
-account contents, upload behavior, IAM grants, connectivity and recovery remain
-unverified. See the [review checklist](../docs/ops/step8-s1-s5-review-checklist.md).
+Status updated **2026-10-14**: approved bootstrap is applied, remote state migrated,
+and live storage/locking/recovery/role checks pass. Data and network gates each pass
+**25 runs** (overlapping foundation cases); all five roots validate. Shared encryption
+guards preserve headerless default-KMS uploads and deny wrong algorithms/keys,
+explicit SSE-KMS without a key, and SSE-C. Production retention guards remain in place.
+Application network/data/runtime acceptance is pending S6–S9 and a budget decision.
+See the [review checklist](../docs/ops/step8-s1-s5-review-checklist.md) and
+[dated audit](../docs/ops/step8-audit-2026-10-14.md).
 
 Nothing in this tree processes patient data. Staging is synthetic-only; see
 [`docs/ops/deployment-contract.md`](../docs/ops/deployment-contract.md) for the

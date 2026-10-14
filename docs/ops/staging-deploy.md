@@ -1,11 +1,12 @@
 # Staging deployment runbook
 
-Written 2026-09-14; status updated **2026-10-09** for Phase 4 Step 8. S3 state/bootstrap,
-S4 network and S5 data configuration are authored. Their local checks are distinct from
-live acceptance: no cloud apply is recorded and current AWS account contents have not
-been independently verified. The latest operator-provided data/foundation gate passed
-**24 mocked tests**. S6–S9 supply the roles, identity, compute, edge and telemetry needed
-for complete live checks. Release, onboarding and rollback sections remain stubs.
+Written 2026-09-14; status updated **2026-10-14** for Phase 4 Step 8. Approved bootstrap
+is applied and its remote state verified. All five scoped backends initialized;
+application network/data/workloads remain unapplied. Current data/network gates each
+pass **25 runs**, with overlapping foundation cases. See the
+[dated audit](step8-audit-2026-10-14.md) and
+[budget worksheet](staging-cost-review-2026-10-14.md). S6–S9 still supply application
+roles, identity, compute, edge and telemetry. Release/onboarding/rollback remain stubs.
 
 Staging is **synthetic-only**. Nothing here authorises real patient audio, transcripts,
 or notes; the pre-PHI conditions in [`deployment-contract.md`](deployment-contract.md)
@@ -92,10 +93,14 @@ export AWS_REGION=us-east-2
 
 ### 1. Create the state bucket
 
-`infra/bootstrap` has a chicken-and-egg problem: it creates the bucket every other root
-stores state in, so its own first run has nowhere remote to write. It therefore starts
-with a **local** state file — the `backend "s3"` block in `infra/bootstrap/backend.tf`
-ships commented out.
+The current account's bootstrap already exists and uses S3. Reconnect this checkout
+with `terraform -chdir=infra/bootstrap init -backend-config=backend.hcl`; its ignored
+backend file selects the bootstrap state role. Do not recreate the existing buckets.
+
+For a **new account**, `infra/bootstrap` has a chicken-and-egg problem: it creates the
+bucket that will store its state. Temporarily comment out its currently enabled
+`backend "s3"` block for that account's first local apply, then migrate that exact state.
+The following first-apply instructions describe that workflow.
 
 ```bash
 cd infra/bootstrap
@@ -159,9 +164,9 @@ The `bucket` and `kms_key_id` values are passed at init time rather than written
 `backend.tf` because they are account-specific. They are not credentials.
 
 > Pass the key's **ARN**, not `alias/ernote-tfstate`. The bucket policy denies any
-> upload whose `x-amz-server-side-encryption-aws-kms-key-id` header is present and not
-> equal to the key ARN, so an alias here produces an `AccessDenied` on the first state
-> write rather than a clear error at init. **No AWS key
+> upload selecting an unapproved key. The October 14 live probe accepted an alias
+> resolving to the approved key, but backend configuration deliberately uses the
+> immutable key ARN. **No AWS credential
 belongs in a backend block, a `backend.hcl`, or a tfvars file** — Terraform reads
 credentials from your SSO session, and in CI from a short-lived OIDC role.
 
@@ -333,8 +338,8 @@ export AWS_SECRET_ACCESS_KEY=$(echo "$creds" | jq -r .SecretAccessKey)
 export AWS_SESSION_TOKEN=$(echo "$creds" | jq -r .SessionToken)
 unset AWS_PROFILE
 
-# Its own key: allowed (NoSuchKey before the first apply is a pass — the request was
-# authorised, there is simply nothing there yet).
+# Its own key: readable after its first apply. Before that, a 404 establishes only
+# absence; scoped backend initialization and lock checks provide separate evidence.
 aws s3api head-object --bucket "$STATE_BUCKET" --key staging/foundation/terraform.tfstate
 
 # Production's key: denied.
@@ -356,6 +361,13 @@ export AWS_PROFILE=ernote-staging-admin
 Repeat in the opposite direction with `ernote-tfstate-prod-foundation-operator` against
 the staging keys. The deny is an explicit `Deny` statement, not merely an absent
 `Allow`, so it holds even if a broader policy is attached to the same role later.
+
+S3 can return 404 for a missing opposite-environment object even when the deployed
+policy explicitly denies it. Use an existing approved object for the live denial
+assertion; never write dummy content into actual state or manifest keys. The October
+14 audit used disposable objects under each state prefix, then separately simulated
+explicit denies on the actual state/manifest paths. Live denial of an existing
+published manifest remains pending foundation publication.
 
 ### 7. Verify the wrong-account guard
 
@@ -397,12 +409,12 @@ the versioned audio bucket with separate lifecycle clocks; a standard queue/DLQ 
 and a dedicated rotating application-data key. It publishes identifiers through the
 foundation manifest without runtime credentials or the master-credential secret ARN.
 
-The 2026-10-09 corrections make audio and bootstrap encryption denies conditional on
-header presence and require explicit production current/noncurrent audio retention.
-Production examples keep `enabled = false` and audio values unset pending approval.
-`scripts/tf-data-check.sh` passed **24 mocked tests** in the operator-provided run:
-12 data module, 4 staging foundation and 8 production foundation. Bootstrap also
-validated in a backend-disabled temporary copy with AWS provider 6.64.0.
+The shared encryption module retains header-presence guards and adds SSE-KMS missing-key
+and SSE-C denies. Its guards passed signed live probes on both bootstrap buckets;
+application audio uploads/runtime grants remain unverified. Production examples keep
+`enabled = false` and audio values unset pending approval. The October 14 data gate
+passed **25 runs**: shared policy 1, data 12, staging 4, production 8. All five roots
+validated in backend-disabled copies against locked AWS provider 6.64.0.
 
 Before the complete foundation apply, verify identity, regional RDS options, retention
 inputs and budget; finish the S6–S9 dependencies with workloads disabled and ingress

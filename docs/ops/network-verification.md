@@ -1,6 +1,9 @@
 # Step 8 S4 network verification
 
-Written 2026-09-14. **Authored and tested offline; not applied to AWS.** These live
+Written 2026-09-14; status updated **2026-10-14**. **Network remains unapplied.**
+Bootstrap alone is applied and verified; current network gate passes **25 mocked runs**.
+AZ availability and existing-VPC CIDR overlap were inspected; funding and the NAT
+availability decision remain open. See [audit evidence](step8-audit-2026-10-14.md). These live
 checks require the S5–S9 foundation, an approved diagnostic image, and S6 roles and
 secret injection. Their status remains pending. This record does not mark the live
 S4 gate complete. Use synthetic data only.

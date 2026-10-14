@@ -1,6 +1,8 @@
 # The bootstrap root is the one place with a chicken-and-egg problem: it creates the
 # bucket that every other root stores its state in, so its own first apply has nowhere
-# remote to write. That is why the backend block below starts commented out.
+# remote to write. The approved first apply and migration completed on 2026-10-14;
+# this checkout now uses the remote backend. For a new account, temporarily comment
+# out the block below for the first local apply, then migrate that account's state.
 #
 # Phase 1 — create the state bucket with a local state file:
 #     terraform -chdir=infra/bootstrap init
@@ -18,11 +20,11 @@
 # passed here: Terraform picks them up from the operator's AWS SSO session or, in CI,
 # from a short-lived OIDC role.
 #
-# terraform {
-#   backend "s3" {
-#     key          = "bootstrap/terraform.tfstate"
-#     region       = "us-east-2"
-#     encrypt      = true
-#     use_lockfile = true
-#   }
-# }
+terraform {
+  backend "s3" {
+    key          = "bootstrap/terraform.tfstate"
+    region       = "us-east-2"
+    encrypt      = true
+    use_lockfile = true
+  }
+}

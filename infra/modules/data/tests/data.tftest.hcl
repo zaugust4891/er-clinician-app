@@ -103,7 +103,7 @@ run "synthetic_staging_defaults" {
     error_message = "Audio must default to SSE-KMS under the data key, with bucket keys reducing KMS request cost."
   }
   assert {
-    condition = (length(jsondecode(aws_s3_bucket_policy.audio.policy).Statement) == 4 &&
+    condition = (length(jsondecode(aws_s3_bucket_policy.audio.policy).Statement) == 6 &&
       alltrue([
         for statement in jsondecode(aws_s3_bucket_policy.audio.policy).Statement : statement.Effect == "Deny"
       ]) &&
@@ -125,6 +125,38 @@ run "synthetic_staging_defaults" {
       !strcontains(aws_s3_bucket_policy.audio.policy, "StringNotEqualsIfExists")
     )
     error_message = "Encryption denies must require a present header and an incorrect algorithm or key."
+  }
+  assert {
+    condition = (
+      one([for statement in jsondecode(aws_s3_bucket_policy.audio.policy).Statement : statement if statement.Sid == "DenyKmsWithoutKey"]).Condition.StringEquals["s3:x-amz-server-side-encryption"] == "aws:kms" &&
+      one([for statement in jsondecode(aws_s3_bucket_policy.audio.policy).Statement : statement if statement.Sid == "DenyKmsWithoutKey"]).Condition.Null["s3:x-amz-server-side-encryption-aws-kms-key-id"] == "true" &&
+      one([for statement in jsondecode(aws_s3_bucket_policy.audio.policy).Statement : statement if statement.Sid == "DenyCustomerProvidedEncryption"]).Condition.Null["s3:x-amz-server-side-encryption-customer-algorithm"] == "false"
+    )
+    error_message = "Explicit SSE-KMS must name the approved key; SSE-C must be denied. Headerless default encryption must remain eligible."
+  }
+  # Evaluate only the encryption denies over independent request cases. This
+  # exercises the IAM condition logic; real S3/key grants remain live checks.
+  assert {
+    condition = alltrue([
+      for request in [
+        { name = "headerless", context = {}, denied = false },
+        { name = "approved KMS", context = { "s3:x-amz-server-side-encryption" = "aws:kms", "s3:x-amz-server-side-encryption-aws-kms-key-id" = aws_kms_key.data.arn }, denied = false },
+        { name = "SSE-S3", context = { "s3:x-amz-server-side-encryption" = "AES256" }, denied = true },
+        { name = "wrong KMS key", context = { "s3:x-amz-server-side-encryption" = "aws:kms", "s3:x-amz-server-side-encryption-aws-kms-key-id" = "arn:aws:kms:us-east-2:000000000000:key/wrong-key" }, denied = true },
+        { name = "KMS with no key", context = { "s3:x-amz-server-side-encryption" = "aws:kms" }, denied = true },
+        { name = "SSE-C", context = { "s3:x-amz-server-side-encryption-customer-algorithm" = "AES256" }, denied = true }
+        ] : anytrue([
+          for statement in jsondecode(aws_s3_bucket_policy.audio.policy).Statement : alltrue([
+            for operator, entries in statement.Condition : alltrue([
+              for key, expected in entries :
+              operator == "Null" ? tostring(!contains(keys(request.context), key)) == expected :
+              operator == "StringEquals" ? lookup(request.context, key, "") == expected :
+              operator == "StringNotEquals" ? lookup(request.context, key, "") != expected : false
+            ])
+          ]) if contains(["DenyWrongEncryptionAlgorithm", "DenyWrongEncryptionKey", "DenyKmsWithoutKey", "DenyCustomerProvidedEncryption"], statement.Sid)
+      ]) == request.denied
+    ])
+    error_message = "Encryption guards must allow headerless/approved-key requests and deny SSE-S3, wrong keys, KMS without a key and SSE-C."
   }
   assert {
     condition = (length(aws_s3_bucket_lifecycle_configuration.audio.rule) == 3 &&
@@ -208,11 +240,10 @@ run "explicit_retention_and_operator_grants" {
     error_message = "Current and noncurrent expiry are separate clocks and must be settable independently."
   }
   assert {
-    condition = (length(jsondecode(aws_s3_bucket_policy.audio.policy).Statement) == 5 &&
-      jsondecode(aws_s3_bucket_policy.audio.policy).Statement[4].Sid == "DenyProtectionChangesOutsideAdministration" &&
-      length(jsondecode(aws_s3_bucket_policy.audio.policy).Statement[4].Condition.StringNotLike["aws:PrincipalArn"]) == 1 &&
-      contains(jsondecode(aws_s3_bucket_policy.audio.policy).Statement[4].Condition.StringNotLike["aws:PrincipalArn"], "arn:aws:iam::000000000000:role/ernote-tfstate-staging-foundation-operator") &&
-    contains(jsondecode(aws_s3_bucket_policy.audio.policy).Statement[4].Action, "s3:PutLifecycleConfiguration"))
+    condition = (length(jsondecode(aws_s3_bucket_policy.audio.policy).Statement) == 7 &&
+      length(one([for statement in jsondecode(aws_s3_bucket_policy.audio.policy).Statement : statement if statement.Sid == "DenyProtectionChangesOutsideAdministration"]).Condition.StringNotLike["aws:PrincipalArn"]) == 1 &&
+      contains(one([for statement in jsondecode(aws_s3_bucket_policy.audio.policy).Statement : statement if statement.Sid == "DenyProtectionChangesOutsideAdministration"]).Condition.StringNotLike["aws:PrincipalArn"], "arn:aws:iam::000000000000:role/ernote-tfstate-staging-foundation-operator") &&
+    contains(one([for statement in jsondecode(aws_s3_bucket_policy.audio.policy).Statement : statement if statement.Sid == "DenyProtectionChangesOutsideAdministration"]).Action, "s3:PutLifecycleConfiguration"))
     error_message = "Named administration principals must be the only ones able to change the bucket's own protections."
   }
   assert {

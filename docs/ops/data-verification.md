@@ -1,17 +1,18 @@
 # Step 8 S5 data verification
 
-Written 2026-09-17; status updated **2026-10-09**. **Authored and tested locally;
-no cloud apply is recorded.** Current AWS account contents have not been independently
-verified. The live checks below need the applied
-foundation, S6's roles and database logins, and an approved diagnostic image; their
-status is pending. Staging is synthetic-only — this record does not authorise patient
-audio, transcripts, or notes.
+Written 2026-09-17; status updated **2026-10-14**. **Data remains unapplied.**
+Bootstrap alone is applied and verified. The latest data gate passes **25 runs**;
+network passes **25** with overlapping foundation cases. Ohio RDS discovery supports
+PostgreSQL **16.15** / `db.t4g.small` / gp3, now explicit in staging inputs. Actual data
+acceptance requires S6–S9, a funded foundation and diagnostic tasks. Staging is synthetic
+only. See [audit evidence](step8-audit-2026-10-14.md) and
+[current prices and budget limits](staging-cost-review-2026-10-14.md).
 
 ## Default choices
 
 | Decision | Staging value | Why, and what it costs |
 |---|---|---|
-| Engine | PostgreSQL 16, bare major version | RDS selects a currently supported minor at creation; pin an exact minor once `describe-db-engine-versions` confirms it for the region |
+| Engine | PostgreSQL **16.15** in staging operator inputs/example | Verified orderable in Ohio on 2026-10-14; recheck before apply. Module default remains major 16 |
 | Class and storage | `db.t4g.small`, single-AZ, 50 GiB gp3, autoscaling capped at 100 GiB | The plan's starting point. Single-AZ is a cost choice: an AZ failure is an outage and a restore, not a failover |
 | Automated backups | 7 days, 07:00–07:30 UTC, `delete_automated_backups = false` | S0's synthetic default. Zero is rejected by the module — an unavailable backup is already a Step 8 failure |
 | Maintenance | Sunday 08:00–09:00 UTC, minor upgrades allowed | Does not overlap the backup window |
@@ -37,7 +38,10 @@ Backups, S3 historical versions, transcripts in `audio_chunks`, raw `TranscriptR
 events, snapshots and exported notes are **separate copies**. Expiring audio removes one
 of them. A deletion or legal-hold workflow has to name all of them, and does not exist yet.
 
-## Cost assumptions
+## Historical cost assumptions
+
+The [2026-10-14 cost worksheet](staging-cost-review-2026-10-14.md) supersedes this
+historical estimate with current AWS Price List rates and a full-stack scenario.
 
 These are the on-demand rates used in the earlier cost model, carried forward for
 `us-east-2` at 730 hours per month. **They were not re-fetched from AWS pricing pages for
@@ -138,13 +142,16 @@ enabled. Confirm `LatestRestorableTime` advances once the first backup exists; a
 ## Prove the upload contract, positively and negatively
 
 The point of the bucket policy is that a **correctly signed upload with no encryption
-headers succeeds** while everything else fails. Test all five with synthetic bytes:
+headers succeeds** and prohibited overrides fail. Use synthetic bytes for each case:
 
 | Case | Expected |
 |---|---|
 | Presigned PUT from outside the VPC, `Content-Type` only, no SSE headers | 200; the stored object shows `ServerSideEncryption=aws:kms` and the data key |
 | Separately signed PUT including `x-amz-server-side-encryption: AES256` | AccessDenied from the encryption policy |
-| Separately signed PUT including a different KMS key id | AccessDenied from the encryption policy |
+| Separately signed PUT including the approved algorithm and key ARN | Success; stored key is approved |
+| Separately signed PUT including a different **existing** KMS key ARN | AccessDenied from the encryption policy; nonexistent-key errors are insufficient |
+| Separately signed PUT with `aws:kms` but no key | AccessDenied |
+| Separately signed PUT with SSE-C customer encryption | AccessDenied |
 | Unsigned/public `GET` of the stored key, and any `http://` request | 403 |
 | Presigned PUT replayed after `expires_in_secs` | 403 |
 
@@ -152,7 +159,10 @@ For encryption-policy probes, sign each request with the intended headers includ
 do not append encryption headers to the normal Content-Type-only URL and count a
 signature mismatch as policy evidence. AWS CLI `s3api put-object` with the matching
 encryption options is one way to produce correctly signed probes. Inspect the error
-reason as well as the status; a KMS authorization error is not proof of the bucket deny.
+reason as well as the status; a KMS authorization/validation error is not proof of the
+bucket deny. In the bootstrap live probe, an alias resolving to the approved key
+succeeded; use a genuinely different key for the negative case, and always supply the
+key ARN in backend configuration.
 
 ```bash
 aws s3api head-object --bucket "$DATA_BUCKET" --key "$SYNTHETIC_KEY" \
