@@ -39,12 +39,17 @@ resource "aws_kms_key" "data" {
   description             = "${var.name} application data: RDS storage and backups, audio objects, job queue"
   deletion_window_in_days = var.kms_deletion_window_days
   enable_key_rotation     = true
+}
 
+resource "aws_kms_key_policy" "data" {
+  key_id = aws_kms_key.data.id
+  # Separate policy ownership breaks the key -> role -> key cycle: the key and
+  # RDS master secret can exist before the identity module names its principals.
   # "Enable IAM policies": the account may delegate use of this key through IAM. It
   # grants nothing by itself. Every service grant is an IAM policy, written in S6.
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
+    Statement = concat([
       {
         Sid       = "EnableIAMPolicies"
         Effect    = "Allow"
@@ -52,7 +57,7 @@ resource "aws_kms_key" "data" {
         Action    = "kms:*"
         Resource  = "*"
       }
-    ]
+    ], jsondecode(var.kms_service_policy_statements_json))
   })
 }
 

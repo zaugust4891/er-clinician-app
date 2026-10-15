@@ -44,7 +44,8 @@ module "data" {
   dlq_retention_days               = var.data.dlq_retention_days
   dlq_operator_principal_arns      = var.data.dlq_operator_principal_arns
 
-  kms_deletion_window_days = var.data.kms_deletion_window_days
+  kms_deletion_window_days           = var.data.kms_deletion_window_days
+  kms_service_policy_statements_json = jsonencode(module.identity[0].kms_key_policy_statements)
 
   depends_on = [terraform_data.account_guard]
 }

@@ -8,6 +8,11 @@ output "kms_key_alias" {
   value       = aws_kms_alias.data.name
 }
 
+output "kms_key_policy_json" {
+  description = "Non-secret applied key policy, for offline foundation wiring assertions and operator review."
+  value       = aws_kms_key_policy.data.policy
+}
+
 output "audio_bucket_name" {
   description = "Value of the application's AUDIO_BUCKET."
   value       = aws_s3_bucket.audio.bucket

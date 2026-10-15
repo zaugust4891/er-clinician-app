@@ -34,7 +34,15 @@ locals {
     "db_endpoint",
     "db_port",
     "db_name",
+    "api_task_role_arn",
+    "worker_task_role_arn",
+    "migration_task_role_arn",
+    "api_execution_role_arn",
+    "worker_execution_role_arn",
+    "migration_execution_role_arn",
   ]
+
+  required_secret_ref_keys = ["api_db", "worker_db", "migration_db", "deepgram"]
 
   manifest = local.manifest_required ? jsondecode(data.aws_s3_object.manifest[0].body) : null
 }

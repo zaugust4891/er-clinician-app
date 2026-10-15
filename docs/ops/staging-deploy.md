@@ -5,8 +5,11 @@ is applied and its remote state verified. All five scoped backends initialized;
 application network/data/workloads remain unapplied. Current data/network gates each
 pass **25 runs**, with overlapping foundation cases. See the
 [dated audit](step8-audit-2026-10-14.md) and
-[budget worksheet](staging-cost-review-2026-10-14.md). S6–S9 still supply application
-roles, identity, compute, edge and telemetry. Release/onboarding/rollback remain stubs.
+[budget worksheet](staging-cost-review-2026-10-14.md). **2026-10-15:** S6 IAM/secret
+containers, DB bootstrap/grants and rotation tooling are authored; see
+[identity verification](identity-verification.md). Their live gate remains unperformed.
+S7–S9 still supply Cognito, compute, edge and telemetry. Release/onboarding/rollback
+workflows remain stubs.
 
 Staging is **synthetic-only**. Nothing here authorises real patient audio, transcripts,
 or notes; the pre-PHI conditions in [`deployment-contract.md`](deployment-contract.md)
@@ -28,6 +31,7 @@ remain binding.
   - [7. Verify the wrong-account guard](#7-verify-the-wrong-account-guard)
 - [Network and connectivity (S4)](#network-and-connectivity-s4)
 - [Data stores and acceptance (S5)](#data-stores-and-acceptance-s5)
+- [Identity and credential bootstrap (S6)](#identity-and-credential-bootstrap-s6)
 - [The foundation manifest](#the-foundation-manifest)
 - [Recovery procedures](#recovery-procedures)
 - [Not yet written](#not-yet-written)
@@ -271,11 +275,11 @@ done
 Then fill in each root's `terraform.tfvars` from its `terraform.tfvars.example`, using
 `$STATE_BUCKET` / `$DEPLOY_BUCKET` / `$STATE_KMS_KEY_ARN`.
 
-The staging foundation plan includes S4 networking and S5 data resources, with
+The staging foundation plan includes S4 networking, S5 data and S6 identity resources, with
 recurring NAT/IP, RDS, storage and key charges. Review the full-stack budget before
-applying. The release root requires the authored S4/S5 manifest keys; an older S3-only
-manifest will fail its required-key guard. S6–S9 still add scoped roles, identity,
-compute, edge and telemetry. Production remains disabled.
+applying. The release root requires the authored S4–S6 manifest keys; older manifests
+fail its required-key guard. S7–S9 still add Cognito, compute, edge and telemetry.
+Production remains disabled.
 
 ### 5. Verify locking
 
@@ -423,6 +427,17 @@ correctly signed upload probes, KMS/IAM tests and backup evidence. Local asserti
 not prove real uploads, state/lock writes, role isolation or restore capability.
 The audio overwrite/version binding and restore rehearsal remain Step 9 work.
 
+## Identity and credential bootstrap (S6)
+
+Follow [identity-verification.md](identity-verification.md) after the approved
+foundation, ECR/image and log groups exist. First bootstrap creates four separate
+logins before the first owner-run migration. Credentials are staged outside
+Terraform, pinned to a one-shot private ECS task, and promoted only after that exact
+task succeeds. API/worker tasks receive only their own AWSCURRENT secret fields.
+Rotation uses a scheduled maintenance window and replacement tasks; no live rotation
+success is recorded yet. S6 CI templates default to disabled pending S11 protection
+and final provisioning-policy review.
+
 ## The foundation manifest
 
 When the staging foundation root applies, it writes one JSON object:
@@ -431,9 +446,10 @@ When the staging foundation root applies, it writes one JSON object:
 s3://<deploy bucket>/envs/staging/foundation-manifest.json
 ```
 
-Its authored payload contains network interfaces, audio/queue/database identifiers
-and the data-key ARN. S6–S9 will add the runtime secret ARN references, ECR repository,
-cluster, edge and log groups. **ARNs of secrets, never secret values.** The module validates that: a
+Its authored payload contains network interfaces, audio/queue/database identifiers,
+the data-key ARN, application task/execution role ARNs and runtime secret ARN references.
+S7–S9 add Cognito, ECR, cluster, edge and log groups.
+**ARNs of secrets, never secret values.** The module validates that: a
 `secret_refs` entry that is not a Secrets Manager ARN fails the plan, and a `resources`
 key named like a credential fails the plan. `./scripts/tf-manifest-guards.sh` exercises
 those rules offline.
@@ -475,7 +491,7 @@ key, and no policy grants deletion of state objects.
 | Section | Arrives with |
 |---|---|
 | Live database, queue and bucket acceptance | S5 configuration authored; S6–S9 dependencies and applied-resource evidence pending |
-| IAM roles, database logins, secret population, rotation | S6 |
+| Live IAM/DB/secret/rotation acceptance | S6 code and runbook authored; applied S7–S9 dependencies and probes pending |
 | Cognito pool and synthetic clinician onboarding | S7 |
 | ECS services, the HTTPS edge, first release | S8, S11 |
 | Log groups, alarms, and what is safe to log | S9 |

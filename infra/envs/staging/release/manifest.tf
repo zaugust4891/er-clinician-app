@@ -69,6 +69,11 @@ resource "terraform_data" "manifest_guard" {
       )
     }
 
+    precondition {
+      condition     = length(setsubtract(local.required_secret_ref_keys, keys(local.manifest.secret_refs))) == 0
+      error_message = "Foundation manifest is missing S6 secret pointers. Apply the foundation first."
+    }
+
     # Defence in depth against the one mistake that would matter: the manifest module
     # validates this on the way out, and this validates it on the way in.
     precondition {

@@ -40,13 +40,21 @@ PATCH_REVIEW_SCHEMA = _object_schema({
     "context_requests": STRINGS,
 })
 
-APPLICATION_SCHEMA = _object_schema({
-    "action": {"type": "string", "enum": ["APPLY", "REPROPOSE"]},
-    "patch": STRING,
+AUTHOR_SCHEMA = _object_schema({
+    "action": {"type": "string", "enum": ["CONTINUE", "COMPLETE"]},
     "explanation": STRING,
+    "completion_evidence": {"type": "array", "items": _object_schema({
+        "criterion": STRING, "evidence": STRING,
+    })},
 })
 
-CONTEXT_SCHEMA = _object_schema({"context": STRING, "context_paths": STRINGS})
+REVIEW_SCHEMA = _object_schema({
+    "decision": {"type": "string", "enum": ["APPROVED", "CHANGES_REQUIRED"]},
+    "explanation": STRING,
+    "findings": {"type": "array", "items": _object_schema({
+        "path": STRING, "problem": STRING,
+    })},
+})
 
 
 def _schema_error(value, schema: dict, path: str = "$" ) -> str | None:
@@ -136,20 +144,26 @@ def parse_proposal(raw: str) -> dict:
     return value
 
 
-def parse_patch_review(raw: str, proposed: str) -> dict:
-    value = parse_response(raw, PATCH_REVIEW_SCHEMA)
-    if value["decision"] == "NEEDS_CONTEXT":
-        if value["patch"] or not value["context_requests"] or any(
-            not request.strip() for request in value["context_requests"]
-        ):
-            raise ProtocolError("NEEDS_CONTEXT requires requests and an empty patch")
-    else:
-        if not value["patch"].strip() or value["context_requests"]:
-            raise ProtocolError("approval requires a complete patch and no context requests")
-        if value["decision"] == "APPROVED" and value["patch"] != proposed:
-            raise ProtocolError("APPROVED must return the proposed patch unchanged")
-        if value["decision"] == "REVISED" and (
-            value["patch"] == proposed or not value["explanation"].strip()
-        ):
-            raise ProtocolError("REVISED requires a changed complete patch and explanation")
+def parse_author(raw: str) -> dict:
+    value = parse_response(raw, AUTHOR_SCHEMA)
+    if not value['explanation'].strip():
+        raise ProtocolError('Author response needs an explanation')
+    evidence = value['completion_evidence']
+    if value['action'] == 'COMPLETE' and (not evidence or any(
+        not item['criterion'].strip() or not item['evidence'].strip() for item in evidence
+    )):
+        raise ProtocolError('COMPLETE requires acceptance-criterion evidence')
+    return value
+
+
+def parse_review(raw: str) -> dict:
+    value = parse_response(raw, REVIEW_SCHEMA)
+    if not value['explanation'].strip():
+        raise ProtocolError('Review requires an explanation')
+    if value['decision'] == 'APPROVED' and value['findings']:
+        raise ProtocolError('APPROVED cannot have unresolved findings')
+    if value['decision'] == 'CHANGES_REQUIRED' and (not value['findings'] or any(
+        not item['problem'].strip() for item in value['findings']
+    )):
+        raise ProtocolError('CHANGES_REQUIRED requires concrete findings')
     return value

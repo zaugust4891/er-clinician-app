@@ -59,9 +59,23 @@ locals {
     db_port          = tostring(module.data[0].db_port)
     db_name          = module.data[0].db_name
     data_kms_key_arn = module.data[0].kms_key_arn
+
+    # S6: roles and pointers only. Privileged bootstrap/master references remain
+    # available through the operator output, outside the release manifest.
+    api_task_role_arn            = module.identity[0].task_role_arns.api
+    worker_task_role_arn         = module.identity[0].task_role_arns.worker
+    migration_task_role_arn      = module.identity[0].task_role_arns.migration
+    api_execution_role_arn       = module.identity[0].execution_role_arns.api
+    worker_execution_role_arn    = module.identity[0].execution_role_arns.worker
+    migration_execution_role_arn = module.identity[0].execution_role_arns.migration
   })
 
-  manifest_secret_refs = {}
+  manifest_secret_refs = {
+    api_db       = module.identity[0].secret_arns.api_db
+    worker_db    = module.identity[0].secret_arns.worker_db
+    migration_db = module.identity[0].secret_arns.migration_db
+    deepgram     = module.identity[0].secret_arns.deepgram
+  }
 
   # Staging always publishes its manifest.
   manifest_enabled = true

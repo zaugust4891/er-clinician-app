@@ -36,3 +36,8 @@ output "data" {
   EOT
   value       = module.data[0]
 }
+
+output "identity" {
+  description = "S6 operator interfaces: role/secret ARNs and ECS injection references, never values."
+  value       = module.identity[0]
+}

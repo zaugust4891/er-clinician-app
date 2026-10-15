@@ -35,3 +35,8 @@ output "data" {
   EOT
   value       = var.enabled ? module.data[0] : null
 }
+
+output "identity" {
+  description = "S6 operator interfaces: role/secret ARNs and ECS injection references, never values."
+  value       = var.enabled ? module.identity[0] : null
+}

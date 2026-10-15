@@ -1,7 +1,9 @@
-//! One-shot schema migration. Database roles are bootstrapped separately.
+//! One-shot schema migration, then the runtime grants that follow the schema.
+//! Database roles are created beforehand by the one-shot `er-db-bootstrap`.
 use std::time::Duration;
 
-use er_server::config::MigrationConfig;
+use er_server::config::{AppEnv, MigrationConfig};
+use er_server::privileges;
 use sqlx::{
     PgPool,
     migrate::{MigrateError, Migrator},
@@ -9,20 +11,42 @@ use sqlx::{
 
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 const RUN_TIMEOUT: Duration = Duration::from_secs(600);
+const GRANT_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let config = MigrationConfig::from_env()
         .map_err(|_| anyhow::anyhow!("migration_configuration_invalid"))?;
     let pool = config.database.connect().await?;
-    let result = run(&pool).await;
+    let result = run(&pool, config.app_env != AppEnv::Dev).await;
     // On a deadline, exiting the process closes the connection and aborts the
     // outstanding database transaction. Do not wait without a bound here.
     let _ = tokio::time::timeout(Duration::from_secs(5), pool.close()).await;
     result
 }
 
-async fn run(pool: &PgPool) -> anyhow::Result<()> {
+/// Grants converge in the same release step as the migration, so a new table
+/// never ships without its privilege decision. Cloud requires the bootstrap's
+/// runtime roles; a development database without them skips the grants.
+async fn run(pool: &PgPool, cloud: bool) -> anyhow::Result<()> {
+    migrate(pool).await?;
+    let converge = privileges::converge(pool, cloud);
+    match tokio::time::timeout(GRANT_TIMEOUT, converge).await {
+        Ok(Ok(true)) => eprintln!("grants status=complete"),
+        Ok(Ok(false)) => eprintln!("grants status=skipped_without_runtime_roles"),
+        Ok(Err(_)) => {
+            eprintln!("grants status=failed");
+            anyhow::bail!("grants_failed");
+        }
+        Err(_) => {
+            eprintln!("grants status=timeout");
+            anyhow::bail!("grants_failed");
+        }
+    }
+    Ok(())
+}
+
+async fn migrate(pool: &PgPool) -> anyhow::Result<()> {
     // SQLx's advisory migration lock is enabled by default. It validates
     // previously applied checksums on every run, including a no-op rerun.
     let result = tokio::time::timeout(RUN_TIMEOUT, MIGRATOR.run(pool)).await;
@@ -66,7 +90,7 @@ mod tests {
 
     #[sqlx::test(migrations = false)]
     async fn empty_database_then_noop_then_checksum_mismatch(pool: PgPool) {
-        run(&pool).await.unwrap();
+        run(&pool, false).await.unwrap();
         let first_count: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations WHERE success")
                 .fetch_one(&pool)
@@ -74,7 +98,7 @@ mod tests {
                 .unwrap();
         assert_eq!(first_count as usize, MIGRATOR.iter().count());
 
-        run(&pool).await.unwrap();
+        run(&pool, false).await.unwrap();
         let second_count: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations WHERE success")
                 .fetch_one(&pool)
@@ -91,7 +115,7 @@ mod tests {
         .await
         .unwrap();
         assert!(
-            run(&pool).await.is_err(),
+            run(&pool, false).await.is_err(),
             "a changed applied migration must block release"
         );
     }

@@ -140,3 +140,14 @@ variable "network" {
   })
   default = {}
 }
+
+variable "ci" {
+  description = "S11 opt-in role templates; leave null until GitHub environments and OIDC are reviewed."
+  type = object({
+    repository        = string
+    environment       = string
+    smoke_secret_arn  = string
+    smoke_kms_key_arn = string
+  })
+  default = null
+}

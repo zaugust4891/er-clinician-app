@@ -10,8 +10,6 @@ REPO = Path(__file__).resolve().parents[2]
 
 RUNS = REPO / ".agents" / "runs"
 
-OLLAMA = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
-
 
 def default_claude_config_dir() -> Path:
     """Prefer the personal Claude home when present; honor an explicit override."""

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# S5 storage/queue/database gates. All providers are mocked: no AWS credentials or
+# S5 data and S6 identity/CI gates. All providers are mocked: no AWS credentials or
 # cloud mutations, and no RDS instance, bucket, queue or key is created. Copy only
 # Terraform source/tests and committed provider locks, excluding local tfvars, backend
 # configuration, and state.
@@ -12,7 +12,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 work="$(mktemp -d)"
 trap 'rm -rf "${work}"' EXIT
 
-for relative in modules/data modules/network modules/manifest modules/s3-encryption-guards envs/staging/foundation envs/prod/foundation; do
+for relative in modules/data modules/identity modules/network modules/manifest modules/s3-encryption-guards envs/staging/foundation envs/prod/foundation; do
   source_dir="${repo_root}/infra/${relative}"
   test_dir="${work}/infra/${relative}"
   mkdir -p "${test_dir}"
@@ -24,9 +24,11 @@ for relative in modules/data modules/network modules/manifest modules/s3-encrypt
     cp "${source_dir}/.terraform.lock.hcl" "${test_dir}/"
   fi
 done
-cp "${repo_root}/infra/envs/staging/foundation/.terraform.lock.hcl" "${work}/infra/modules/data/"
+for module in data identity; do
+  cp "${repo_root}/infra/envs/staging/foundation/.terraform.lock.hcl" "${work}/infra/modules/${module}/"
+done
 
-for relative in modules/s3-encryption-guards modules/data envs/staging/foundation envs/prod/foundation; do
+for relative in modules/s3-encryption-guards modules/data modules/identity envs/staging/foundation envs/prod/foundation; do
   test_dir="${work}/infra/${relative}"
   # A local filesystem provider mirror is optional; the lock still verifies it.
   init_args=()

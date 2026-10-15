@@ -1,4 +1,7 @@
 mock_provider "aws" {
+  mock_resource "aws_db_instance" {
+    defaults = { master_user_secret = [{ secret_arn = "arn:aws:secretsmanager:us-east-2:000000000000:secret:rds!db-synthetic-AbCdEf", secret_status = "active", kms_key_id = "arn:aws:kms:us-east-2:000000000000:key/00000000-0000-0000-0000-000000000000" }] }
+  }
   mock_data "aws_caller_identity" { defaults = { account_id = "000000000000" } }
   mock_data "aws_availability_zones" { defaults = { names = ["us-east-2c", "us-east-2b", "us-east-2a"] } }
   mock_resource "aws_kms_key" {
@@ -38,4 +41,29 @@ run "production_explicitly_enabled" {
     condition     = length(module.network) == 1 && length(module.network[0].nat_gateway_ids) == 2 && local.manifest_resources.vpc_id == module.network[0].vpc_id && length(data.aws_availability_zones.network) == 0
     error_message = "Explicitly enabled production must wire the selected network and publish its interfaces without rediscovering pinned AZs."
   }
+}
+
+override_resource {
+  target = module.identity[0].aws_secretsmanager_secret.this["migration_db"]
+  values = { arn = "arn:aws:secretsmanager:us-east-2:000000000000:secret:synthetic-migration_db-AbCdEf" }
+}
+
+override_resource {
+  target = module.identity[0].aws_secretsmanager_secret.this["api_db"]
+  values = { arn = "arn:aws:secretsmanager:us-east-2:000000000000:secret:synthetic-api_db-AbCdEf" }
+}
+
+override_resource {
+  target = module.identity[0].aws_secretsmanager_secret.this["worker_db"]
+  values = { arn = "arn:aws:secretsmanager:us-east-2:000000000000:secret:synthetic-worker_db-AbCdEf" }
+}
+
+override_resource {
+  target = module.identity[0].aws_secretsmanager_secret.this["deepgram"]
+  values = { arn = "arn:aws:secretsmanager:us-east-2:000000000000:secret:synthetic-deepgram-AbCdEf" }
+}
+
+override_resource {
+  target = module.identity[0].aws_secretsmanager_secret.this["onboarding_db"]
+  values = { arn = "arn:aws:secretsmanager:us-east-2:000000000000:secret:synthetic-onboarding_db-AbCdEf" }
 }

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import codecs
+from contextvars import ContextVar
 import os
 import selectors
 import signal
@@ -11,8 +12,8 @@ import sys
 import tempfile
 import time
 from collections import deque
-from contextlib import nullcontext
-from dataclasses import dataclass
+from contextlib import contextmanager, nullcontext
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import config
@@ -27,6 +28,7 @@ class Result:
     seconds: float
     note: str = ""
     log_path: Path | None = None
+    metadata: dict = field(default_factory=dict)
 
 
 STREAM_READ_BYTES = 16 * 1024
@@ -40,6 +42,18 @@ STREAM_FLUSH_BYTES = 64 * 1024
 STREAM_FLUSH_SECONDS = 0.25
 
 TERMINATE_GRACE_SECONDS = 2.0
+
+_console_enabled = ContextVar('substep_console_enabled', default=True)
+
+
+@contextmanager
+def console_output(enabled: bool):
+    """Control terminal noise without changing complete transcript capture."""
+    token = _console_enabled.set(enabled)
+    try:
+        yield
+    finally:
+        _console_enabled.reset(token)
 
 
 class _Excerpt:
@@ -131,6 +145,8 @@ def _finish_termination(proc: subprocess.Popen, term_at: float) -> None:
 
 def _stream_console(label: str, text: str, at_line_start: bool) -> bool:
     """Prefix bounded decoded chunks without retaining a potentially huge line."""
+    if not _console_enabled.get():
+        return at_line_start
     for piece in text.splitlines(keepends=True):
         if at_line_start:
             sys.stdout.write(f"  {label} | ")
@@ -148,6 +164,7 @@ def run_process(
     log_path: Path | None = None,
     stdout_path: Path | None = None,
     input_text: str | None = None,
+    cwd: Path | None = None,
 ) -> Result:
     """Run *argv*, tee combined output, and return an exit-status result.
 
@@ -191,7 +208,7 @@ def run_process(
             stdin.seek(0)
         proc = subprocess.Popen(
             argv,
-            cwd=config.REPO,
+            cwd=cwd or config.REPO,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE if stdout_capture is not None else subprocess.STDOUT,
             stdin=stdin,

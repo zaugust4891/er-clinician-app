@@ -10,7 +10,9 @@ S0-S3 have since been implemented; S4/S5 code and offline checks are now impleme
 respective outlines. **2026-10-14:** approved S3 bootstrap is applied and remote-state
 verification passes; current local gates and account/provider discovery are recorded in
 the [dated audit](../ops/step8-audit-2026-10-14.md). S4/S5 application resources remain
-unapplied pending budget and S6–S9 dependencies; S6 onward remain a plan.*
+unapplied pending budget and later dependencies. **2026-10-15:** S6 code/offline checks
+are implemented; its live IAM/RDS/ECS gate is unperformed. See the
+[S6 implementation record](#implementation-record--s6-2026-10-15). S7 onward remain a plan.*
 
 **Sources:** [Phase 4 playbook](phase4-implementation-guide.md), [Phase 4 plan](phase4.md),
 [Step 3 Postgres guide](phase4-step3-postgres-guide.md),
@@ -42,6 +44,7 @@ handoff remain binding even after the staging gate passes.
 - [Implementation record — S3 (2026-09-14)](#implementation-record--s3-2026-09-14)
 - [Implementation record — S4 (2026-09-14)](#implementation-record--s4-2026-09-14)
 - [Implementation record — S5 (2026-10-09)](#implementation-record--s5-2026-10-09)
+- [Implementation record — S6 (2026-10-15)](#implementation-record--s6-2026-10-15)
 - [Current state audit](#current-state-audit)
 - [Target file layout](#target-file-layout)
 - [Concepts and decisions](#concepts-and-decisions)
@@ -365,6 +368,52 @@ older runbooks are planning assumptions, not current bills or repriced estimates
 
 The [data module README](../../infra/modules/data/README.md) and
 [data verification runbook](../ops/data-verification.md) describe interfaces and live gates.
+
+---
+
+## Implementation record — S6 (2026-10-15)
+
+This record is authoritative for S6's implemented code. **No S6 resources were
+applied and no AWS/RDS/ECS acceptance pass is claimed.** The approved bootstrap
+remains the only applied stack; the budget decision and S7–S9 resources still gate
+application provisioning and live probes.
+
+The agent-loop artifacts under `.agents/runs/*step8-S6` show three applied edits:
+cloud DB connection parts, runtime privilege convergence/startup checks, and an
+unwired identity module. Later runs stopped on a usage limit and stale patch hunks;
+the latest recovered bootstrap review was never applied. This implementation adapts
+that draft to the current files and completes the missing integration.
+
+| Component | Implemented behavior |
+|---|---|
+| `infra/modules/identity/` | Distinct task/execution roles, account/Region-scoped ECS trust, actual S3/SQS/Bedrock actions, exact-context KMS use, five value-free encrypted secret containers and secret read policies |
+| Foundation/data integration | Both roots call identity; disabled production creates none. A separate data-key policy resource merges service grants without a key/role cycle; it is the sole policy owner |
+| Release contract | API/worker/migration role ARNs and four secret pointers are published and required by release guards. Master/bootstrap/onboarding references stay in operator outputs |
+| `db.rs`, config and `privileges.rs` | Cloud DB parts with verified TLS; runtime refuses administrative/owning/CREATE-capable logins; owner-run grants clear stale table, column, sequence, routine and default ACLs and apply an explicit per-relation allowlist |
+| `er-db-bootstrap` | Private one-shot master operation creates/rotates owner, API, worker and onboarding logins plus three NOLOGIN groups; validates privileges before commit and verifies authentication afterward; sends SCRAM verifiers instead of plaintext SQL passwords |
+| `scripts/db-secrets.py` | Stages generated logins through AWS CLI stdin, saves only version metadata, renders pinned ECS secret references and promotes only after the successful task/digest/definition matches the rotation; interrupted operations can retry the same record |
+| CI templates | Optional staging infrastructure/release/smoke roles with exact repository/environment OIDC trust, separate state policies and narrow deployment/PassRole or synthetic-secret use. Default is null; S11 still attaches the final reviewed infrastructure provisioning policy and implements protected workflows/production promotion |
+| Packaging and runbook | The shared image now carries four binaries; [identity verification](../ops/identity-verification.md) defines the private bootstrap, maintenance rotation/recovery and live acceptance matrix |
+
+**Decisions/corrections:** onboarding receives its own DB login, with authority only
+on orgs/clinicians. First bootstrap precedes first migration. New objects get no
+runtime privilege until classified; defaults are revoked for the actual schema
+owner. API bucket listing preserves missing-upload semantics and adds no listing
+route. Secret values never enter Terraform. Bootstrap task definitions pin login
+version IDs; their execution role permits those secret ARNs without a VersionStage
+condition because ECS cannot select version ID and stage together. Runtime injection
+remains AWSCURRENT. A timeout after credential commit may leave staged passwords
+applied; recovery retains the record and reruns the same credentials before promotion.
+Rotation uses a stopped-workload maintenance window; alternating-user rotation is
+still Step 9 work.
+
+**Validation:** Rust format, workspace Clippy/tests, mocked data/identity/foundation
+and network gates, and credential-helper regressions are the local gates. They cover
+positive runtime queries, denied DDL/history changes, narrow onboarding, stale ACLs,
+unsafe bootstrap rollback, rejected old passwords, exact-version promotion and CI
+trust/PassRole boundaries. The [verification record](../ops/identity-verification.md)
+distinguishes offline evidence from unperformed actual-role encrypted operations,
+secret injection/logging, Bedrock invocation, RDS behavior and ECS rotation.
 
 ---
 

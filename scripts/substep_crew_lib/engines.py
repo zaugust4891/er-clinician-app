@@ -1,259 +1,168 @@
-"""Read-only Claude/Codex adapters, tool-free Ollama adapter, and role profiles."""
-
+"""CLI adapters with scoped candidate file tools and no model shell execution."""
 from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 import shutil
 import time
-import urllib.request
-from pathlib import Path
+import uuid
 
 from . import config, processes, protocol
 
 
 class Engine:
-    name = "engine"
-    tools = False
+    name = 'engine'
+    tools = True
 
-    def run(
-        self,
-        prompt: str,
-        timeout: int,
-        schema: Path | None = None,
-        *,
-        log_path: Path | None = None,
-    ) -> processes.Result:
+    def preflight(self):
+        pass
+
+    def run(self, prompt, timeout, schema=None, *, log_path=None, workspace=None, editable=False):
         raise NotImplementedError
 
 
-def _invocation_final_path(log_path: Path | None, suffix: str) -> Path:
+def _invocation_final_path(log_path, suffix):
     if log_path is None:
         config.RUNS.mkdir(parents=True, exist_ok=True)
-        return config.RUNS / f"standalone-{os.getpid()}-{time.time_ns()}.final{suffix}"
-    name = log_path.name.removesuffix(".transcript.log")
-    return log_path.with_name(f"{name}.final{suffix}")
+        return config.RUNS / f'standalone-{os.getpid()}-{time.time_ns()}.final{suffix}'
+    return log_path.with_name(log_path.name.removesuffix('.transcript.log') + '.final' + suffix)
 
 
 class ClaudeEngine(Engine):
-    """Read-only Claude CLI; JSON actions are mediated by the harness."""
-
-    tools = True
-
-    def __init__(
-        self,
-        model: str = "opus",
-        permission_mode: str = "dontAsk",
-        config_dir: Path | None = None,
-    ):
-        self.model, self.permission_mode = model, permission_mode
+    def __init__(self, model='claude-opus-5-5', *, effort='medium', config_dir=None, max_turns=30):
+        self.model, self.effort, self.max_turns = model, effort, max_turns
         self.config_dir = config_dir or config.default_claude_config_dir()
-        self.name = f"claude:{model}"
+        self.name = f'claude:{model} (effort={effort})'
+        self.session_id = None
+        self.session_root = None
 
-    def run(
-        self,
-        prompt: str,
-        timeout: int,
-        schema: Path | None = None,
-        *,
-        log_path: Path | None = None,
-    ) -> processes.Result:
-        if not shutil.which("claude"):
-            return processes.Result(False, "", 0.0, "claude CLI not found", log_path)
-        argv = [
-            "claude", "-p",
-            "--model", self.model,
-            "--permission-mode", self.permission_mode,
-            "--output-format", "json" if schema else "text",
-            "--tools", "Read,Glob,Grep",
-            "--disallowedTools", "mcp__*",
-            "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
-            "--safe-mode", "--disable-slash-commands",
-            "--settings", '{"disableAllHooks":true}',
-            "--append-system-prompt",
-            "Never run git commit, git push, git stash, git reset, git checkout --, "
-            "or any command that discards working-tree changes. Leave all changes "
-            "unstaged and uncommitted for human review.",
-        ]
-        if schema is not None:
-            argv += ["--json-schema", json.dumps(json.loads(schema.read_text(encoding="utf-8")))]
-        final_path = _invocation_final_path(log_path, ".json" if schema else ".md")
+    def preflight(self):
+        if not shutil.which('claude'):
+            raise protocol.CrewError('claude CLI not found')
+
+    def run(self, prompt, timeout, schema=None, *, log_path=None, workspace=None, editable=False):
+        self.preflight()
+        if editable and workspace is None:
+            raise protocol.CrewError('Editing requires an isolated candidate workspace')
+        final_path = _invocation_final_path(log_path, '.json' if schema else '.md')
+        final_path.parent.mkdir(parents=True, exist_ok=True)
         final_path.unlink(missing_ok=True)
-        res = processes.run_process(
-            argv,
-            timeout,
-            "claude",
-            env={
-                "CLAUDE_CONFIG_DIR": str(self.config_dir),
-                "PAI_DIR": str(self.config_dir),
-            },
-            log_path=log_path,
-            stdout_path=final_path,
-            input_text=prompt,
+        servers = {'candidate': workspace.server_config(editable=editable)} if workspace else {}
+        # Restricted mode confines built-in file tools and ignores project/user
+        # customization. Built-ins are removed entirely; only our path-checked
+        # MCP tools remain. Safe mode is not used: it disables MCP as well.
+        argv = ['claude', '-p', '--model', self.model, '--effort', self.effort,
+                '--permission-mode', 'dontAsk', '--restricted', '--tools', '',
+                '--strict-mcp-config', '--mcp-config', json.dumps({'mcpServers': servers}),
+                '--disable-slash-commands', '--settings', '{"disableAllHooks":true}',
+                '--output-format', 'json' if schema else 'text', '--max-turns', str(self.max_turns)]
+        if workspace:
+            argv += ['--allowedTools', 'mcp__candidate__*']
+        if schema:
+            argv += ['--json-schema', json.dumps(json.loads(schema.read_text()))]
+        # Only the author retains context; every review starts independently.
+        if editable:
+            root = str(workspace.root)
+            if self.session_root != root:
+                self.session_id, self.session_root = None, root
+            argv += ['--resume', self.session_id] if self.session_id else ['--session-id', str(uuid.uuid4())]
+        result = processes.run_process(
+            argv, timeout, 'claude', env={'CLAUDE_CONFIG_DIR': str(self.config_dir), 'PAI_DIR': str(self.config_dir)},
+            log_path=log_path, stdout_path=final_path, input_text=prompt,
+            cwd=workspace.root if workspace else None,
         )
         try:
-            # Claude print mode writes its result on stdout. Capturing it
-            # separately prevents stderr diagnostics in the combined transcript
-            # from corrupting reviewer JSON. Result.output is the complete final
-            # response, unlike run_process's bounded combined-output excerpt.
-            res.output = final_path.read_text(encoding="utf-8")
-            if schema is not None:
-                envelope = protocol.load_json(res.output)
-                if isinstance(envelope, dict) and envelope.get("type") == "result":
-                    if (
-                        envelope.get("is_error") is not False
-                        or envelope.get("subtype") != "success"
-                        or "structured_output" not in envelope
-                    ):
-                        raise ValueError("Claude did not return successful structured output")
-                    res.output = json.dumps(envelope["structured_output"], ensure_ascii=False)
+            raw = final_path.read_text(encoding='utf-8')
+            result.output = raw
+            if schema:
+                envelope = protocol.load_json(raw)
+                if isinstance(envelope, dict) and envelope.get('type') == 'result':
+                    result.metadata = {key: envelope.get(key) for key in
+                                       ('duration_ms', 'duration_api_ms', 'num_turns', 'usage', 'modelUsage', 'subtype', 'session_id')}
+                    if editable and envelope.get('session_id'):
+                        self.session_id = envelope['session_id']
+                    if envelope.get('is_error') is not False or envelope.get('subtype') != 'success':
+                        result.ok = False
+                        result.note = str(envelope.get('result') or envelope.get('api_error') or envelope.get('subtype'))
+                    elif 'structured_output' not in envelope:
+                        result.ok = False
+                        result.note = 'Claude returned no structured output'
+                    else:
+                        result.output = json.dumps(envelope['structured_output'], ensure_ascii=False)
         except (OSError, UnicodeError, ValueError) as exc:
-            res.ok = False
-            res.note = f"cannot preserve Claude final response: {exc}"
-        return res
+            result.ok = False
+            result.note = result.note or f'Cannot read Claude final response: {exc}'
+        return result
 
 
 class CodexEngine(Engine):
-    """Tool-using Codex CLI. Default reviewer sandbox is read-only."""
+    def __init__(self, model='gpt-6.1-sol', *, effort='high', sandbox='read-only', oss=False, local_provider='ollama'):
+        self.model, self.effort, self.sandbox = model, effort, sandbox
+        self.oss, self.local_provider = oss, local_provider
+        self.name = f'codex:{model} (effort={effort})'
 
-    tools = True
+    def preflight(self):
+        if not shutil.which('codex'):
+            raise protocol.CrewError('codex CLI not found')
+        if self.sandbox != 'read-only':
+            raise protocol.CrewError('Candidate sessions require the read-only Codex sandbox')
 
-    def __init__(
-        self,
-        model: str | None = None,
-        sandbox: str = "read-only",
-        oss: bool = False,
-        local_provider: str = "ollama",
-    ):
-        self.model, self.sandbox, self.oss, self.local_provider = (
-            model, sandbox, oss, local_provider,
-        )
-        self.name = f"codex:{'oss/' if oss else ''}{model or 'default'}"
-
-    def run(
-        self,
-        prompt: str,
-        timeout: int,
-        schema: Path | None = None,
-        *,
-        log_path: Path | None = None,
-    ) -> processes.Result:
-        if not shutil.which("codex"):
-            return processes.Result(False, "", 0.0, "codex CLI not found", log_path)
-        if self.sandbox != "read-only":
-            return processes.Result(False, "", 0.0, "patch sessions require the read-only Codex sandbox", log_path)
-        final_path = _invocation_final_path(log_path, ".json" if schema else ".md")
+    def run(self, prompt, timeout, schema=None, *, log_path=None, workspace=None, editable=False):
+        self.preflight()
+        if editable and workspace is None:
+            raise protocol.CrewError('Editing requires an isolated candidate workspace')
+        final_path = _invocation_final_path(log_path, '.json' if schema else '.md')
         final_path.parent.mkdir(parents=True, exist_ok=True)
         final_path.unlink(missing_ok=True)
-        argv = ["codex", "exec", "--cd", str(config.REPO), "-s", self.sandbox, "--color", "never"]
-        # Integrations and hooks can execute outside the shell sandbox. Replace
-        # their entire configuration tables, rather than trusting prompt rules.
-        argv += ["--ignore-rules"]
-        for override in (
-            'approval_policy="never"', "mcp_servers={}", "plugins={}",
-            "hooks={}", "notify=[]", "features.apps=false",
-        ):
-            argv += ["-c", override]
+        argv = ['codex', 'exec', '--cd', str(workspace.root if workspace else config.REPO),
+                '-s', 'read-only', '--color', 'never', '--ignore-rules', '--ignore-user-config', '--ephemeral', '--json']
+        # All file reads go through our stdio MCP, avoiding the broken nested
+        # bubblewrap shell path without granting broader filesystem permissions.
+        overrides = ['approval_policy="never"', 'mcp_servers={}', 'plugins={}', 'hooks={}', 'notify=[]',
+                     'features.apps=false', 'features.plugins=false', 'features.hooks=false',
+                     'features.shell_tool=false', 'features.multi_agent=false', 'features.js_repl=false',
+                     'features.memories=false', 'web_search="disabled"']
+        if workspace:
+            server = workspace.server_config(editable=editable)
+            overrides += ['mcp_servers.candidate.command=' + json.dumps(server['command']),
+                          'mcp_servers.candidate.args=' + json.dumps(server['args']),
+                          'mcp_servers.candidate.required=true',
+                          'mcp_servers.candidate.startup_timeout_sec=10']
+        for setting in overrides:
+            argv += ['-c', setting]
         if self.oss:
-            argv += ["--oss", "--local-provider", self.local_provider]
-        if self.model:
-            argv += ["-m", self.model]
+            argv += ['--oss', '--local-provider', self.local_provider]
+        argv += ['-m', self.model, '-c', 'model_reasoning_effort=' + json.dumps(self.effort)]
         if schema:
-            argv += ["--output-schema", str(schema)]
-        argv += ["-o", str(final_path), "-"]
-        res = processes.run_process(argv, timeout, "codex", log_path=log_path, input_text=prompt)
-        if final_path.exists():
-            try:
-                res.output = final_path.read_text(encoding="utf-8")
-            except (OSError, UnicodeError) as exc:
-                res.ok = False
-                res.note = f"cannot read Codex final response: {exc}"
-        elif res.ok:
-            res.ok = False
-            res.note = "Codex did not save a final response"
-        return res
-
-
-class OllamaEngine(Engine):
-    """Tool-free local chat for condensing logs; never editing."""
-
-    tools = False
-
-    def __init__(
-        self,
-        model: str = "qwen3.5:4b",
-        host: str = config.OLLAMA,
-        num_ctx: int = 16384,
-        num_predict: int = 1024,
-    ):
-        self.model, self.host = model, host
-        self.num_ctx, self.num_predict = num_ctx, num_predict
-        self.name = f"ollama:{model}"
-
-    def run(
-        self,
-        prompt: str,
-        timeout: int,
-        schema: Path | None = None,
-        *,
-        log_path: Path | None = None,
-    ) -> processes.Result:
-        payload = {
-            "model": self.model,
-            "messages": [{"role": "user", "content": prompt}],
-            "stream": False,
-            "think": False,
-            "options": {
-                "temperature": 0.1,
-                "num_ctx": self.num_ctx,
-                "num_predict": self.num_predict,
-            },
-        }
-        if schema:
-            payload["format"] = json.loads(schema.read_text(encoding="utf-8"))
-        req = urllib.request.Request(
-            f"{self.host}/api/chat",
-            data=json.dumps(payload).encode(),
-            headers={"Content-Type": "application/json"},
-        )
-        start = time.monotonic()
-        resolved = log_path.resolve() if log_path is not None else None
+            argv += ['--output-schema', str(schema)]
+        argv += ['-o', str(final_path), '-']
+        result = processes.run_process(argv, timeout, 'codex', log_path=log_path, input_text=prompt,
+                                       cwd=workspace.root if workspace else None)
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as response:
-                raw = response.read()
-            if resolved is not None:
-                resolved.parent.mkdir(parents=True, exist_ok=True)
-                resolved.write_bytes(raw)
-            body = json.loads(raw.decode("utf-8"))
-            output = body["message"]["content"]
-            if not isinstance(output, str):
-                raise TypeError("message.content is not a string")
-            if resolved is not None:
-                final_path = _invocation_final_path(resolved, ".json" if schema else ".md")
-                final_path.write_text(output, encoding="utf-8")
-            return processes.Result(True, output, time.monotonic() - start, log_path=resolved)
-        except (urllib.error.URLError, OSError, KeyError, TypeError, UnicodeError, json.JSONDecodeError) as exc:
-            return processes.Result(False, "", time.monotonic() - start, f"ollama unavailable: {exc}", resolved)
+            result.output = final_path.read_text(encoding='utf-8')
+        except (OSError, UnicodeError) as exc:
+            result.ok, result.note = False, f'Cannot read Codex final response: {exc}'
+        if log_path and log_path.exists():
+            with log_path.open(encoding='utf-8', errors='replace') as stream:
+                for line in stream:
+                    try:
+                        event = json.loads(line)
+                        if event.get('type') == 'turn.completed':
+                            result.metadata['usage'] = event.get('usage')
+                    except (ValueError, AttributeError):
+                        continue
+        return result
 
 
-PROFILES: dict[str, dict[str, object]] = {
-    # All authors request writes through the same reviewed-patch boundary.
-    "default": {
-        "implementer": lambda: ClaudeEngine("opus"),
-        "reviewer": lambda: CodexEngine(sandbox="read-only"),
-        "condenser": lambda: OllamaEngine(),
-    },
-    # everything local — costs nothing, use it to debug this script's wiring
-    "local": {
-        "implementer": lambda: CodexEngine(
-            model="qwen3.5:4b", sandbox="read-only", oss=True
-        ),
-        "reviewer": lambda: CodexEngine(model="qwen3.5:4b", sandbox="read-only", oss=True),
-        "condenser": lambda: OllamaEngine(),
-    },
-    "claude-only": {
-        "implementer": lambda: ClaudeEngine("opus"),
-        "reviewer": lambda: ClaudeEngine("opus", permission_mode="plan"),
-        "condenser": lambda: OllamaEngine(),
-    },
+PROFILES = {
+    'default': {'implementer': lambda: ClaudeEngine(effort='medium'),
+                'reviewer': lambda: CodexEngine(effort='high')},
+    'routine': {'implementer': lambda: ClaudeEngine(effort='medium'),
+                'reviewer': lambda: CodexEngine(effort='medium')},
+    'security': {'implementer': lambda: ClaudeEngine(effort='high'),
+                 'reviewer': lambda: CodexEngine(effort='xhigh')},
+    'local': {'implementer': lambda: CodexEngine('qwen3.5:4b', oss=True),
+              'reviewer': lambda: CodexEngine('qwen3.5:4b', oss=True)},
+    'claude-only': {'implementer': lambda: ClaudeEngine(), 'reviewer': lambda: ClaudeEngine(effort='high')},
 }

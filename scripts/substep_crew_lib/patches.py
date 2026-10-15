@@ -12,13 +12,14 @@ from pathlib import Path
 from . import config, protocol
 
 
-def checked_git(*args: str, input_text: str | None = None) -> bytes:
+def checked_git(*args: str, input_text: str | None = None, repo: Path | None = None) -> bytes:
     try:
         result = subprocess.run(
-            ["git", *args], cwd=config.REPO,
+            ["git", *args], cwd=repo or config.REPO,
             input=input_text.encode("utf-8") if input_text is not None else None,
             capture_output=True, timeout=30,
-            env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"},
+            env={**{key: value for key, value in os.environ.items() if not key.startswith('GIT_')},
+                 "GIT_OPTIONAL_LOCKS": "0"},
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise protocol.CrewError(f"git {' '.join(args)} failed: {exc}") from exc
@@ -27,7 +28,8 @@ def checked_git(*args: str, input_text: str | None = None) -> bytes:
     return result.stdout
 
 
-def safe_path(name: str, guide_path: str) -> Path:
+def safe_path(name: str, guide_path: str, *, repo: Path | None = None) -> Path:
+    root = repo or config.REPO
     relative = Path(name)
     if (
         not name or relative.is_absolute() or '..' in relative.parts
@@ -36,9 +38,9 @@ def safe_path(name: str, guide_path: str) -> Path:
         or relative.parts[:2] == ('.agents', 'runs')
     ):
         raise protocol.CrewError(f"unsafe patch/context path: {name!r}")
-    path = config.REPO / relative
-    if not path.resolve().is_relative_to(config.REPO.resolve()) or any(
-        parent.is_symlink() for parent in [path, *path.parents] if parent != config.REPO
+    path = root / relative
+    if not path.resolve().is_relative_to(root.resolve()) or any(
+        parent.is_symlink() for parent in [path, *path.parents] if parent != root
     ):
         raise protocol.CrewError(f"symlink patch/context path is unsupported: {name}")
     if path.exists() and not path.is_file():
@@ -46,8 +48,9 @@ def safe_path(name: str, guide_path: str) -> Path:
     # Avoid source edits to ignored build products and local configuration. The
     # selected guide is often intentionally ignored but still must be updated.
     ignored = subprocess.run(
-        ["git", "check-ignore", "-q", "--", name], cwd=config.REPO,
+        ["git", "check-ignore", "-q", "--", name], cwd=root,
         capture_output=True, timeout=30,
+        env={key: value for key, value in os.environ.items() if not key.startswith('GIT_')},
     )
     if ignored.returncode not in (0, 1):
         raise protocol.CrewError(f"cannot check ignored path: {name}")
@@ -56,7 +59,7 @@ def safe_path(name: str, guide_path: str) -> Path:
     return path
 
 
-def patch_paths(patch: str, guide_path: str) -> list[str]:
+def inspect_patch(patch: str, guide_path: str, *, check: bool = True) -> tuple[list[str], tuple[str, ...]]:
     if not patch.strip() or len(patch) > 200_000 or '\x00' in patch:
         raise protocol.ProtocolError("patch must be non-empty UTF-8 text, at most 200,000 characters")
     if re.search(
@@ -66,23 +69,41 @@ def patch_paths(patch: str, guide_path: str) -> list[str]:
         patch, re.M,
     ):
         raise protocol.ProtocolError("binary, symlink, submodule, rename/copy diffs are unsupported; use text delete/add")
-    try:
-        stats = checked_git("apply", "--numstat", "-z", input_text=patch)
-        names = []
-        for entry in stats.split(b"\x00"):
-            if not entry:
+    error = None
+    # Recount is a fallback: git's recount parser does not reliably distinguish
+    # adjacent traditional (non-diff--git) file headers in otherwise valid diffs.
+    for flags in ((), ('--recount',)):
+        try:
+            stats = checked_git('apply', *flags, '--numstat', '-z', input_text=patch)
+        except protocol.CrewError as exc:
+            error = exc
+            continue
+        try:
+            names = []
+            for entry in stats.split(b'\x00'):
+                if not entry:
+                    continue
+                added, removed, name = entry.decode('utf-8').split('\t', 2)
+                if not added.isdigit() or not removed.isdigit() or not name:
+                    raise protocol.ProtocolError('patch must contain regular text file changes')
+                safe_path(name, guide_path)
+                names.append(name)
+            if not names or len(names) > 32 or len(set(names)) != len(names):
+                raise protocol.ProtocolError('patch must contain 1 to 32 distinct regular files')
+        except (protocol.CrewError, UnicodeError, ValueError) as exc:
+            raise protocol.ProtocolError(f'invalid or inapplicable patch: {exc}') from exc
+        if check:
+            try:
+                checked_git('apply', *flags, '--check', '--whitespace=nowarn', input_text=patch)
+            except protocol.CrewError as exc:
+                error = exc
                 continue
-            added, removed, name = entry.decode("utf-8").split("\t", 2)
-            if not added.isdigit() or not removed.isdigit() or not name:
-                raise protocol.ProtocolError("patch must contain regular text file changes")
-            safe_path(name, guide_path)
-            names.append(name)
-        if not names or len(names) > 32 or len(set(names)) != len(names):
-            raise protocol.ProtocolError("patch must contain 1 to 32 distinct regular files")
-        checked_git("apply", "--check", "--whitespace=nowarn", input_text=patch)
-    except (protocol.CrewError, UnicodeError, ValueError) as exc:
-        raise protocol.ProtocolError(f"invalid or inapplicable patch: {exc}") from exc
-    return names
+        return names, flags
+    raise protocol.ProtocolError(f'invalid or inapplicable patch: {error}') from error
+
+
+def patch_paths(patch: str, guide_path: str, *, check: bool = True) -> list[str]:
+    return inspect_patch(patch, guide_path, check=check)[0]
 
 
 def repository_state(extra_paths=()) -> str:

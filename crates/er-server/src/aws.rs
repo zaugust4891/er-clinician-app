@@ -254,10 +254,11 @@ mod tests {
             &[
                 ("APP_ENV".into(), "prod".into()),
                 ("AWS_REGION".into(), "us-east-1".into()),
-                (
-                    "DATABASE_URL".into(),
-                    "postgres://test:secret@db.example/test".into(),
-                ),
+                ("DB_HOST".into(), "db.example".into()),
+                ("DB_PORT".into(), "5432".into()),
+                ("DB_NAME".into(), "test".into()),
+                ("DB_USERNAME".into(), "test".into()),
+                ("DB_PASSWORD".into(), "secret".into()),
                 (
                     "DB_SSL_ROOT_CERT".into(),
                     std::env::current_exe().unwrap().display().to_string(),

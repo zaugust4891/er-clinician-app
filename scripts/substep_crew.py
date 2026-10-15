@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run one substep through proposed, reviewed, applied, and validated edits.
+"""Run one substep through isolated editing, validation, review, and publication.
 
 Usage: python3 scripts/substep_crew.py --dry-run
 Code tour: docs/substep-crew-code-tour.md

@@ -174,6 +174,6 @@ All core code lives under:
 ## Development tooling
 
 The [substep crew code tour](docs/substep-crew-code-tour.md) explains the
-Claude/Codex edit-review loop, its modules and functions, and the validation flow
-with Mermaid diagrams.
+Claude/Codex candidate editing loop, scoped file tools, validation, and guarded
+publication. Models return summaries and review findings; Git generates patches.
 

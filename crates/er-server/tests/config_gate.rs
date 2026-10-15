@@ -1,5 +1,5 @@
 //! S1: every negative case fails synchronously, before DB/JWKS/AWS/provider I/O.
-use er_server::config::{AppEnv, Config, MigrationConfig, WorkerConfig};
+use er_server::config::{AppEnv, BootstrapConfig, Config, MigrationConfig, WorkerConfig};
 use std::collections::BTreeMap;
 
 fn values() -> BTreeMap<String, String> {
@@ -21,6 +21,7 @@ fn values() -> BTreeMap<String, String> {
 fn cloud() -> BTreeMap<String, String> {
     let mut vars = values();
     vars.remove("DEV_JWKS_PATH");
+    vars.remove("DATABASE_URL");
     for (key, value) in [
         ("APP_ENV", "staging"),
         ("AUTH_MODE", "cognito"),
@@ -30,6 +31,13 @@ fn cloud() -> BTreeMap<String, String> {
         ("TRANSPORT", "bedrock"),
         ("SUMMARY_MODEL", "sonnet"),
         ("MDM_MODEL", "sonnet"),
+        // Manifest placement plus the two fields ECS injects from the process's own
+        // login secret. URL delimiters in the password must stay inert.
+        ("DB_HOST", "db.synthetic.internal"),
+        ("DB_PORT", "5432"),
+        ("DB_NAME", "ernote"),
+        ("DB_USERNAME", "er_api"),
+        ("DB_PASSWORD", "synthetic-p@ss/w:rd?#%"),
     ] {
         vars.insert(key.into(), value.into());
     }
@@ -94,21 +102,15 @@ fn unsafe_cloud_configuration_is_rejected_without_echoing_values() {
         ("DB_CONNECT_TIMEOUT_SECS", "31"),
         (
             "DATABASE_URL",
-            "postgres://user:synthetic-secret@host/db?sslmode=disable",
+            "postgres://user:synthetic-secret@host/db?sslmode=verify-full",
         ),
-        (
-            "DATABASE_URL",
-            "postgres://user:synthetic-secret@host/db?ssl-mode=disable",
-        ),
-        (
-            "DATABASE_URL",
-            "postgres://user:synthetic-secret@host/db?host=/tmp",
-        ),
-        ("DATABASE_URL", "postgres://user:synthetic-secret@%2Ftmp/db"),
-        (
-            "DATABASE_URL",
-            "postgres://user:synthetic-secret@host/db?unknown=synthetic-secret",
-        ),
+        ("DB_HOST", "/tmp/synthetic-secret"),
+        ("DB_HOST", "synthetic-secret.example:5432"),
+        ("DB_PORT", "synthetic-secret"),
+        ("DB_PORT", "0"),
+        ("DB_NAME", "synthetic-secret;"),
+        ("DB_USERNAME", "synthetic-secret@db"),
+        ("DB_PASSWORD", ""),
         ("PGHOST", "/tmp/synthetic-secret"),
         ("AWS_BEARER_TOKEN_BEDROCK", "synthetic-secret"),
         ("COGNITO_REGION", "evil.example/path"),
@@ -178,6 +180,115 @@ fn cloud_roles_require_only_their_own_dependencies() {
         MigrationConfig::from_values(&vars).is_ok(),
         "ECS task-role variables must be preserved"
     );
+}
+
+/// S6: cloud composes its login from manifest placement and the `username` and
+/// `password` fields of the process's own login secret. A URL is a development
+/// convenience and never a second source beside those fields.
+#[test]
+fn cloud_database_login_comes_from_secret_fields_not_a_url() {
+    let parts = [
+        "DB_HOST",
+        "DB_PORT",
+        "DB_NAME",
+        "DB_USERNAME",
+        "DB_PASSWORD",
+    ];
+    let vars = cloud();
+    for key in parts {
+        let mut missing = vars.clone();
+        missing.remove(key);
+        assert!(
+            MigrationConfig::from_values(&missing).is_err(),
+            "cloud must set {key}"
+        );
+    }
+    let mut url = vars;
+    for key in parts {
+        url.remove(key);
+    }
+    url.insert(
+        "DATABASE_URL".into(),
+        "postgres://er_api:synthetic@db.synthetic.internal/ernote".into(),
+    );
+    assert!(
+        MigrationConfig::from_values(&url).is_err(),
+        "cloud must not accept a URL-shaped credential"
+    );
+
+    for key in parts {
+        for value in ["", " ", "localhost"] {
+            let mut dev = values();
+            dev.insert(key.into(), value.into());
+            assert!(
+                MigrationConfig::from_values(&dev).is_err(),
+                "DATABASE_URL conflicts with {key}, including blank values"
+            );
+        }
+    }
+    let mut dev = values();
+    dev.remove("DATABASE_URL");
+    for (key, value) in [
+        ("DB_HOST", "localhost"),
+        ("DB_PORT", "5433"),
+        ("DB_NAME", "ernote"),
+        ("DB_USERNAME", "postgres"),
+        ("DB_PASSWORD", "dev"),
+    ] {
+        dev.insert(key.into(), value.into());
+    }
+    assert!(MigrationConfig::from_values(&dev).is_ok());
+    let mut unknown = values();
+    unknown.insert(
+        "DATABASE_URL".into(),
+        "postgres://synthetic:secret@localhost/test?unknown=1".into(),
+    );
+    assert!(MigrationConfig::from_values(&unknown).is_err());
+}
+
+/// S6: the bootstrap connects with the master credential in `DB_*` and receives
+/// each login's staged value under its own names. Unsafe logins never start it.
+#[test]
+fn bootstrap_requires_four_distinct_generated_logins() {
+    const STAGED: &str = "synthetic-secret-0123456789-abcdefgh";
+    let mut vars = cloud();
+    for (prefix, name) in [
+        ("OWNER", "er_schema_owner"),
+        ("API", "er_api_login"),
+        ("WORKER", "er_worker_login"),
+        ("ONBOARDING", "er_onboarding_login"),
+    ] {
+        vars.insert(format!("{prefix}_DB_USERNAME"), name.into());
+        vars.insert(format!("{prefix}_DB_PASSWORD"), STAGED.into());
+    }
+    assert!(BootstrapConfig::from_values(&vars).is_ok());
+    for (key, value) in [
+        ("OWNER_DB_PASSWORD", ""),
+        ("OWNER_DB_PASSWORD", "synthetic-secret"),
+        ("API_DB_PASSWORD", "synthetic-secret 0123456789 abcdefghij"),
+        ("WORKER_DB_USERNAME", "er_api_login"),
+        ("API_DB_USERNAME", "er_api_runtime"),
+        ("OWNER_DB_USERNAME", "Er_Schema_Owner"),
+        ("WORKER_DB_USERNAME", "pg_synthetic"),
+    ] {
+        let mut unsafe_vars = vars.clone();
+        unsafe_vars.insert(key.into(), value.into());
+        let error = BootstrapConfig::from_values(&unsafe_vars)
+            .err()
+            .unwrap_or_else(|| panic!("accepted {key}"));
+        assert!(
+            !format!("{error:#}").contains("synthetic-secret"),
+            "leaked {key}"
+        );
+    }
+    for key in ["OWNER_DB_PASSWORD", "WORKER_DB_USERNAME"] {
+        let mut missing = vars.clone();
+        missing.remove(key);
+        assert!(
+            BootstrapConfig::from_values(&missing).is_err(),
+            "must set {key}"
+        );
+    }
 }
 
 #[test]

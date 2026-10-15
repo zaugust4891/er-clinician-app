@@ -50,9 +50,10 @@ Key differentiator: **multi-encounter merging** — captures every interaction a
 - Transcript compaction / ephemeral mode (G7) and structured exam templates (G8) are deferred to later phases
 - Local mode still summarizes and generates the MDM **inside the CLI** (`ShiftManager` `block_on`s the `Summarizer`). Remote mode (`generation_is_remote`) leaves both to the server worker
 - No device offline queue: if the server is unreachable in remote mode, `EventBus::publish` fails and the command errors visibly (Phase 5 device work)
-- No AWS deployment yet: Step 8 S3–S5 authored the Terraform roots, network and data stores under `infra/`, but nothing has
-  been applied to an AWS account and there is no CI. IAM roles and DB logins (S6), Cognito (S7), ECR/ECS/ALB (S8),
-  telemetry (S9) and CI/CD (S10–S11) remain. Everything still runs against docker-compose
+- No application AWS deployment yet: S3 bootstrap is applied and verified. Step 8 S4–S6 authored
+  network/data, scoped IAM/secret containers, `er-db-bootstrap`, runtime grants and maintenance rotation;
+  their live acceptance remains pending. Cognito (S7), ECR/ECS/ALB (S8), telemetry (S9) and CI/CD (S10–S11)
+  remain. Application tests run against docker-compose; production stays disabled
 - The server listens on plain HTTP at `BIND_ADDR`; the HTTPS listener on 8443 that the network security groups expect is S8 work
 - The presigned-upload overwrite race is open: a URL can be replayed within its 15 minutes. Bucket versioning makes the
   original recoverable, not immutable; binding a chunk to a version ID or checksum at completion is Step 9

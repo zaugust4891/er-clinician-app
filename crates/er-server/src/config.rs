@@ -91,13 +91,19 @@ pub struct MigrationConfig {
     pub runtime: RuntimeConfig,
 }
 
+/// Privileged one-shot setup. Each managed login comes from its staged secret.
+pub struct BootstrapConfig {
+    pub runtime: RuntimeConfig,
+    pub logins: crate::bootstrap::Logins,
+}
+
 macro_rules! runtime_access {
     ($($ty:ty),+) => { $(impl Deref for $ty {
         type Target = RuntimeConfig;
         fn deref(&self) -> &Self::Target { &self.runtime }
     })+ };
 }
-runtime_access!(Config, WorkerConfig, MigrationConfig);
+runtime_access!(Config, WorkerConfig, MigrationConfig, BootstrapConfig);
 
 /// One sequential job per worker. The final 10 seconds of the job budget are
 /// reserved for terminal bookkeeping; shutdown never extends the job deadline.
@@ -129,6 +135,16 @@ impl Default for WorkerLimits {
     }
 }
 
+/// Cloud database settings: manifest placement plus the `username` and `password`
+/// fields ECS injects from the process's own login secret.
+const DB_PARTS: [&str; 5] = [
+    "DB_HOST",
+    "DB_PORT",
+    "DB_NAME",
+    "DB_USERNAME",
+    "DB_PASSWORD",
+];
+
 type Values = BTreeMap<String, String>;
 struct Env<'a>(&'a Values);
 impl Env<'_> {
@@ -142,6 +158,48 @@ impl Env<'_> {
     fn required(&self, key: &str) -> anyhow::Result<String> {
         self.optional(key)
             .ok_or_else(|| anyhow::anyhow!("{key} is required"))
+    }
+    /// A credential's exact value: never trimmed and never echoed in an error.
+    fn secret(&self, key: &str) -> anyhow::Result<String> {
+        self.0
+            .get(key)
+            .filter(|s| !s.is_empty())
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("{key} is required"))
+    }
+    /// `DATABASE_URL` is the development convenience. Cloud composes non-secret
+    /// placement with the two injected secret fields, so no URL-shaped copy of a
+    /// password exists to escape incorrectly or go stale after a rotation.
+    fn database_source(&self, app_env: AppEnv) -> anyhow::Result<crate::db::DatabaseSource> {
+        let url = self.optional("DATABASE_URL");
+        // Credential whitespace is significant; any supplied part selects this source.
+        let parts = DB_PARTS.iter().any(|key| self.0.contains_key(*key));
+        anyhow::ensure!(
+            url.is_none() || !parts,
+            "DATABASE_URL and DB_* connection settings are mutually exclusive"
+        );
+        if let Some(url) = url {
+            anyhow::ensure!(
+                app_env == AppEnv::Dev,
+                "DATABASE_URL is development-only; cloud uses the DB_* settings"
+            );
+            return Ok(crate::db::DatabaseSource::Url(url));
+        }
+        anyhow::ensure!(
+            parts || app_env != AppEnv::Dev,
+            "DATABASE_URL or the DB_* settings are required"
+        );
+        let port = self
+            .required("DB_PORT")?
+            .parse::<u16>()
+            .map_err(|_| anyhow::anyhow!("DB_PORT must be a TCP port"))?;
+        Ok(crate::db::DatabaseSource::Parts {
+            host: self.required("DB_HOST")?,
+            port,
+            database: self.required("DB_NAME")?,
+            username: self.required("DB_USERNAME")?,
+            password: self.secret("DB_PASSWORD")?,
+        })
     }
     fn app_env(&self) -> anyhow::Result<AppEnv> {
         match self.required("APP_ENV")?.as_str() {
@@ -226,13 +284,17 @@ impl Env<'_> {
             }
         }
         let database = crate::db::DatabaseConfig::new(
-            self.required("DATABASE_URL")?,
+            self.database_source(app_env)?,
             app_env,
             process,
             self.optional("DB_SSL_ROOT_CERT").map(PathBuf::from),
             self.number(
                 "DB_MAX_CONNECTIONS",
-                if process == "migration" { 1 } else { 5 },
+                if matches!(process, "migration" | "db-bootstrap") {
+                    1
+                } else {
+                    5
+                },
                 if process == "worker" { 2 } else { 1 },
                 32,
             )? as u32,
@@ -397,6 +459,33 @@ impl MigrationConfig {
     pub fn from_values(values: &Values) -> anyhow::Result<Self> {
         Ok(Self {
             runtime: Env(values).runtime("migration")?,
+        })
+    }
+}
+
+impl BootstrapConfig {
+    pub fn from_env() -> anyhow::Result<Self> {
+        Self::from_values(&load_env()?)
+    }
+
+    pub fn from_values(values: &Values) -> anyhow::Result<Self> {
+        let env = Env(values);
+        let login = |prefix: &str| -> anyhow::Result<crate::bootstrap::Login> {
+            Ok(crate::bootstrap::Login {
+                username: env.required(&format!("{prefix}_DB_USERNAME"))?,
+                password: env.secret(&format!("{prefix}_DB_PASSWORD"))?,
+            })
+        };
+        let logins = crate::bootstrap::Logins {
+            owner: login("OWNER")?,
+            api: login("API")?,
+            worker: login("WORKER")?,
+            onboarding: login("ONBOARDING")?,
+        };
+        logins.validate()?;
+        Ok(Self {
+            runtime: env.runtime("db-bootstrap")?,
+            logins,
         })
     }
 }

@@ -1,4 +1,7 @@
 mock_provider "aws" {
+  mock_resource "aws_db_instance" {
+    defaults = { master_user_secret = [{ secret_arn = "arn:aws:secretsmanager:us-east-2:000000000000:secret:rds!db-synthetic-AbCdEf", secret_status = "active", kms_key_id = "arn:aws:kms:us-east-2:000000000000:key/00000000-0000-0000-0000-000000000000" }] }
+  }
   mock_data "aws_caller_identity" { defaults = { account_id = "000000000000" } }
   mock_data "aws_availability_zones" { defaults = { names = ["us-east-2c", "us-east-2b", "us-east-2a"] } }
   mock_resource "aws_kms_key" {
@@ -17,6 +20,17 @@ run "data_manifest_and_network_wiring" {
   command = apply
 
   assert {
+    condition = (length(module.identity) == 1 &&
+      local.manifest_resources.api_task_role_arn == module.identity[0].task_role_arns.api &&
+      local.manifest_resources.worker_execution_role_arn == module.identity[0].execution_role_arns.worker &&
+      local.manifest_resources.migration_execution_role_arn == module.identity[0].execution_role_arns.migration &&
+      local.manifest_secret_refs.api_db == module.identity[0].secret_arns.api_db &&
+      local.manifest_secret_refs.deepgram == module.identity[0].secret_arns.deepgram &&
+    length(jsondecode(module.data[0].kms_key_policy_json).Statement) == 6)
+    error_message = "S6 must wire distinct roles, injected secret pointers and all five service grants into the data key policy."
+  }
+
+  assert {
     condition = (length(module.data) == 1 &&
       local.audio_bucket_name == "ernote-staging-audio-000000000000-us-east-2" &&
       local.manifest_resources.audio_bucket == module.data[0].audio_bucket_name &&
@@ -32,7 +46,8 @@ run "data_manifest_and_network_wiring" {
     condition = (can(tonumber(local.manifest_resources.db_port)) &&
       !strcontains(jsonencode(local.manifest_resources), "password") &&
       !strcontains(jsonencode(local.manifest_resources), "secretsmanager") &&
-    length(local.manifest_secret_refs) == 0)
+      length(local.manifest_secret_refs) == 4 &&
+    !contains(values(local.manifest_secret_refs), module.data[0].db_master_user_secret_arn))
     error_message = "The manifest carries a string port and no credential: the RDS-managed master secret stays out of it."
   }
   assert {
@@ -52,4 +67,29 @@ run "wrong_account_refused_before_any_data_resource" {
   command = plan
   variables { aws_account_id = "111111111111" }
   expect_failures = [terraform_data.account_guard]
+}
+
+override_resource {
+  target = module.identity[0].aws_secretsmanager_secret.this["migration_db"]
+  values = { arn = "arn:aws:secretsmanager:us-east-2:000000000000:secret:synthetic-migration_db-AbCdEf" }
+}
+
+override_resource {
+  target = module.identity[0].aws_secretsmanager_secret.this["api_db"]
+  values = { arn = "arn:aws:secretsmanager:us-east-2:000000000000:secret:synthetic-api_db-AbCdEf" }
+}
+
+override_resource {
+  target = module.identity[0].aws_secretsmanager_secret.this["worker_db"]
+  values = { arn = "arn:aws:secretsmanager:us-east-2:000000000000:secret:synthetic-worker_db-AbCdEf" }
+}
+
+override_resource {
+  target = module.identity[0].aws_secretsmanager_secret.this["deepgram"]
+  values = { arn = "arn:aws:secretsmanager:us-east-2:000000000000:secret:synthetic-deepgram-AbCdEf" }
+}
+
+override_resource {
+  target = module.identity[0].aws_secretsmanager_secret.this["onboarding_db"]
+  values = { arn = "arn:aws:secretsmanager:us-east-2:000000000000:secret:synthetic-onboarding_db-AbCdEf" }
 }

@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import codecs
 import io
-import json
 import re
+import time
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import config, engines, processes
+from . import config, processes, protocol
 
 
 GATE_SETS: dict[str, list[tuple[str, list[str]]]] = {
@@ -21,11 +22,15 @@ GATE_SETS: dict[str, list[tuple[str, list[str]]]] = {
     "terraform": [
         ("tf-manifest", ["bash", "scripts/tf-manifest-guards.sh"]),
         ("tf-network", ["bash", "scripts/tf-network-check.sh"]),
+        ("tf-data-identity", ["bash", "scripts/tf-data-check.sh"]),
+        ("db-secrets", ["python3", "-m", "unittest", "scripts/test_db_secrets.py"]),
     ],
     "none": [],
+    "python": [("python", ["python3", "-B", "-m", "unittest", "discover", "-s", "scripts", "-p", "test_*.py"])],
+    "auto": [],
 }
 
-GATE_SETS["all"] = GATE_SETS["rust"] + GATE_SETS["terraform"]
+GATE_SETS["all"] = GATE_SETS["rust"] + GATE_SETS["terraform"] + GATE_SETS["python"]
 
 
 @dataclass
@@ -37,6 +42,7 @@ class Gate:
     output: str
     seconds: float
     log_path: Path | None = None
+    environment_problem: bool = False
 
 
 def dotenv() -> dict[str, str]:
@@ -52,49 +58,71 @@ def dotenv() -> dict[str, str]:
     return env
 
 
-def run_gates(names: str, timeout: int, run_dir: Path, round_num: int) -> list[Gate]:
+def select_gates(names: str, paths, *, final: bool, root: Path) -> list[tuple[str, list[str]]]:
+    """Path-driven intermediate checks; final checks include explicitly required sets."""
+    if names == 'none':
+        return []
+    paths = set(paths)
+    rust = any(p.endswith('.rs') or p in {'Cargo.toml', 'Cargo.lock', 'Dockerfile'}
+               or p.startswith('.sqlx/') or p.endswith('/Cargo.toml') for p in paths)
+    terraform = any(p.startswith('infra/') or p.startswith('scripts/tf-') for p in paths)
+    python = any(p.endswith('.py') for p in paths)
+    selected = dict(GATE_SETS[names] if final and names != 'auto' else [])
+    if rust:
+        rust_gates = GATE_SETS['rust']
+        packages = set()
+        if not final and all(p.startswith('crates/') for p in paths if not p.endswith('.md')):
+            for p in paths:
+                parts = Path(p).parts
+                if len(parts) >= 3 and parts[0] == 'crates':
+                    manifest = root / 'crates' / parts[1] / 'Cargo.toml'
+                    if manifest.exists():
+                        packages.add(tomllib.loads(manifest.read_text())['package']['name'])
+        for name, argv in rust_gates:
+            argv = list(argv)
+            if packages and '--workspace' in argv:
+                pos = argv.index('--workspace')
+                argv[pos:pos + 1] = [arg for package in sorted(packages) for arg in ['-p', package]]
+            selected[name] = argv
+    if terraform:
+        selected.update(GATE_SETS['terraform'])
+    if python:
+        selected.update(GATE_SETS['python'])
+    # Also covers documentation-only and unknown file types without a compiler run.
+    return [('diff-check', ['git', 'diff', '--check', 'HEAD']), *selected.items()]
+
+
+def run_gates(names: str, timeout: int, run_dir: Path, round_num: int, *, on_gate=None,
+              cwd: Path | None = None, commands=None, deadline: float | None = None) -> list[Gate]:
     env = dotenv()
+    env['PYTHONDONTWRITEBYTECODE'] = '1'
+    if cwd is not None:
+        # Reuse compiler artifacts without copying them into the candidate diff.
+        env['CARGO_TARGET_DIR'] = str(config.REPO / 'target')
     out: list[Gate] = []
-    for invocation, (name, argv) in enumerate(GATE_SETS[names], 1):
+    for invocation, (name, argv) in enumerate(commands if commands is not None else GATE_SETS[names], 1):
+        remaining = timeout if deadline is None else min(timeout, deadline - time.monotonic())
+        if remaining <= 0:
+            raise protocol.CrewError('Run time budget exhausted; candidate retained for resume')
+        if on_gate is not None:
+            on_gate(name, 'running')
         print(f"\n  gate: {name}")
         safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "-", name)
         log_path = run_dir / (
             f"{round_num:02d}-gate-{invocation:02d}-{safe_name}.transcript.log"
         )
-        r = processes.run_process(argv, timeout, name, env=env, log_path=log_path)
-        out.append(Gate(name, r.ok, r.output, r.seconds, log_path=log_path))
+        r = processes.run_process(argv, remaining, name, env=env, log_path=log_path, cwd=cwd)
+        unavailable = not r.ok and any(text in r.output for text in (
+            'error communicating with database: Connection refused', 'command not found',
+            'Failed to query available provider packages', 'could not connect to server: Connection refused',
+        ))
+        out.append(Gate(name, r.ok, r.output, r.seconds, log_path=log_path, environment_problem=unavailable))
+        if on_gate is not None:
+            on_gate(name, 'pass' if r.ok else 'FAIL')
         print(f"  gate: {name} -> {'pass' if r.ok else 'FAIL'} ({r.seconds:.0f}s)")
+        if not r.ok:
+            break  # repair the first failing prerequisite before expensive later gates
     return out
-
-
-GATE_SCHEMA = {
-    "type": "object",
-    "additionalProperties": False,
-    "required": ["failures"],
-    "properties": {
-        "failures": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["location", "code", "detail"],
-                "properties": {
-                    "location": {"type": "string", "description": "file:line:col or test name"},
-                    "code": {"type": "string", "description": "e.g. E0308, or empty"},
-                    "detail": {"type": "string", "description": "the message, one line"},
-                },
-            },
-        }
-    },
-}
-
-
-def _schema_file(name: str, obj: dict) -> Path:
-    d = config.RUNS / ".schemas"
-    d.mkdir(parents=True, exist_ok=True)
-    f = d / f"{name}.json"
-    f.write_text(json.dumps(obj, indent=2), encoding="utf-8")
-    return f
 
 
 FAILURE_PATTERNS = [
@@ -220,29 +248,6 @@ def _extract_failures(
     return out
 
 
-def _valid_gate_fallback(raw: str) -> list[dict[str, str]]:
-    try:
-        value = json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
-        return []
-    if not isinstance(value, dict) or set(value) != {"failures"}:
-        return []
-    failures = value["failures"]
-    if not isinstance(failures, list):
-        return []
-    valid: list[dict[str, str]] = []
-    for item in failures[:MAX_DIAGNOSTICS]:
-        if (
-            isinstance(item, dict)
-            and set(item) == {"location", "code", "detail"}
-            and all(isinstance(item[key], str) for key in item)
-        ):
-            valid.append(item)
-        else:
-            return []
-    return valid
-
-
 def _fit_summary(text: str, budget: int, reference: str = "") -> str:
     if len(text) <= budget:
         return text
@@ -254,10 +259,7 @@ def _fit_summary(text: str, budget: int, reference: str = "") -> str:
 
 def condense(
     gates: list[Gate],
-    engine: engines.Engine,
     budget: int = 4000,
-    *,
-    helper_log_path: Path | None = None,
 ) -> str:
     """Return a gate summary bounded by *budget* Unicode characters."""
     if budget <= 0:
@@ -278,37 +280,7 @@ def condense(
                 found = _extract_failures(_bounded_text_lines(g.output))
             body = "\n".join(found)
             if not found:
-                fallback_prompt = (
-                    "Extract distinct failures into the supplied schema. Use only literal log "
-                    "evidence.\n\n--- bounded log excerpt ---\n"
-                    + g.output[:MODEL_FALLBACK_CHARS]
-                )
-                helper_path = helper_log_path
-                if helper_path is not None:
-                    safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "-", g.name)
-                    base = helper_path.name.removesuffix(".transcript.log")
-                    helper_path = helper_path.with_name(
-                        f"{base}-{gate_index:02d}-{safe_name}.transcript.log"
-                    )
-                result = engine.run(
-                    fallback_prompt,
-                    timeout=300,
-                    schema=_schema_file("gate", GATE_SCHEMA),
-                    log_path=helper_path,
-                )
-                items = _valid_gate_fallback(result.output) if result.ok else []
-                if items:
-                    body = "\n".join(
-                        _fit_summary(
-                            f"- {item['location']}"
-                            f"{'  [' + item['code'] + ']' if item['code'] else ''}"
-                            f"  {item['detail']}",
-                            MAX_DIAGNOSTIC_CHARS,
-                        )
-                        for item in items
-                    )
-                else:
-                    body = _fit_summary(g.output, min(MODEL_FALLBACK_CHARS, budget), reference)
+                body = _fit_summary(g.output, min(MODEL_FALLBACK_CHARS, budget), reference)
             log_note = f"\nComplete transcript: {reference}" if reference else "\nNo complete transcript was saved; using retained excerpt."
             section = f"### {g.name}: FAIL ({g.seconds:.0f}s)\n{body}{log_note}"
         separator = "\n\n" if parts else ""

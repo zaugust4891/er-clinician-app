@@ -29,8 +29,8 @@ run "synthetic_staging_defaults" {
     error_message = "Application data needs its own rotating key, aliased, with a deletion window that outlives its backups."
   }
   assert {
-    condition = (length(jsondecode(aws_kms_key.data.policy).Statement) == 1 &&
-    jsondecode(aws_kms_key.data.policy).Statement[0].Principal.AWS == "arn:aws:iam::000000000000:root")
+    condition = (length(jsondecode(aws_kms_key_policy.data.policy).Statement) == 1 &&
+    jsondecode(aws_kms_key_policy.data.policy).Statement[0].Principal.AWS == "arn:aws:iam::000000000000:root")
     error_message = "The key policy delegates to account IAM only; every service grant belongs to S6."
   }
 

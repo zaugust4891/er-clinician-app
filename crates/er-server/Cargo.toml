@@ -13,19 +13,21 @@ chrono.workspace = true
 dotenvy.workspace = true
 er-app = { version = "0.1.0", path = "../er-app" }
 er-api.workspace = true
+hmac = "0.12"
 jsonwebtoken = { version = "10.4.0", features = ["rust_crypto"] }
 moka = {version = "0.12", features = ["future"] }
 rsa = "0.9"
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tower = "0.5.3"
 tower-http = { version = "0.6.11", features = ["trace", "timeout"] }
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter", "json"] }
-uuid.workspace = true
+uuid = { workspace = true, features = ["v4"] }
 sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "chrono", "json", "macros", "migrate"] }
 er-store = { version = "0.1.0", path = "../er-store" }
 er-domain = { version = "0.1.0", path = "../er-domain" }
@@ -45,8 +47,9 @@ aws-sdk-s3.workspace = true
 aws-sdk-sqs.workspace = true
 
 
-# One production image carries separate API, worker, and one-shot migration
-# entrypoints. ECS must override entryPoint, not command, for the latter two.
+# One production image carries separate API, worker, and one-shot migration and
+# database-bootstrap entrypoints. ECS must override entryPoint, not command, for
+# all but the API.
 [[bin]]
 name = "er-worker"
 path = "src/bin/worker.rs"
@@ -54,6 +57,10 @@ path = "src/bin/worker.rs"
 [[bin]]
 name = "er-migrate"
 path = "src/bin/migrate.rs"
+
+[[bin]]
+name = "er-db-bootstrap"
+path = "src/bin/db_bootstrap.rs"
 
 # Tests drive the server through the real client (S9): `RemoteRepository` runs the
 # same Repository contract suite SQLite and Postgres pass, over HTTP. Only the test

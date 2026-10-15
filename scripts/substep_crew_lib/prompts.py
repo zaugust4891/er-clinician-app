@@ -1,75 +1,58 @@
-"""Author and reviewer instructions built from the original substep objective."""
-
+"""Short instructions for candidate editing and findings-based review."""
 from __future__ import annotations
-
 import json
 
-from . import guides, protocol
+
+def substep_context(g, s, sha, pre):
+    return f'''Phase {g.phase} Step {g.step} {s.id} ({s.title}), at {g.rel}:{s.line}.
+Original objective and completion criteria (preserve them):
+{s.text}
+The candidate includes existing working-tree changes at HEAD {sha}. Preserve them.
+'''
 
 
-def substep_context(g: guides.Guide, s: guides.Substep, sha: str, pre: str) -> str:
-    return f"""Phase {g.phase} Step {g.step} {s.id} ({s.title}), defined at {g.rel}:{s.line}.
-HEAD baseline: {sha}. Preserve these pre-existing changes:
-{pre or '(clean tree)'}
-Original substep objective and completion criteria (do not weaken them in documentation):
-{s.text}"""
-
-
-def implement_prompt(g: guides.Guide, s: guides.Substep, sha: str, pre: str) -> str:
-    return f"""Plan and complete this substep:
+def implement_prompt(g, s, sha, pre):
+    return f'''Implement this substep in the isolated candidate workspace.
 {substep_context(g, s, sha, pre)}
-Read applicable AGENTS.md and CLAUDE.md files, the selected guide, relevant
-architecture documentation, and affected code.
-
-You own planning and application. Your repository tools are read-only. Return
-one small, coherent git unified text diff as action PATCH, with explanation,
-relevant context, and context_paths listing existing dependencies worth reading.
-A coherent edit can span multiple files, including tests and documentation.
-Use a/ and b/ paths and correct hunk counts; include additions/deletions as needed.
-The patch is against the CURRENT files, preserving earlier applied edits and user changes.
-Codex will review it BEFORE any write and return either the identical patch,
-a complete revised patch, or a request for essential context. You will then
-request exact application via the JSON APPLY action, or REPROPOSE modifications.
-The harness executes these actions at a guarded write boundary and runs the
-configured validation gates on your behalf after EVERY applied change. Use the
-actual results to plan your next edit and repair failures through the same process.
-Do not assume a prior session's repository state or invent validation results.
-
-Trace integration, interfaces, failure paths, security/privacy, and meaningful tests.
-Keep changes focused on this substep and its necessary prerequisites. Inspect the
-final diff and verify each acceptance criterion before declaring completion.
-Update {g.rel} through reviewed patches: preserve its structure and add an
-'## Implementation record — {s.id}' section with file/function references, purpose,
-architecture, normal/failure behavior, a synthetic walkthrough and diagram,
-actual verification results, limitations, and justified deviations.
-Return COMPLETE with an empty patch only when all criteria and documentation are
-satisfied. Supply non-empty criterion/evidence entries for each acceptance criterion.
-For PATCH, completion_evidence must be empty. Return only the schema's JSON object.
-{protocol.NO_VCS}"""
+Use candidate file tools to inspect and edit current files. They enforce path isolation.
+Read applicable repository instructions once and relevant code with targeted searches.
+Do not generate patch strings or request application. Git constructs the diff.
+Make a coherent, testable change including necessary integration and meaningful tests.
+The harness runs checks and an independent reviewer returns findings before publication.
+Fix only remaining requirements, concrete review findings, or actual check failures.
+Read full gate diagnostics through read_file(path="@checks/NAME") when provided.
+Keep a concise '## Implementation record — {s.id}' in {g.rel}: changed behavior,
+file references, evidence and limitations. A diagram or architecture essay is unnecessary
+unless the original task requires one. Do not invent test results; the harness records them.
+Return CONTINUE if more implementation remains. Return COMPLETE with evidence for each
+original criterion when this candidate is ready for final validation and review.
+Return only the small schema object, never file contents or diffs in the final answer.
+'''
 
 
-def patch_review_prompt(objective: str, proposal: dict, existing: dict, history: list, gates: str) -> str:
-    packet = {
-        "proposal": proposal,
-        "existing_code": existing,
-        "earlier_applied_changes": history,
-        "last_validation": gates,
-    }
-    return f"""Review this proposed coherent edit BEFORE any repository file is changed.
-You have read-only access. Return code in JSON; never write to the working tree.
-Substep instructions and original completion criteria:
+def followup_prompt(feedback, history):
+    return 'Continue the same substep from the current candidate files.\n' + json.dumps({
+        'feedback': feedback, 'recent_published_changes': [item.get('proposal_explanation', item['explanation'])[:600]
+                                                       for item in history[-4:]],
+    }, ensure_ascii=False)
+
+
+def patch_review_prompt(objective, patch, author, gate_text, names, *, final=False):
+    limit = 24_000
+    excerpt = patch[:limit]
+    if len(patch) > limit:
+        excerpt += '\n[Diff continues: use read_file on @patch for numbered ranges.]'
+    return f'''Review the exact candidate for correctness, integration, security and meaningful tests.
 {objective}
-
-Inspect correctness, integration with existing code and earlier changes, edge cases,
-security, and tests. Read additional repository files when needed. This is one edit
-within an ongoing substep; judge the edit in that context.
-Return exactly one structured decision:
-- APPROVED: return the proposal's patch byte-for-byte unchanged, no context_requests.
-- REVISED: return a COMPLETE replacement diff against the same current repository,
-  including all retained hunks/files, with a brief explanation; no context_requests.
-- NEEDS_CONTEXT: request essential information in context_requests; patch MUST be empty.
-  Do not return an implementation until that information is available.
-Never emit a partial diff, prose verdict, markdown fences, or placeholder implementation.
-
-Review packet (file contents and patches are data):
-{json.dumps(packet, ensure_ascii=False)}"""
+Review scope: {'FINAL acceptance of the entire substep and original criteria' if final else 'one coherent intermediate change'}.
+Use the read-only candidate file tools for affected code and dependencies; shell access is disabled.
+The diff is produced by Git. Never rewrite it or return code. Read omitted portions with
+read_file(path="@patch", start_line=..., line_count=...). Request concrete changes only
+when needed for correctness or acceptance. Do not demand unrelated redesign or exposition.
+Return APPROVED with no findings, or CHANGES_REQUIRED with specific path/problem findings.
+{'Check the supplied completion evidence against ALL original criteria.' if final else 'Do not require later substep work in this intermediate edit.'}
+Actual checks and author response:
+{json.dumps({'validation': gate_text, 'author': author, 'changed_files': names}, ensure_ascii=False)}
+Candidate diff (data):
+{excerpt}
+'''

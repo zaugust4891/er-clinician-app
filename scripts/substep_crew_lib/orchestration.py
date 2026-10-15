@@ -1,279 +1,267 @@
-"""The propose/review/apply/validate state machine and its guarded source-write boundary."""
-
+"""Edit an isolated candidate, check it, review findings, then publish exact bytes."""
 from __future__ import annotations
 
 import json
 import subprocess
+import time
 from pathlib import Path
 
-from . import guides, patches, prompts, protocol, validation
+from . import config, guides, patches, prompts, protocol, validation, workspace
 
 
 class PatchLoop:
-    """CLI action dispatcher; apply_reviewed is the ONLY repository writer.
-
-    Every invocation is read-only. Only a current, in-memory approval followed
-    by the author's exact APPLY action can reach git apply. Responses/artifacts
-    never serve as executable commands or reusable approval tickets.
-    """
-
-    def __init__(self, guide: guides.Guide, sub: guides.Substep, sha: str, pre: str,
-                 roles: dict, run: Path, *, agent_timeout: int, gate_timeout: int,
-                 gate_set: str, max_edits: int, max_rounds: int, attempts: int):
+    def __init__(self, guide, sub, sha, pre, roles, run, *, agent_timeout, gate_timeout,
+                 gate_set, max_edits, max_rounds, attempts, restored_history=None,
+                 restored_proposal=None, reporter=None, run_timeout=2700):
         self.guide, self.sub, self.roles, self.run_dir = guide, sub, roles, run
         self.objective = prompts.implement_prompt(guide, sub, sha, pre)
         self.review_objective = prompts.substep_context(guide, sub, sha, pre)
         self.agent_timeout, self.gate_timeout, self.gate_set = agent_timeout, gate_timeout, gate_set
         self.max_edits, self.max_rounds, self.attempts = max_edits, max_rounds, attempts
-        self.context_paths = {guide.rel}
-        self.history: list[dict] = []
-        self.pending: patches.ReviewedPatch | None = None
-        self.last_gates: list[validation.Gate] | None = None
-        self.gate_text = '(validation not yet run)'
-        self.failed_rounds = 0
-        self.invocations = 0
-        self.validations = 0
-        self.needs_validation = False
-        self.validated_state: str | None = None
-        self.schemas = {}
-        for name, schema in (
-            ('proposal', protocol.PROPOSAL_SCHEMA), ('patch-review', protocol.PATCH_REVIEW_SCHEMA),
-            ('application', protocol.APPLICATION_SCHEMA), ('context', protocol.CONTEXT_SCHEMA),
-        ):
-            destination = run / f'{name}.schema.json'
-            destination.write_text(json.dumps(schema, indent=2), encoding='utf-8')
-            self.schemas[name] = destination
-        self.expected_state = self.state()
-
-    def state(self) -> str:
-        return patches.repository_state(self.context_paths)
-
-    def assert_current(self, state: str) -> None:
-        if self.state() != state:
-            self.pending = None
-            raise protocol.CrewError('stale patch/context: repository changed during an operation; approval invalidated, no further patch applied')
-
-    def invoke(self, role: str, kind: str, prompt: str, state: str, parser):
-        """Run one read-only model call, check its base state, and save evidence."""
-        self.assert_current(state)
-        self.invocations += 1
-        stem = f'{self.invocations:03d}-{role}-{kind}'
-        (self.run_dir / f'{stem}.prompt.md').write_text(prompt, encoding='utf-8')
-        try:
-            result = self.roles[role].run(
-                prompt, self.agent_timeout, schema=self.schemas[kind],
-                log_path=self.run_dir / f'{stem}.transcript.log',
-            )
-        except (OSError, subprocess.SubprocessError, TimeoutError) as exc:
-            self.assert_current(state)
-            raise protocol.ProtocolError(f'{role} invocation failed: {exc}') from exc
-        self.assert_current(state)
-        final_path = self.run_dir / f'{stem}.final.json'
-        if not final_path.exists():
-            final_path.write_text(result.output, encoding='utf-8')
-        if not result.ok:
-            raise protocol.ProtocolError(f'{role} invocation failed: {result.note or "unknown error"}')
-        value = parser(result.output)
-        (self.run_dir / f'{stem}.validated.json').write_text(
-            json.dumps(value, indent=2, ensure_ascii=False), encoding='utf-8',
-        )
-        return value
-
-    def call(self, role: str, kind: str, prompt: str, state: str, parser):
-        """Retry protocol failures within a fixed limit; stale state stops immediately."""
-        error = ''
-        for attempt in range(1, self.attempts + 1):
-            try:
-                return self.invoke(role, kind, prompt + error, state, parser)
-            except protocol.ProtocolError as exc:
-                error = f'\nPrevious response failed: {exc}. Return a complete valid {kind} object.'
-                print(f'  {role}/{kind} attempt {attempt}/{self.attempts}: {exc}')
-        raise protocol.CrewError(f'{role}/{kind} failed after {self.attempts} attempts:{error}')
-
-    def add_context_paths(self, names: list[str], state: str) -> str:
-        self.assert_current(state)
-        for name in names:
-            patches.safe_path(name, self.guide.rel)
-        self.assert_current(state)
-        self.context_paths.update(names)
-        self.expected_state = self.state()
-        return self.expected_state
-
-    def existing_code(self, names: list[str]) -> dict:
-        existing = {}
-        for name in sorted(set(names) | self.context_paths):
-            path = patches.safe_path(name, self.guide.rel)
-            if not path.exists():
-                existing[name] = None
-                continue
-            if path.stat().st_size > 1_000_000:
-                raise protocol.CrewError(f'context file exceeds 1 MiB: {name}; split the proposal')
-            existing[name] = path.read_text(encoding='utf-8')
-        return existing
-
-    def review_and_apply(self, proposal: dict, state: str) -> None:
-        """Resolve review/context/reproposal exchanges before dispatching an exact APPLY."""
-        if self.needs_validation:
-            raise protocol.CrewError('next edit refused: validate the previously applied patch first')
-        error = ''
-        for attempt in range(1, self.attempts + 1):
-            self.assert_current(state)
-            self.pending = None
-            try:
-                names = patches.patch_paths(proposal['patch'], self.guide.rel)
-                prompt = prompts.patch_review_prompt(
-                    self.review_objective, proposal, self.existing_code(names), self.history, self.gate_text,
-                ) + error
-                review = self.invoke(
-                    'reviewer', 'patch-review', prompt, state,
-                    lambda raw: protocol.parse_patch_review(raw, proposal['patch']),
-                )
-                if review['decision'] == 'NEEDS_CONTEXT':
-                    requests = json.dumps(review['context_requests'], ensure_ascii=False)
-                    def parse_context(raw):
-                        value = protocol.parse_response(raw, protocol.CONTEXT_SCHEMA)
-                        if not value['context'].strip():
-                            raise protocol.ProtocolError('requested context must be non-empty')
-                        return value
-                    context = self.call(
-                        'implementer', 'context',
-                        self.objective + '\nCodex needs essential context BEFORE implementation. '
-                        'Read the current repository and answer these requests with inspected evidence. '
-                        'Return context and context_paths only.\n' + requests
-                        + '\nCurrent proposal:\n' + json.dumps(proposal, ensure_ascii=False),
-                        state, parse_context,
-                    )
-                    state = self.add_context_paths(context['context_paths'], state)
-                    proposal = {**proposal, 'context': proposal['context'] + '\n' + context['context']}
-                    error = ''
-                    continue
-                # Check the ENTIRE returned patch before issuing an application
-                # request, including any files newly introduced by a revision.
-                patches.patch_paths(review['patch'], self.guide.rel)
-                approved = patches.ReviewedPatch(review['patch'], state, review['decision'], review['explanation'])
-                self.pending = approved
-                def parse_application(raw):
-                    value = protocol.parse_response(raw, protocol.APPLICATION_SCHEMA)
-                    if not value['patch'].strip():
-                        raise protocol.ProtocolError('application requires a complete patch')
-                    if value['action'] == 'APPLY' and value['patch'] != approved.patch:
-                        raise protocol.ProtocolError('modified patch must use REPROPOSE and be reviewed again')
-                    if value['action'] == 'REPROPOSE' and not value['explanation'].strip():
-                        raise protocol.ProtocolError('REPROPOSE requires an explanation')
-                    return value
-                application = self.call(
-                    'implementer', 'application', self.objective
-                    + '\nCodex returned this reviewed patch. Request APPLY with the EXACT patch '
-                    'string to apply it. If you need ANY modification, request REPROPOSE with a '
-                    'complete replacement diff and explanation; it will undergo a fresh review.\n'
-                    + json.dumps(review, ensure_ascii=False), state, parse_application,
-                )
-                if application['action'] == 'REPROPOSE':
-                    self.pending = None
-                    proposal = {**proposal, 'patch': application['patch'],
-                                'explanation': application['explanation']}
-                    error = ''
-                    continue
-                self.apply_reviewed(approved, application['patch'])
-                return
-            except protocol.ProtocolError as exc:
-                self.pending = None
-                error = f'\nPrevious review failed: {exc}. Return a complete valid decision.'
-                print(f'  patch review attempt {attempt}/{self.attempts}: {exc}')
+        self.history = list(restored_history or [])
+        self.restored_proposal = restored_proposal
+        self.reporter = reporter
+        self.deadline = time.monotonic() + run_timeout
+        self.invocations = self.validations = 0
         self.pending = None
-        raise protocol.CrewError(f'patch review exhausted {self.attempts} attempts/context exchanges; no patch applied.{error}')
-
-    def apply_reviewed(self, approval: patches.ReviewedPatch, patch: str) -> None:
-        """Consume the current approval and apply its exact bytes once."""
-        if self.pending is not approval or patch != approval.patch:
-            raise protocol.CrewError('write refused: missing approval or patch differs from reviewed bytes')
-        if self.needs_validation:
-            raise protocol.CrewError('write refused: validate the previously applied patch first')
-        self.assert_current(approval.state)
-        patches.patch_paths(patch, self.guide.rel)  # check again at the actual write boundary
-        self.assert_current(approval.state)
-        self.pending = None  # single use; failed application is never auto-retried
-        patches.checked_git('apply', '--whitespace=nowarn', input_text=patch)
+        self.candidate = None
+        self.gate_text = '(checks not yet run)'
+        self.validated_candidate_state = None
+        self.validation_passed = False
         self.expected_state = self.state()
-        self.needs_validation = True
-        applied = {'patch': patch, 'decision': approval.decision,
-                   'explanation': approval.explanation, 'base_state': approval.state,
-                   'resulting_state': self.expected_state}
-        self.history.append(applied)
-        (self.run_dir / f'{len(self.history):03d}-applied.patch').write_bytes(patch.encode('utf-8'))
-        (self.run_dir / 'applied-history.json').write_text(
-            json.dumps(self.history, indent=2, ensure_ascii=False), encoding='utf-8',
-        )
+        self.schemas = {}
+        for name, schema in [('author', protocol.AUTHOR_SCHEMA), ('review', protocol.REVIEW_SCHEMA)]:
+            path = run / f'{name}.schema.json'
+            path.write_text(json.dumps(schema, indent=2), encoding='utf-8')
+            self.schemas[name] = path
+        self.changed = set()
+        # Earlier dirty files belong to final acceptance too, including work
+        # restored from old runs. No pre-existing source change is discarded.
+        dirty = patches.checked_git('diff', '--name-only', '-z', 'HEAD')
+        untracked = patches.checked_git('ls-files', '--others', '--exclude-standard', '-z')
+        self.acceptance_paths = {p for p in (dirty + untracked).decode('utf-8').split('\0') if p}
 
-    def validate(self) -> bool:
-        """Run fixed gates on the current tree and bind their results to that state."""
-        before = self.expected_state
-        self.assert_current(before)
-        self.validations += 1
-        print(f'\n=== validation {self.validations}')
-        self.last_gates = validation.run_gates(
-            self.gate_set, self.gate_timeout, run_dir=self.run_dir, round_num=self.validations,
-        )
-        self.assert_current(before)  # fixed validation commands must not edit source
-        self.gate_text = validation.condense(
-            self.last_gates, self.roles['condenser'],
-            helper_log_path=self.run_dir / f'{self.validations:02d}-gate-condense.transcript.log',
-        ) or '(no gates configured; deterministic validation intentionally skipped)'
-        self.assert_current(before)
-        (self.run_dir / f'{self.validations:02d}-gates.summary.md').write_text(self.gate_text, encoding='utf-8')
-        passed = all(gate.ok for gate in self.last_gates)
-        self.failed_rounds = 0 if passed else self.failed_rounds + 1
-        self.validated_state = before
-        self.needs_validation = False
-        return passed
+    def report(self, stage=None, **changes):
+        if self.reporter:
+            self.reporter.update(stage, **changes)
 
-    def run(self, *, skip_implement: bool = False) -> int:
-        """Repeat coherent edits until completion evidence, guide record, and gates agree."""
-        if skip_implement and not self.validate() and self.failed_rounds >= self.max_rounds:
-            return 1
-        # The extra proposal gives Claude a chance to declare completion after
-        # the last permitted edit; no final edit can escape validation.
-        for _ in range(self.max_edits + 1):
-            state = self.expected_state
-            def parse_current_proposal(raw):
-                value = protocol.parse_proposal(raw)
-                if value['action'] == 'PATCH':
-                    patches.patch_paths(value['patch'], self.guide.rel)
+    def state(self):
+        return patches.repository_state([self.guide.rel])
+
+    def assert_current(self):
+        if self.state() != self.expected_state:
+            self.pending = None
+            raise protocol.CrewError('stale candidate: source repository changed; approval invalidated')
+
+    def remaining(self, maximum):
+        left = min(maximum, self.deadline - time.monotonic())
+        if left <= 0:
+            raise protocol.CrewError('Run time budget exhausted; candidate retained for resume')
+        return left
+
+    def metric(self, **data):
+        with (self.run_dir / 'metrics.jsonl').open('a', encoding='utf-8') as stream:
+            stream.write(json.dumps({'time': time.time(), **data}, ensure_ascii=False) + '\n')
+
+    def save_draft(self, author=None):
+        patch = self.candidate.diff()
+        pending = self.run_dir / 'pending-proposal.json'
+        if patch:
+            pending.write_text(json.dumps({'state': self.expected_state, 'author': author, 'proposal': {
+                'action': 'PATCH', 'patch': patch, 'explanation': (author or {}).get('explanation', 'Interrupted candidate edit'),
+                'context': 'Git-generated candidate diff; unapproved until fresh review.',
+                'context_paths': [], 'completion_evidence': [],
+            }}, indent=2, ensure_ascii=False), encoding='utf-8')
+        else:
+            pending.unlink(missing_ok=True)
+        return patch
+
+    def call(self, role, kind, prompt, parser):
+        feedback = ''
+        for attempt in range(1, self.attempts + 1):
+            self.assert_current()
+            self.invocations += 1
+            engine = self.roles[role]
+            editable = role == 'implementer'
+            before = self.candidate.state()
+            stem = f'{self.invocations:03d}-{role}-{kind}'
+            request = prompt + feedback
+            (self.run_dir / f'{stem}.prompt.md').write_text(request, encoding='utf-8')
+            self.report('proposal' if editable else 'patch-review', restart=True,
+                        detail=f'{engine.name}; invocation {self.invocations}; attempt {attempt}')
+            start = time.monotonic()
+            result = None
+            error = None
+            value = None
+            error_class = None
+            try:
+                result = engine.run(request, self.remaining(self.agent_timeout), schema=self.schemas[kind],
+                                    log_path=self.run_dir / f'{stem}.transcript.log',
+                                    workspace=self.candidate, editable=editable)
+                self.assert_current()
+                if not editable and before != self.candidate.state():
+                    raise protocol.CrewError('Reviewer modified the candidate; approval invalidated')
+                if editable:
+                    self.save_draft()
+                final_path = self.run_dir / f'{stem}.final.json'
+                if not final_path.exists():
+                    final_path.write_text(result.output, encoding='utf-8')
+                if not result.ok:
+                    # Authentication, quotas, tool startup and invocation timeouts
+                    # do not improve when we regenerate the whole implementation.
+                    raise protocol.CrewError(f'{role} invocation stopped: {result.note or "unknown transport failure"}; candidate retained')
+                value = parser(result.output)
+                (self.run_dir / f'{stem}.validated.json').write_text(json.dumps(value, indent=2), encoding='utf-8')
                 return value
-            proposal = self.call(
-                'implementer', 'proposal', self.objective
-                + '\nEarlier applied changes and current validation:\n'
-                + json.dumps({'earlier_applied_changes': self.history,
-                              'last_validation': self.gate_text,
-                              'current_state': state,
-                              'working_tree_diff': patches.checked_git(
-                                  'diff', '--no-ext-diff', '--no-textconv', 'HEAD',
-                              ).decode('utf-8')}, ensure_ascii=False),
-                state, parse_current_proposal,
-            )
-            state = self.add_context_paths(proposal['context_paths'], state)
-            if proposal['action'] == 'COMPLETE':
-                current_guide = guides.parse_guide(self.guide.path, self.guide.phase, self.guide.step)
-                if self.sub.num not in current_guide.recorded:
-                    raise protocol.CrewError(f'completion refused: missing Implementation record for {self.sub.id}')
-                if self.validated_state != state:
-                    if not self.validate() and self.failed_rounds >= self.max_rounds:
-                        return 1
-                    continue  # require fresh completion evidence after validation
-                if not all(gate.ok for gate in self.last_gates):
-                    if self.failed_rounds >= self.max_rounds:
-                        return 1
+            except protocol.ProtocolError as exc:
+                error = str(exc)
+                error_class = type(exc).__name__
+                feedback = '\nYour files are retained. Correct only the response object: ' + error
+            except BaseException as exc:
+                error = str(exc)
+                error_class = type(exc).__name__
+                if editable:
+                    # Retain partial work on timeouts/interrupts without granting approval.
+                    self.save_draft()
+                raise
+            finally:
+                self.metric(stage=kind, role=role, attempt=attempt, engine=engine.name,
+                            seconds=time.monotonic() - start, process_seconds=result.seconds if result else None,
+                            prompt_chars=len(request), metadata=result.metadata if result else {},
+                            error=error, error_class=error_class,
+                            decision=(value or {}).get('decision', (value or {}).get('action')), applied=False)
+        raise protocol.CrewError(f'{role} response failed after {self.attempts} attempts: {feedback}')
+
+    def validate(self, names, *, final=False):
+        self.validation_passed = False
+        self.assert_current()
+        before = self.candidate.state()
+        self.validations += 1
+        paths = (self.acceptance_paths | self.changed | set(names)) if final else set(names)
+        commands = validation.select_gates(self.gate_set, paths, final=final, root=self.candidate.root)
+        statuses = {name: 'pending' for name, _ in commands}
+        self.report('validation', restart=True, gates=statuses, detail='Final acceptance checks' if final else 'Checks for this change')
+        def on_gate(name, status):
+            statuses[name] = status
+            self.report(gates=dict(statuses), detail=f'{name}: {status}')
+        gates = validation.run_gates(self.gate_set, self.gate_timeout, self.run_dir, self.validations,
+                                     cwd=self.candidate.root, commands=commands, deadline=self.deadline, on_gate=on_gate)
+        self.assert_current()
+        if before != self.candidate.state():
+            raise protocol.CrewError('Validation changed candidate source; refusing to reuse its results')
+        self.validated_candidate_state = before
+        self.gate_text = validation.condense(gates) or '(validation explicitly disabled)'
+        self.gate_text = self.gate_text.replace(str(self.run_dir) + '/', '@checks/')
+        (self.run_dir / f'{self.validations:02d}-gates.summary.md').write_text(self.gate_text, encoding='utf-8')
+        for gate in gates:
+            self.metric(stage='gate', name=gate.name, seconds=gate.seconds, ok=gate.ok,
+                        final=final, environment_problem=gate.environment_problem)
+        if any(gate.environment_problem for gate in gates):
+            raise protocol.CrewError('Validation environment unavailable; fix the dependency before resuming. Candidate retained.')
+        self.validation_passed = all(g.ok for g in gates) and len(gates) == len(commands)
+        return self.validation_passed
+
+    def apply_reviewed(self, approval, patch, *, proposal_explanation=''):
+        if self.pending is not approval or approval.patch != patch:
+            raise protocol.CrewError('write refused: missing approval or patch differs from reviewed bytes')
+        if not self.validation_passed:
+            raise protocol.CrewError('write refused: candidate has no passing validation')
+        self.assert_current()
+        if (approval.state != self.expected_state or self.candidate.diff() != patch
+                or self.validated_candidate_state != self.candidate.state()):
+            raise protocol.CrewError('write refused: stale candidate approval')
+        _, flags = patches.inspect_patch(patch, self.guide.rel)
+        self.assert_current()
+        self.pending = None
+        self.report('apply', detail='Publishing the exact validated and reviewed diff')
+        patches.checked_git('apply', *flags, '--whitespace=nowarn', input_text=patch)
+        self.expected_state = self.state()
+        self.history.append({'patch': patch, 'decision': approval.decision, 'explanation': approval.explanation,
+                             'proposal_explanation': proposal_explanation, 'base_state': approval.state,
+                             'resulting_state': self.expected_state})
+        (self.run_dir / f'{len(self.history):03d}-applied.patch').write_text(patch, encoding='utf-8')
+        (self.run_dir / 'applied-history.json').write_text(json.dumps(self.history, indent=2), encoding='utf-8')
+        (self.run_dir / 'pending-proposal.json').unlink(missing_ok=True)
+        self.candidate.checkpoint()
+        self.metric(stage='publish', applied=True, patch_chars=len(patch))
+        self.report(applied_edits=len(self.history), detail='Reviewed change published')
+
+    def run(self, *, skip_implement=False):
+        for engine in self.roles.values():
+            engine.preflight()
+        self.candidate = workspace.Candidate(self.run_dir, self.guide.rel)
+        self.assert_current()
+        self.candidate.preflight()
+        self.metric(stage='preflight', ok=True, transport='scoped-file-tools', shell_enabled=False)
+        feedback = ''
+        if self.restored_proposal:
+            patch = self.restored_proposal['patch']
+            try:
+                patches.patch_paths(patch, self.guide.rel)
+                self.candidate.git('apply', '--recount', '--whitespace=nowarn', input_text=patch)
+            except protocol.CrewError as exc:
+                raise protocol.CrewError('Saved draft no longer applies; use --fresh-proposal to start from current files') from exc
+            self.save_draft()
+            feedback = 'An unapproved draft was restored into the candidate. Inspect and finish it; fresh checks and review are required.'
+        if skip_implement:
+            self.candidate.diff()
+            self.validate(self.acceptance_paths, final=True)
+            feedback += '\nCurrent checks:\n' + self.gate_text
+        failures = review_failures = 0
+        last_findings = None
+        for number in range(1, self.max_edits + 1):
+            self.remaining(self.agent_timeout)
+            self.report('proposal', edit_number=number, edit_summary='Implement the next coherent candidate change')
+            followup = prompts.followup_prompt(feedback, self.history)
+            retains_context = bool(getattr(self.roles['implementer'], 'session_id', None))
+            prompt = followup if number > 1 and retains_context else self.objective + '\n' + followup
+            author = self.call('implementer', 'author', prompt, protocol.parse_author)
+            patch = self.save_draft(author)
+            names = patches.patch_paths(patch, self.guide.rel) if patch else []
+            final = author['action'] == 'COMPLETE'
+            if final:
+                current = guides.parse_guide(self.candidate.root / self.guide.rel, self.guide.phase, self.guide.step)
+                if self.sub.num not in current.recorded:
+                    feedback = f'Add the concise Implementation record for {self.sub.id} before declaring COMPLETE.'
                     continue
-                self.assert_current(state)
-                (self.run_dir / 'completion.json').write_text(
-                    json.dumps(proposal, indent=2, ensure_ascii=False), encoding='utf-8',
-                )
-                print(f'\n=== {self.sub.id} READY after {len(self.history)} reviewed edits. Nothing was committed.')
+            elif not patch:
+                raise protocol.CrewError('Author made no change and did not complete the substep')
+            self.report(files=names, edit_summary=author['explanation'])
+            if not self.validate(names, final=final):
+                failures += 1
+                if failures >= self.max_rounds:
+                    return 1
+                feedback = 'Repair these actual check failures in the retained candidate:\n' + self.gate_text
+                continue
+            failures = 0
+            review = self.call('reviewer', 'review', prompts.patch_review_prompt(
+                self.review_objective, patch, author, self.gate_text, names, final=final), protocol.parse_review)
+            self.report(review_summary=review['decision'] + ': ' + review['explanation'])
+            if review['decision'] == 'CHANGES_REQUIRED':
+                review_failures += 1
+                findings = json.dumps(review['findings'], sort_keys=True)
+                if review_failures >= self.attempts or findings == last_findings:
+                    raise protocol.CrewError('Review findings remain unresolved; candidate retained without publication')
+                last_findings = findings
+                feedback = 'Fix these concrete findings in the retained candidate:\n' + findings
+                continue
+            review_failures, last_findings = 0, None
+            self.remaining(self.agent_timeout)
+            self.assert_current()
+            if self.validated_candidate_state != self.candidate.state():
+                raise protocol.CrewError('Candidate changed after validation; approval invalidated')
+            self.changed.update(names)
+            if patch:
+                approval = patches.ReviewedPatch(patch, self.expected_state, 'APPROVED', review['explanation'])
+                self.pending = approval
+                self.apply_reviewed(approval, patch, proposal_explanation=author['explanation'])
+            if final:
+                self.assert_current()
+                (self.run_dir / 'completion.json').write_text(json.dumps({
+                    **author, 'review': review, 'validation': self.gate_text, 'state': self.expected_state,
+                }, indent=2), encoding='utf-8')
+                self.report('ready', status='ready', detail='Final criteria, review and checks satisfied',
+                            edit_number=len(self.history), applied_edits=len(self.history))
                 return 0
-            if len(self.history) >= self.max_edits:
-                raise protocol.CrewError(f'edit limit ({self.max_edits}) reached before substep completion')
-            self.review_and_apply(proposal, state)
-            if not self.validate() and self.failed_rounds >= self.max_rounds:
-                print(f'\n=== {self.sub.id} NOT READY: {self.max_rounds} consecutive failed validations')
-                return 1
-        raise protocol.CrewError('proposal limit reached before substep completion')
+            feedback = 'The last change was checked, approved and published. Continue remaining requirements.\n' + self.gate_text
+        raise protocol.CrewError('Edit budget exhausted; candidate retained for resume')

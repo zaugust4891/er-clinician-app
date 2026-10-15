@@ -104,6 +104,28 @@ estimates in the [cost worksheet](staging-cost-review-2026-10-14.md).
 | Network idle estimate | $36.50/month for NAT + its IPv4, 730 hours, Ohio, 2026-09-14 | Dated source/rate table in network verification; resolve full-stack budget before provisioning |
 | Live gate | Pending | Per-AZ private diagnostic startup/DNS/TLS/service checks and external denial; record sanitized evidence |
 
+## Database connection settings (S6)
+
+Implemented in `crates/er-server/src/config.rs` and `db.rs` and used by `er-server`,
+`er-worker` and `er-migrate`. Outside dev `DATABASE_URL` is rejected, and combining it with
+any setting below is rejected everywhere. The parts are composed with `PgConnectOptions`, so
+no password is URL-escaped or stored a second time inside a URL.
+
+| Setting | Value source | Secret |
+| --- | --- | --- |
+| `DB_HOST` | Manifest `db_endpoint`: hostname only, verified against the server certificate | No |
+| `DB_PORT` | Manifest `db_port` | No |
+| `DB_NAME` | Manifest `db_name` | No |
+| `DB_USERNAME` | ECS task secret, `valueFrom = "<login secret ARN>:username::"` | Injected |
+| `DB_PASSWORD` | ECS task secret, `valueFrom = "<login secret ARN>:password::"` | Injected |
+| `DB_SSL_ROOT_CERT` | `/etc/ssl/certs/rds-global-bundle.pem`, packaged in the image | No |
+
+Each login secret is JSON shaped like the RDS-managed master secret,
+`{"username": "...", "password": "..."}`. Each process receives only its own login: the API
+its API login, the worker its worker login and `er-migrate` the schema-owner login. No running
+service receives the master secret. ECS resolves secrets when a task starts, so a rotated
+value reaches a process only through a replacement task.
+
 ## Pre-PHI gate
 
 No real patient audio, transcript, or note enters staging until the appropriate owners document executed BAAs and other agreements; provider retention and three-Region processing approval; recording consent/notice; organizational risk analysis; record retention and legal holds; audit-access design; incident and restore readiness; and authorization/revocation rules. S0 records these gates. It does not certify HIPAA compliance.
@@ -121,3 +143,17 @@ aws bedrock get-inference-profile \
   --query '{id:inferenceProfileId,status:status,models:models[].modelArn}' \
   --output json
 ```
+
+## S6 identity implementation (2026-10-15)
+
+S6 is implemented locally; its AWS/RDS/ECS acceptance is unperformed. The exact
+role matrix, DB grant decisions, secret staging/pinning/promotion and maintenance
+rotation procedure are in [identity-verification.md](identity-verification.md).
+The image adds `er-db-bootstrap`; only that one-shot execution role receives the
+RDS master. Four separate logins cover schema ownership, API, worker and privileged
+identity onboarding. No secret values enter Terraform or the release manifest.
+
+CI role templates default to disabled. S11 must configure GitHub environment branch
+protections, adopt the OIDC provider and review the final infrastructure provisioning
+policy before enabling them. Application resources remain unapplied pending the
+budget decision and S7–S9 dependencies; production remains disabled.

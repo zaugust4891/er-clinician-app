@@ -390,3 +390,14 @@ variable "dlq_operator_principal_arns" {
     error_message = "dlq_operator_principal_arns must be IAM role or user ARNs."
   }
 }
+
+variable "kms_service_policy_statements_json" {
+  description = "Additional S6 service-use delegations, encoded to preserve heterogeneous IAM condition shapes. No secret values."
+  type        = string
+  default     = "[]"
+
+  validation {
+    condition     = can(tolist(jsondecode(var.kms_service_policy_statements_json)))
+    error_message = "kms_service_policy_statements_json must encode an array of policy statements."
+  }
+}

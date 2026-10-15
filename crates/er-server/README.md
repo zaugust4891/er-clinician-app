@@ -1,4 +1,4 @@
-# Server, worker, and migration startup (Phase 4, Step 8 S1–S2)
+# Server, worker, migration and DB bootstrap (Phase 4, Step 8 S1–S6)
 
 S1 hardens application startup and resource use. S2 adds a one-shot migration
 binary and a pinned source-only production image. Infrastructure provisioning
@@ -22,18 +22,29 @@ its database settings and does not initialize auth, queues, or providers.
 
 ## Schema migration and production image
 
-Run the migration with its own database login before updating API or worker
-tasks. The first cloud database setup creates the owner/login roles separately;
-`er-migrate` only applies the checked-in SQLx schema migrations. API and worker
-startup do not apply migrations.
+Run `er-db-bootstrap` inside the VPC first, with the master credential and four
+staged logins injected by its own execution role. It creates the owner, API, worker
+and onboarding logins, plus three NOLOGIN groups holding their grants. Then run
+the migration as owner before updating API or worker tasks. See the
+[bootstrap and rotation procedure](../../docs/ops/identity-verification.md).
+`er-migrate` applies the
+checked-in SQLx schema migrations, then converges the runtime grants in
+[`src/privileges.rs`](src/privileges.rs) in one transaction: it revokes every
+table, column and sequence privilege from `PUBLIC` and all three group roles, then grants
+exactly the operations each process's queries use. It also revokes their routine
+execution grants and clears global/per-schema table, sequence and routine defaults for the owner.
+Event history is append-only for both; neither can create or alter tables or
+change org/clinician membership. Cloud fails the run if a group role is missing
+or another role owns a relation or routine; a development database without the
+roles skips grants. API and worker startup do not apply migrations.
 
 ```bash
 APP_ENV=dev cargo run --locked -p er-server --bin er-migrate
 docker build --platform linux/amd64 -t er-note-app:local .
 ```
 
-The image contains `/usr/local/bin/er-server`, `er-worker`, and `er-migrate`.
-Its default entrypoint is the API. ECS worker and one-shot migration task
+The image contains `/usr/local/bin/er-server`, `er-worker`, `er-migrate`, and `er-db-bootstrap`.
+Its default entrypoint is the API. ECS worker, migration and bootstrap task
 definitions must set `entryPoint` to the corresponding absolute binary path;
 changing only `command` passes arguments to the API instead.
 
@@ -41,9 +52,11 @@ SQLx's embedded migrator keeps PostgreSQL advisory locking and validates
 applied checksums on every run. The migration connection sets a 15-second lock
 wait limit and a 300-second per-statement limit; the full run has a 600-second
 limit. It exits nonzero for failures and prints only migration version and a
-fixed status. A no-op rerun succeeds. Migration/role changes must be planned
-for compatibility with the previous application image; a deploy rollback does
-not reverse schema migrations.
+fixed status; the grant step prints `grants status=complete`,
+`skipped_without_runtime_roles`, `failed` or `timeout` (60-second limit). A
+no-op rerun succeeds. Migration/role changes must be planned for compatibility
+with the previous application image; a deploy rollback does not reverse schema
+migrations.
 
 The pinned image manifests are `linux/amd64` and use the Rust version in
 `rust-toolchain.toml`. The build uses `--locked` and `SQLX_OFFLINE=true` in
@@ -64,17 +77,31 @@ See [artifact provenance](../../docs/ops/repository-artifact-provenance.md).
 
 ## Cloud configuration contract
 
-All processes require `APP_ENV=staging|prod`, `AWS_REGION`, a process-specific
-`DATABASE_URL` containing login/password/database, and `DB_SSL_ROOT_CERT`, an
-absolute path to the reviewed RDS CA bundle. Connections force `verify-full`
+All processes require `APP_ENV=staging|prod`, `AWS_REGION`, the database
+placement `DB_HOST` (a hostname, no port), `DB_PORT` and `DB_NAME`, the
+process's own login as `DB_USERNAME` and `DB_PASSWORD`, and `DB_SSL_ROOT_CERT`,
+an absolute path to the reviewed RDS CA bundle. ECS injects the login from the
+`username` and `password` fields of that process's Secrets Manager JSON secret;
+the parts are composed with `PgConnectOptions`, so a password is never
+URL-escaped or stored a second time as a URL. `DATABASE_URL` is a development
+convenience: it is rejected outside dev, and combining it with any `DB_*`
+connection part is rejected everywhere. Connections force `verify-full`
 (certificate and hostname verification), disable SQL statement logging, and
 set application names `er-api`, `er-worker`, or `er-migration`.
+
+Outside dev each process except the privileged bootstrap vets its login when it connects and exits with
+`database_login_overprivileged` for a superuser, a login that can create roles
+or databases, a replication or `BYPASSRLS` login, or an `rds_superuser` member.
+The API and worker also refuse a login that owns, or is a member of the owner
+of, the public schema or any relation or routine in it, so neither runs with
+the master or schema-owner credential.
 
 | Process | Additional required settings |
 |---|---|
 | API | `BIND_ADDR`, `AUTH_MODE=cognito`, `COGNITO_REGION`, `COGNITO_POOL_ID`, `COGNITO_CLIENT_ID`, `AUDIO_BUCKET`, `STT_QUEUE` |
 | Worker | `AUDIO_BUCKET`, `STT_QUEUE`, `DEEPGRAM_API_KEY`, `TRANSPORT=bedrock`, `SUMMARY_MODEL=sonnet`, `MDM_MODEL=sonnet`, `BEDROCK_SUMMARY_MODEL_ID`, `BEDROCK_MDM_MODEL_ID` |
 | Migration config | None; no auth, queue or provider initialization |
+| DB bootstrap | `OWNER_DB_USERNAME`/`OWNER_DB_PASSWORD`, `API_DB_USERNAME`/`API_DB_PASSWORD`, `WORKER_DB_USERNAME`/`WORKER_DB_PASSWORD`, `ONBOARDING_DB_USERNAME`/`ONBOARDING_DB_PASSWORD`; only this one-shot process receives the master in `DB_*` |
 
 Cognito's region must match `AWS_REGION`. Deepgram credentials are rejected in
 the API and migration environments. Dev auth/JWKS, direct Anthropic keys, static
@@ -101,7 +128,7 @@ has been verified.
 
 | Limit | Default / policy |
 |---|---|
-| `DB_MAX_CONNECTIONS` | 5 (migration 1); supported 1–32, worker minimum 2 |
+| `DB_MAX_CONNECTIONS` | 5 (migration/bootstrap 1); supported 1–32, worker minimum 2 |
 | `DB_ACQUIRE_TIMEOUT_SECS` | 5; range 1–30; also bounds physical connection creation |
 | `DB_CONNECT_TIMEOUT_SECS` | 10; range 1–30; bounds initial pool connection |
 | `MAX_AUDIO_BYTES` | 16 MiB; configurable 1 byte–64 MiB |
