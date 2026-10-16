@@ -12,6 +12,7 @@ module "identity" {
   stt_queue_arn             = "arn:aws:sqs:${var.aws_region}:${var.aws_account_id}:${var.project}-${local.environment}-jobs"
   stt_dlq_arn               = "arn:aws:sqs:${var.aws_region}:${var.aws_account_id}:${var.project}-${local.environment}-jobs-dlq"
   db_master_user_secret_arn = module.data[0].db_master_user_secret_arn
+  cognito_user_pool_arn     = one(module.auth[*].user_pool_arn)
 
   depends_on = [terraform_data.account_guard]
 }

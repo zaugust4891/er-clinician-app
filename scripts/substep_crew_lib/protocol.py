@@ -41,7 +41,7 @@ PATCH_REVIEW_SCHEMA = _object_schema({
 })
 
 AUTHOR_SCHEMA = _object_schema({
-    "action": {"type": "string", "enum": ["CONTINUE", "COMPLETE"]},
+    "action": {"type": "string", "enum": ["CONTINUE", "COMPLETE", "BLOCKED"]},
     "explanation": STRING,
     "completion_evidence": {"type": "array", "items": _object_schema({
         "criterion": STRING, "evidence": STRING,

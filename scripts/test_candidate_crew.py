@@ -80,6 +80,15 @@ class CandidateTests(unittest.TestCase):
             return response if response is not None else author()
         return work
 
+    def turn_limited(self, value):
+        def work(candidate):
+            self.author_engine.session_id = 'retained-session'
+            self.author_engine.session_root = str(candidate.root)
+            self.edit(value)(candidate)
+            return processes.Result(False, '', .01, 'Reached maximum number of turns',
+                                    metadata={'subtype': 'error_max_turns', 'session_id': 'retained-session'})
+        return work
+
     def loop(self, authors, reviews, *, gates=(), **kwargs):
         self.author_engine, self.reviewer_engine = FakeEngine(authors), FakeEngine(reviews)
         outcomes = iter(gates)
@@ -145,7 +154,55 @@ class CandidateTests(unittest.TestCase):
         self.assertEqual(loop.run(), 0)
         self.assertEqual(len(loop.history), 1)
         self.assertIn('Use value 2', self.author_engine.calls[1][0])
+        self.assertIn('Use value 2', self.reviewer_engine.calls[1][0])
         self.assertEqual(self.gate_candidates, ['value = 1\n', 'value = 2\n'])
+
+    def test_three_rejections_with_new_findings_can_be_fixed_before_publication(self):
+        findings = [dict(review('CHANGES_REQUIRED'), findings=[{'path': 'a.py', 'problem': f'Use value {n}'}])
+                    for n in (2, 3, 4)]
+        def approve(candidate):
+            self.assertEqual((self.root / 'a.py').read_text(), 'value = 0\n')
+            self.assertEqual((candidate.root / 'a.py').read_text(), 'value = 4\n')
+            return review()
+        loop = self.loop([self.edit(n) for n in (1, 2, 3, 4)], [*findings, approve])
+        self.assertEqual(loop.run(), 0)
+        self.assertEqual(len(loop.history), 1)
+        self.assertEqual(self.gate_candidates, [f'value = {n}\n' for n in (1, 2, 3, 4)])
+        for n in (2, 3, 4):
+            self.assertIn(f'Use value {n}', self.author_engine.calls[n - 1][0])
+        self.assertIsNone(checkpoints.recover_review(self.run_dir))
+
+    def test_identical_findings_do_not_stop_a_changed_candidate(self):
+        loop = self.loop([self.edit(n) for n in (1, 3, 2)],
+                         [review('CHANGES_REQUIRED'), review('CHANGES_REQUIRED'), review()], attempts=1)
+        self.assertEqual(loop.run(), 0)
+        self.assertEqual(len(self.reviewer_engine.calls), 3)
+        self.assertEqual((self.root / 'a.py').read_text(), 'value = 2\n')
+
+    def test_unchanged_rejected_candidate_stops_before_repeating_gates_and_review(self):
+        loop = self.loop([self.edit(1), author()], [review('CHANGES_REQUIRED')])
+        with self.assertRaisesRegex(protocol.CrewError, 'previously rejected candidate'):
+            loop.run()
+        self.assertEqual(self.gate_candidates, ['value = 1\n'])
+        self.assertEqual(len(self.reviewer_engine.calls), 1)
+        self.assertEqual((self.root / 'a.py').read_text(), 'value = 0\n')
+        self.assertEqual(checkpoints.recover_review(self.run_dir), review('CHANGES_REQUIRED'))
+
+    def test_review_repairs_still_obey_edit_and_run_budgets(self):
+        for budget in ('edits', 'time'):
+            with self.subTest(budget=budget):
+                self.run_dir = config.RUNS / budget
+                self.run_dir.mkdir()
+                def reject(candidate):
+                    if budget == 'time':
+                        loop.deadline = 0
+                    return review('CHANGES_REQUIRED')
+                loop = self.loop([self.edit(1)], [reject], max_edits=1 if budget == 'edits' else 4)
+                with self.assertRaisesRegex(protocol.CrewError, 'Edit budget|time budget'):
+                    loop.run()
+                self.assertEqual(len(self.author_engine.calls), 1)
+                self.assertEqual((self.root / 'a.py').read_text(), 'value = 0\n')
+                self.assertEqual(checkpoints.recover_review(self.run_dir), review('CHANGES_REQUIRED'))
 
     def test_gate_failures_are_fixed_before_review(self):
         loop = self.loop([self.edit(1), self.edit(2)], [review()], gates=[False, True])
@@ -204,6 +261,88 @@ class CandidateTests(unittest.TestCase):
         self.assertIsNotNone(draft)
         self.assertIn('+value = 2', draft[0]['patch'])
 
+    def test_turn_limit_continues_same_candidate_then_requires_checks_and_review(self):
+        def finish(candidate):
+            self.assertEqual((candidate.root / 'a.py').read_text(), 'value = 2\n')
+            self.assertEqual((self.root / 'a.py').read_text(), 'value = 0\n')
+            self.assertEqual(self.author_engine.session_id, 'retained-session')
+            return author()
+        loop = self.loop([self.turn_limited(2), finish], [review()])
+        self.assertEqual(loop.run(), 0)
+        self.assertEqual(len(self.author_engine.calls), 2)
+        continuation = self.author_engine.calls[1][0]
+        self.assertIn('same session and candidate files are retained', continuation)
+        self.assertNotIn('Original objective and completion criteria', continuation)
+        self.assertEqual(self.gate_candidates, ['value = 2\n'])
+        self.assertEqual(len(self.reviewer_engine.calls), 1)
+        self.assertEqual((self.root / 'a.py').read_text(), 'value = 2\n')
+        metrics = [json.loads(line) for line in (self.run_dir / 'metrics.jsonl').read_text().splitlines()]
+        self.assertTrue(any(row.get('error_class') == 'TurnLimitContinuation' for row in metrics))
+
+    def test_turn_limit_continuations_stop_at_the_existing_attempt_budget(self):
+        loop = self.loop([self.turn_limited(n) for n in (1, 2, 3)], [])
+        with self.assertRaisesRegex(protocol.CrewError, 'maximum number of turns'):
+            loop.run()
+        self.assertEqual(len(self.author_engine.calls), 3)
+        self.assertEqual(self.reviewer_engine.calls, [])
+        self.assertEqual(self.gate_candidates, [])
+        self.assertEqual((self.root / 'a.py').read_text(), 'value = 0\n')
+        draft, _ = checkpoints.recover_proposal(self.run_dir, 'guide.md')
+        self.assertIn('+value = 3', draft['patch'])
+
+    def test_turn_limit_without_progress_or_matching_session_does_not_continue(self):
+        for mode in ('no-progress', 'no-session', 'wrong-session', 'wrong-root'):
+            with self.subTest(mode=mode):
+                self.run_dir = config.RUNS / mode
+                self.run_dir.mkdir()
+                def limited(candidate):
+                    self.author_engine.session_id = 'retained-session'
+                    self.author_engine.session_root = str(candidate.root)
+                    if mode != 'no-progress':
+                        self.edit(2)(candidate)
+                    if mode == 'no-session':
+                        self.author_engine.session_id = None
+                    if mode == 'wrong-root':
+                        self.author_engine.session_root = '/another/candidate'
+                    return processes.Result(False, '', .01, 'error_max_turns', metadata={
+                        'subtype': 'error_max_turns',
+                        'session_id': 'different-session' if mode == 'wrong-session' else 'retained-session',
+                    })
+                loop = self.loop([limited], [])
+                with self.assertRaisesRegex(protocol.CrewError, 'error_max_turns'):
+                    loop.run()
+                self.assertEqual(len(self.author_engine.calls), 1)
+                self.assertEqual((self.root / 'a.py').read_text(), 'value = 0\n')
+
+    def test_source_changes_and_deadline_expiry_cannot_trigger_turn_limit_continuation(self):
+        for mode in ('stale', 'deadline'):
+            with self.subTest(mode=mode):
+                self.run_dir = config.RUNS / mode
+                self.run_dir.mkdir()
+                def limited(candidate):
+                    result = self.turn_limited(2)(candidate)
+                    if mode == 'stale':
+                        (self.root / 'external.txt').write_text('user changed source\n')
+                    else:
+                        loop.deadline = 0
+                    return result
+                loop = self.loop([limited], [])
+                with self.assertRaisesRegex(protocol.CrewError, 'stale candidate|time budget'):
+                    loop.run()
+                self.assertEqual(len(self.author_engine.calls), 1)
+                self.assertEqual(self.reviewer_engine.calls, [])
+                self.assertEqual((self.root / 'a.py').read_text(), 'value = 0\n')
+
+    def test_reviewer_turn_limits_do_not_create_author_continuations(self):
+        failure = processes.Result(False, '', .01, 'error_max_turns',
+                                   metadata={'subtype': 'error_max_turns', 'session_id': 'review-session'})
+        loop = self.loop([self.edit(2)], [failure])
+        with self.assertRaisesRegex(protocol.CrewError, 'reviewer invocation stopped'):
+            loop.run()
+        self.assertEqual(len(self.author_engine.calls), 1)
+        self.assertEqual(len(self.reviewer_engine.calls), 1)
+        self.assertEqual((self.root / 'a.py').read_text(), 'value = 0\n')
+
     def test_malformed_review_retries_same_candidate_without_author_call(self):
         loop = self.loop([self.edit(2)], ['not json', review()])
         self.assertEqual(loop.run(), 0)
@@ -230,7 +369,7 @@ class CandidateTests(unittest.TestCase):
         self.assertEqual(len(self.gate_candidates), 1)
         self.assertEqual(len(self.reviewer_engine.calls), 1)
 
-    def test_missing_record_and_repeated_findings_cannot_complete(self):
+    def test_missing_record_cannot_complete(self):
         (self.root / 'guide.md').write_text('## S1 — One\nImplement value handling.\n')
         loop = self.loop([self.edit(2)], [], max_edits=1)
         with self.assertRaisesRegex(protocol.CrewError, 'Edit budget'):
@@ -308,6 +447,25 @@ class CandidateTests(unittest.TestCase):
             self.assertEqual(cli.main(), 0)
         self.assertFalse((self.run_dir / 'candidate').exists())
 
+    def test_cli_author_turn_limit_override_is_visible_without_invoking_a_model(self):
+        engine = engines.ClaudeEngine()
+        roles = {'implementer': lambda: engine, 'reviewer': lambda: FakeEngine([])}
+        with mock.patch.object(guides, 'find_guide', return_value=(self.root / 'guide.md', (self.root / 'guide.md').read_text())), mock.patch.object(
+            engines, 'PROFILES', {'default': roles}
+        ), mock.patch.object(sys, 'argv', ['substep_crew.py', '--phase', '1', '--step', '1', '--substep', 'S1',
+                                          '--author-max-turns', '90', '--dry-run']), mock.patch.object(
+            engine, 'run', side_effect=AssertionError('model invoked')
+        ):
+            self.assertEqual(cli.main(), 0)
+        self.assertEqual(engine.max_turns, 90)
+        self.assertFalse((self.run_dir / 'candidate').exists())
+
+    def test_cli_rejects_nonpositive_author_turn_limits(self):
+        with mock.patch.object(sys, 'argv', ['substep_crew.py', '--author-max-turns', '0']), contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as error:
+                cli.main()
+        self.assertEqual(error.exception.code, 2)
+
     def test_resume_latest_uses_unfinished_run_even_when_guide_has_record(self):
         (self.run_dir / 'run.json').write_text(json.dumps({'phase': 1, 'step': 1, 'substep': 'S1'}))
         with mock.patch.object(guides, 'find_guide', return_value=(self.root / 'guide.md', (self.root / 'guide.md').read_text())), mock.patch.object(
@@ -345,6 +503,58 @@ class CandidateTests(unittest.TestCase):
             self.assertEqual(cli.main(), 0)
         self.assertEqual(self.gate_candidates, ['value = 2\n'])
         self.assertEqual((self.root / 'a.py').read_text(), 'value = 2\n')
+
+    def test_cli_resume_restores_legacy_review_findings_before_author(self):
+        first = self.loop([self.edit(1)], [review('CHANGES_REQUIRED')], max_edits=1)
+        with self.assertRaisesRegex(protocol.CrewError, 'Edit budget'):
+            first.run()
+        # Simulate a failed run from before review feedback was saved in drafts.
+        pending = self.run_dir / 'pending-proposal.json'
+        draft = json.loads(pending.read_text())
+        del draft['review']
+        pending.write_text(json.dumps(draft))
+        (self.run_dir / 'run.json').write_text(json.dumps({'phase': 1, 'step': 1, 'substep': 'S1'}))
+        self.gate_candidates.clear()
+        author_engine = FakeEngine([self.edit(2)])
+        reviewer_engine = FakeEngine([review()])
+        roles = {'implementer': lambda: author_engine, 'reviewer': lambda: reviewer_engine}
+        with mock.patch.object(engines, 'PROFILES', {'default': roles}), mock.patch.object(
+            guides, 'find_guide', return_value=(self.root / 'guide.md', (self.root / 'guide.md').read_text())
+        ), mock.patch.object(sys, 'argv', ['substep_crew.py', '--resume', str(self.run_dir)]):
+            self.assertEqual(cli.main(), 0)
+        self.assertIn('Use value 2', author_engine.calls[0][0])
+        self.assertIn('Use value 2', reviewer_engine.calls[0][0])
+        self.assertEqual(self.gate_candidates, ['value = 2\n'])
+        self.assertEqual((self.root / 'a.py').read_text(), 'value = 2\n')
+
+    def test_review_feedback_survives_interrupted_resume_before_another_review(self):
+        first = self.loop([self.edit(1)], [review('CHANGES_REQUIRED')], max_edits=1)
+        with self.assertRaisesRegex(protocol.CrewError, 'Edit budget'):
+            first.run()
+        draft, _ = checkpoints.recover_proposal(self.run_dir, 'guide.md')
+        feedback = checkpoints.recover_review(self.run_dir)
+        self.run_dir = config.RUNS / 'resume-interrupted'
+        self.run_dir.mkdir()
+        failure = processes.Result(False, '', .01, 'provider unavailable')
+        resumed = self.loop([self.edit(3, failure)], [], restored_proposal=draft, restored_review=feedback)
+        with self.assertRaisesRegex(protocol.CrewError, 'provider unavailable'):
+            resumed.run()
+        self.assertEqual(checkpoints.recover_review(self.run_dir), feedback)
+        self.assertEqual((self.root / 'a.py').read_text(), 'value = 0\n')
+        retained, _ = checkpoints.recover_proposal(self.run_dir, 'guide.md')
+        self.assertIn('+value = 3', retained['patch'])
+
+    def test_review_recovery_never_reuses_approvals_or_obsolete_findings(self):
+        old = self.run_dir / '001-reviewer-review.validated.json'
+        old.write_text(json.dumps(review('CHANGES_REQUIRED')))
+        os.utime(old, ns=(1_000_000_000, 1_000_000_000))
+        latest = self.run_dir / '002-reviewer-review.validated.json'
+        for content in (json.dumps(review()), '{invalid json'):
+            latest.write_text(content)
+            self.assertIsNone(checkpoints.recover_review(self.run_dir))
+        latest.unlink()
+        (self.run_dir / 'applied-history.json').write_text('[]')
+        self.assertIsNone(checkpoints.recover_review(self.run_dir))
 
 
 class FileToolTests(unittest.TestCase):
@@ -479,8 +689,11 @@ class AdapterTests(unittest.TestCase):
             calls = []
             def transport(argv, timeout, label, **kwargs):
                 calls.append(argv)
+                limited = len(calls) == 1
                 kwargs['stdout_path'].write_text(json.dumps({
-                    'type': 'result', 'subtype': 'success', 'is_error': False, 'session_id': 'abc-session',
+                    'type': 'result', 'subtype': 'error_max_turns' if limited else 'success',
+                    'is_error': limited, 'session_id': 'abc-session',
+                    'errors': ['Reached maximum number of turns (60)'] if limited else [],
                     'structured_output': author(), 'duration_ms': 10, 'num_turns': 2,
                     'usage': {'output_tokens': 12},
                 }))
@@ -489,18 +702,24 @@ class AdapterTests(unittest.TestCase):
                 processes, 'run_process', side_effect=transport
             ):
                 engine = engines.ClaudeEngine()
+                results = []
                 for i in range(2):
                     result = engine.run('implement', 10, schema, log_path=root / f'{i}.transcript.log', workspace=candidate, editable=True)
+                    results.append(result)
                 engine.run('review', 10, schema, log_path=root / 'r.transcript.log', workspace=candidate)
             self.assertEqual(calls[0][calls[0].index('--tools') + 1], '')
             self.assertIn('--restricted', calls[0])
             self.assertNotIn('--safe-mode', calls[0])
             self.assertIn('mcp__candidate__*', calls[0])
             self.assertIn('--max-turns', calls[0])
+            self.assertEqual(calls[0][calls[0].index('--max-turns') + 1], '60')
             self.assertIn('--session-id', calls[0])
             self.assertIn('--resume', calls[1])
             self.assertNotIn('--resume', calls[2])
             self.assertEqual(result.metadata['usage']['output_tokens'], 12)
+            self.assertFalse(results[0].ok)
+            self.assertEqual(results[0].metadata['subtype'], 'error_max_turns')
+            self.assertIn('Reached maximum number of turns (60)', results[0].note)
             self.assertTrue(result.ok)
 
     def test_codex_uses_required_file_server_and_disables_shell_and_integrations(self):

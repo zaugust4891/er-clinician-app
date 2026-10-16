@@ -12,7 +12,9 @@ verification passes; current local gates and account/provider discovery are reco
 the [dated audit](../ops/step8-audit-2026-10-14.md). S4/S5 application resources remain
 unapplied pending budget and later dependencies. **2026-10-15:** S6 code/offline checks
 are implemented; its live IAM/RDS/ECS gate is unperformed. See the
-[S6 implementation record](#implementation-record--s6-2026-10-15). S7 onward remain a plan.*
+[S6 implementation record](#implementation-record--s6-2026-10-15). S7 code and local
+checks are complete; its AWS acceptance remains pending in the
+[S7 implementation record](#implementation-record--s7). S8 onward remain a plan.*
 
 **Sources:** [Phase 4 playbook](phase4-implementation-guide.md), [Phase 4 plan](phase4.md),
 [Step 3 Postgres guide](phase4-step3-postgres-guide.md),
@@ -45,6 +47,7 @@ handoff remain binding even after the staging gate passes.
 - [Implementation record — S4 (2026-09-14)](#implementation-record--s4-2026-09-14)
 - [Implementation record — S5 (2026-10-09)](#implementation-record--s5-2026-10-09)
 - [Implementation record — S6 (2026-10-15)](#implementation-record--s6-2026-10-15)
+- [Implementation record — S7](#implementation-record--s7)
 - [Current state audit](#current-state-audit)
 - [Target file layout](#target-file-layout)
 - [Concepts and decisions](#concepts-and-decisions)
@@ -414,6 +417,132 @@ unsafe bootstrap rollback, rejected old passwords, exact-version promotion and C
 trust/PassRole boundaries. The [verification record](../ops/identity-verification.md)
 distinguishes offline evidence from unperformed actual-role encrypted operations,
 secret injection/logging, Bedrock invocation, RDS behavior and ECS rotation.
+
+---
+
+## Implementation record — S7
+
+**Status (2026-10-15): code and local validation complete; live acceptance pending.**
+This pass finishes S7 implementation before AWS setup. It creates no pool, user,
+secret or smoke role and claims no live `/v1/me` or cross-org pass. The October 14
+audit discovered the sandbox pool; the detailed S7 adoption inventory is still
+pending. Local gates do not substitute for the live criteria below, which need
+an authorized operator with staging AWS access following
+`docs/ops/auth-onboarding.md`:
+
+| Live acceptance item | Evidence |
+|---|---|
+| Read-only sandbox inventory and recorded import-or-new decision | Pending |
+| Pool/client applied with a reviewed no-replacement plan | Pending |
+| Two synthetic users created; passwords only in the smoke secret | Pending |
+| `er-onboard` apply against the staging DB: `created, created` | Pending |
+| Re-run reports `unchanged, unchanged`, no added rows or transfers | Pending |
+| Both real access tokens: deployed `/v1/me` 200 with distinct expected orgs | Pending |
+| Expired, wrong-pool, wrong-client, ID, dev, missing-bearer, unknown-`sub`: all 401 | Pending |
+| Cross-org patient/event/snapshot/audio/job/export reads and writes: same 404 as absent ids | Pending |
+
+Implemented code:
+
+| Component | Implemented behavior |
+|---|---|
+| `crates/er-server/src/auth/keys.rs` | JWKS fetch is HTTPS-only (`from_url` refuses other schemes), follows no redirects, has a 5 s connect/whole-request timeout and a 64 KiB streamed body cap, and rejects malformed or empty key sets and any set containing a key that is not a valid RSA public key usable for RS256 signatures (`oct`, `use: enc`, another declared `alg`, a missing/empty `kid`, a modulus under 2048 bits or even, or an exponent that is even, below 2 or out of `rsa` crate bounds is refused) before it can replace the cache. One refresh runs at a time; concurrent misses wait for it and re-check the cache. At most one attempt per 30 s cooldown, successful or not; unknown `kid`s inside the window fail from cache. A failed fetch keeps last-known-good keys and never admits the unknown key |
+| `crates/er-server/src/auth/mod.rs` | Distinct `AuthError` variants for JWKS status, size, parse, empty-set and unusable-key failures (all still 401 at the middleware) |
+| `crates/er-server/src/onboarding.rs` | Privileged membership path run as the onboarding login. Validates canonical lowercase UUID subjects, bounded printable names, and a `Synthetic ` prefix outside production; one subject per request. Applies all entries in one transaction: creates orgs/clinicians, re-runs are `unchanged`, same-org display-name changes are the only update, and an existing subject bound to another org or an org id with a different name refuses and rolls back the whole request. Revocation rebinds the subject to `revoked:<sub>` (no token can carry it) and keeps the row and its org for history; a later request for a revoked subject is refused (`subject_revoked` for the same org, `subject_bound_to_another_org` otherwise), so re-seeding neither re-grants nor moves it. Apply and revoke transactions serialize on one advisory lock |
+| `infra/envs/staging/foundation/{auth,identity,locals,variables}.tf` | `var.auth` (default disabled) gates `module.auth[0]`; when enabled the manifest gains `cognito_pool_id`, `cognito_client_id`, `cognito_region`, and the identity module's onboarding role gets `AdminGetUser` on that pool. Production root unchanged. `scripts/tf-network-check.sh` now copies the module so the root initialises |
+| `docs/ops/auth-onboarding.md`, `docs/ops/staging-deploy.md` | Runbook: read-only sandbox inventory and import-or-new decision, pool enablement, synthetic users with passwords only in the scoped secret, `sub` lookup and `er-onboard` request, smoke access-token flow, recorded staging MFA exception, cache lifetimes, emergency offboarding sequence. Not executed |
+| `infra/modules/auth/` | New module, composed only by the staging root. Cognito pool with self-signup off, `admin_only` recovery, mandatory TOTP MFA, no custom attributes (no `custom:org_id`), `deletion_protection = ACTIVE` and `prevent_destroy`. Secretless native client with SRP and refresh flows, explicit 60 min access/ID and 12 h refresh lifetimes (bounded by validation), token revocation, `prevent_user_existence_errors`. Hosted login is off unless exact `callback_urls` are given, then code flow only; wildcard and plain-http URLs are refused. `synthetic_smoke_exception` (staging-only by validation) makes MFA optional, adds `ALLOW_USER_PASSWORD_AUTH`, and creates an empty `<name>/synthetic-smoke-credentials` secret under a dedicated rotating KMS key for the identity module's `ci.smoke_*` inputs. No users or passwords in Terraform |
+| `config.rs`, `src/bin/onboard.rs`, `Cargo.toml`, `Dockerfile` | `OnboardingConfig` takes `ONBOARDING_ACTION=apply\|revoke` and a 1–100 entry `ONBOARDING_REQUEST` JSON list that refuses unknown fields; errors never echo values. The `er-onboard` one-shot binary prints only per-entry outcomes (`created/unchanged/renamed/revoked/absent`) and a fixed status/reason, bounded by a 60 s timeout |
+
+**Tests:** `keys.rs` covers real key rotation to an independently generated RSA
+pair (new token verifies, a retired-key signature relabeled with the new kid
+fails, the retired kid is refused), an unavailable (503), empty, malformed-RSA,
+kid-less, invalid-RSA-parameter (zero/1/even exponent, short or even modulus) or
+incompatible (HMAC, encryption-use, RS512) JWKS keeping cached keys, including
+through the refresh cooldown, 200 concurrent
+random kids causing exactly one upstream fetch, refused redirects, oversized and
+malformed bodies, and a slow endpoint bounded by the timeout. `onboarding.rs`
+runs as the converged onboarding grant: two orgs seeded once and resolved to
+distinct orgs, idempotent rerun with no added rows, refused transfer with full
+rollback, org-name mismatch, rename, revocation denial for a fresh resolver, a
+revoked subject refused both re-grant to its org and transfer to another (no
+second row, tombstone keeps its org), and input validation. `tests/config_gate.rs` covers the onboarding request gate.
+`infra/modules/auth/tests/auth.tftest.hcl` (mocked plans) pins the default pool
+and client settings, code-only hosted login with exact redirects, the scoped
+staging exception, and refuses the exception in production, wildcard and
+plain-http callbacks, logout URLs without hosted login, and over-long tokens.
+The pool's schema comes only from `local.custom_attributes`, which the test pins
+empty (a computed schema is unknown at mocked plan time); a pool postcondition
+also refuses any `org` attribute on the real pool after apply. The module is
+validated and tested by `scripts/tf-data-check.sh` against the staging lock.
+`tests/cognito_token_gate.rs` runs the real router in `AuthConfig::Cognito` mode
+(synthetic pool/client, dev key standing in for the pool key): two access tokens
+reach `/v1/me` with distinct orgs and clinician ids; expired, other-pool issuer,
+other-pool key under a colliding kid, wrong or missing `client_id`, ID token,
+missing `token_use`, dev-issuer token, unknown subject, garbage, missing bearer
+and non-bearer scheme are each 401 against a 200 positive control. Org B's
+patient is seeded with real events and an owner-stored snapshot, so note,
+events, snapshot and export are each 200 for org B; for org A each returns the
+same 404 as a never-existed id. A cross-org snapshot PUT is the same 404 as one
+to an absent id and leaves org B's checkpoint unchanged. An org-B job is 200 for
+its owner and 404 for org A. An existing audio row is readable by its owner;
+foreign status/completion calls match absent IDs, including response bodies.
+Valid cross-org event/audio/MDM writes and shift reads/end requests return the
+same 404 as absent resources without changing events, chunks, jobs or the owner's
+active shift. Offboarding is exercised through the router: the old task's cached
+membership still works, while a fresh task denies the same unexpired token.
+These tests pin the Cognito token contract with local stand-in keys, not live Cognito.
+
+The staging root's `data.tftest.hcl` asserts auth is off by default (no
+`cognito_*` manifest keys) and that a plan with `auth.enabled` creates the module
+and publishes all three keys. The root's non-secret `auth` output (pool/client ids,
+issuer, smoke secret and KMS key ARNs) is null by default, carries the smoke ARNs
+when enabled (the mocked plan cannot populate ARNs, so the test pins the plan-known
+`synthetic_smoke_secret_name` and the output's keys), and has a null smoke secret
+name and ARNs without the exception. The runbook reads `SMOKE_SECRET_ARN` from that output, disables shell
+tracing before generating or setting passwords and keeps it off through smoke
+authentication, and captures the smoke access token directly into a variable, so
+neither passwords nor tokens are printed.
+
+**Final local closure (2026-10-15):**
+
+- JWKS startup/refresh rejects duplicate key IDs. The regression proves that an
+  ambiguous response preserves the last-known-good keys and consumes the refresh
+  cooldown, so it cannot replace the cache or trigger unlimited refetches.
+- API config rejects empty/malformed pool suffixes and pools in another Region
+  before JWKS I/O. The staging release root requires all three Cognito settings
+  and rejects absent/empty IDs and pool/Region mismatch. Five mocked release
+  consumer cases are included in `scripts/tf-data-check.sh`.
+- `cargo test --workspace --locked` passed **338 tests**, with zero failures or
+  ignored tests. After the final configuration validation change, the focused
+  `config_gate` suite passed **10 tests**, including the new malformed-pool case.
+- Workspace format and `cargo clippy --workspace --all-targets --locked -- -D warnings`
+  passed. Terraform format and the data/auth/identity/foundation/release gate passed
+  **48 mocked runs** using the installed, locked AWS provider 6.64.0 in temporary
+  backend-disabled copies. The network/foundation regression gate passed **27
+  mocked runs** (foundation cases overlap with the data gate). These results do
+  not demonstrate AWS authorization.
+
+Rust tests use local PostgreSQL/MinIO/ElasticMQ and synthetic credentials. For
+reproduction, start the Compose stack and set only its development credentials:
+
+```bash
+DATABASE_URL=postgres://postgres:dev@localhost:5433/ernote \
+AWS_ACCESS_KEY_ID=dev AWS_SECRET_ACCESS_KEY=devdevdev \
+AWS_REGION=us-east-1 AWS_EC2_METADATA_DISABLED=true \
+cargo test --workspace --locked
+./scripts/tf-data-check.sh
+./scripts/tf-network-check.sh
+```
+
+Private ECS templates and deployment/smoke workflow activation remain S8/S11.
+The auth module remains disabled by default and production has not been enabled.
+
+**Limitations / remaining S7 work:** `ci.smoke_*` stays an operator input fed from
+the auth outputs; the read-only sandbox inventory, apply, user provisioning,
+onboarding runs and every live check in `docs/ops/auth-onboarding.md` are
+unperformed, so no real Cognito token has reached `/v1/me`. A running API task keeps a
+cached membership after revocation until its cache entry expires or the task is
+replaced; Cognito user disablement does not revoke already-issued access tokens.
 
 ---
 

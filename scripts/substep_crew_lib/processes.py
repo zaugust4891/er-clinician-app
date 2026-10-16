@@ -165,6 +165,7 @@ def run_process(
     stdout_path: Path | None = None,
     input_text: str | None = None,
     cwd: Path | None = None,
+    inherit_env: bool = True,
 ) -> Result:
     """Run *argv*, tee combined output, and return an exit-status result.
 
@@ -213,7 +214,7 @@ def run_process(
             stderr=subprocess.PIPE if stdout_capture is not None else subprocess.STDOUT,
             stdin=stdin,
             bufsize=0,
-            env={**os.environ, **(env or {})},
+            env={**(os.environ if inherit_env else {}), **(env or {})},
             start_new_session=os.name == "posix",
         )
         assert proc.stdout is not None

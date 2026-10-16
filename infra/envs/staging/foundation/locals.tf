@@ -68,6 +68,14 @@ locals {
     api_execution_role_arn       = module.identity[0].execution_role_arns.api
     worker_execution_role_arn    = module.identity[0].execution_role_arns.worker
     migration_execution_role_arn = module.identity[0].execution_role_arns.migration
+
+    # S7 (next map), only once the pool exists: the API's COGNITO_* values, nothing secret.
+    }, {
+    for key, value in {
+      cognito_pool_id   = one(module.auth[*].user_pool_id)
+      cognito_client_id = one(module.auth[*].client_id)
+      cognito_region    = var.aws_region
+    } : key => value if var.auth.enabled
   })
 
   manifest_secret_refs = {

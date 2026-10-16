@@ -1,5 +1,8 @@
 //! S1: every negative case fails synchronously, before DB/JWKS/AWS/provider I/O.
-use er_server::config::{AppEnv, BootstrapConfig, Config, MigrationConfig, WorkerConfig};
+use er_server::config::{
+    AppEnv, BootstrapConfig, Config, MigrationConfig, OnboardingConfig, OnboardingRequest,
+    WorkerConfig,
+};
 use std::collections::BTreeMap;
 
 fn values() -> BTreeMap<String, String> {
@@ -48,6 +51,27 @@ fn cloud() -> BTreeMap<String, String> {
         std::env::current_exe().unwrap().display().to_string(),
     );
     vars
+}
+
+#[test]
+fn cognito_pool_must_have_a_nonempty_region_scoped_identifier() {
+    assert!(Config::from_values(&cloud()).is_ok());
+    for pool in [
+        "us-east-1_",
+        "us-east-1_bad_pool",
+        "us-east-1_bad-pool",
+        "us-east-2_synthetic",
+    ] {
+        let mut vars = cloud();
+        vars.insert("COGNITO_POOL_ID".into(), pool.into());
+        let error = Config::from_values(&vars)
+            .err()
+            .expect("invalid pool must fail before JWKS I/O");
+        assert_eq!(
+            error.to_string(),
+            "Cognito identifiers or region are invalid"
+        );
+    }
 }
 
 #[test]
@@ -286,6 +310,62 @@ fn bootstrap_requires_four_distinct_generated_logins() {
         missing.remove(key);
         assert!(
             BootstrapConfig::from_values(&missing).is_err(),
+            "must set {key}"
+        );
+    }
+}
+
+/// S7: onboarding takes an explicit action and a bounded entry list; staging
+/// accepts synthetic identities only, and errors never echo the request.
+#[test]
+fn onboarding_requires_an_explicit_bounded_request() {
+    const SUB: &str = "0b5f6c1e-6f0a-4c39-9a0e-2d1f0e7c5a11";
+    let entry = format!(
+        r#"[{{"org_id":"00000000-0000-0000-0000-0000000000a1","org_name":"Synthetic Org A",
+            "cognito_sub":"{SUB}","display_name":"Synthetic Clinician A"}}]"#
+    );
+    let mut vars = cloud();
+    vars.insert("ONBOARDING_ACTION".into(), "apply".into());
+    vars.insert("ONBOARDING_REQUEST".into(), entry);
+    let config = OnboardingConfig::from_values(&vars).unwrap();
+    assert!(config.synthetic_only(), "staging is synthetic-only");
+    assert!(matches!(&config.request, OnboardingRequest::Apply(e) if e.len() == 1));
+
+    let mut revoke = vars.clone();
+    revoke.insert("ONBOARDING_ACTION".into(), "revoke".into());
+    revoke.insert(
+        "ONBOARDING_REQUEST".into(),
+        format!(r#"[{{"org_id":"00000000-0000-0000-0000-0000000000a1","cognito_sub":"{SUB}"}}]"#),
+    );
+    assert!(matches!(
+        OnboardingConfig::from_values(&revoke).unwrap().request,
+        OnboardingRequest::Revoke(_)
+    ));
+
+    for (key, value) in [
+        ("ONBOARDING_ACTION", "move"),
+        ("ONBOARDING_REQUEST", "[]"),
+        ("ONBOARDING_REQUEST", "not json"),
+        // Unknown fields are refused, so a request cannot carry an org claim.
+        (
+            "ONBOARDING_REQUEST",
+            r#"[{"org_id":"00000000-0000-0000-0000-0000000000a1","org_name":"Synthetic Org A",
+                "cognito_sub":"0b5f6c1e-6f0a-4c39-9a0e-2d1f0e7c5a11",
+                "display_name":"Synthetic Clinician A","custom:org_id":"x"}]"#,
+        ),
+    ] {
+        let mut bad = vars.clone();
+        bad.insert(key.into(), value.into());
+        let error = OnboardingConfig::from_values(&bad)
+            .err()
+            .unwrap_or_else(|| panic!("accepted {key}={value}"));
+        assert!(!format!("{error:#}").contains(SUB), "leaked the request");
+    }
+    for key in ["ONBOARDING_ACTION", "ONBOARDING_REQUEST"] {
+        let mut missing = vars.clone();
+        missing.remove(key);
+        assert!(
+            OnboardingConfig::from_values(&missing).is_err(),
             "must set {key}"
         );
     }

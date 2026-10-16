@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 import subprocess
 import time
 from pathlib import Path
@@ -12,7 +13,7 @@ from . import config, guides, patches, prompts, protocol, validation, workspace
 class PatchLoop:
     def __init__(self, guide, sub, sha, pre, roles, run, *, agent_timeout, gate_timeout,
                  gate_set, max_edits, max_rounds, attempts, restored_history=None,
-                 restored_proposal=None, reporter=None, run_timeout=2700):
+                 restored_proposal=None, restored_review=None, reporter=None, run_timeout=2700):
         self.guide, self.sub, self.roles, self.run_dir = guide, sub, roles, run
         self.objective = prompts.implement_prompt(guide, sub, sha, pre)
         self.review_objective = prompts.substep_context(guide, sub, sha, pre)
@@ -20,6 +21,9 @@ class PatchLoop:
         self.max_edits, self.max_rounds, self.attempts = max_edits, max_rounds, attempts
         self.history = list(restored_history or [])
         self.restored_proposal = restored_proposal
+        self.review_feedback = restored_review
+        self.cloud = None
+        self.cloud_approval = None
         self.reporter = reporter
         self.deadline = time.monotonic() + run_timeout
         self.invocations = self.validations = 0
@@ -67,7 +71,8 @@ class PatchLoop:
         patch = self.candidate.diff()
         pending = self.run_dir / 'pending-proposal.json'
         if patch:
-            pending.write_text(json.dumps({'state': self.expected_state, 'author': author, 'proposal': {
+            pending.write_text(json.dumps({'state': self.expected_state, 'author': author,
+                                          'review': self.review_feedback, 'proposal': {
                 'action': 'PATCH', 'patch': patch, 'explanation': (author or {}).get('explanation', 'Interrupted candidate edit'),
                 'context': 'Git-generated candidate diff; unapproved until fresh review.',
                 'context_paths': [], 'completion_evidence': [],
@@ -78,6 +83,7 @@ class PatchLoop:
 
     def call(self, role, kind, prompt, parser):
         feedback = ''
+        continuation = None
         for attempt in range(1, self.attempts + 1):
             self.assert_current()
             self.invocations += 1
@@ -85,7 +91,7 @@ class PatchLoop:
             editable = role == 'implementer'
             before = self.candidate.state()
             stem = f'{self.invocations:03d}-{role}-{kind}'
-            request = prompt + feedback
+            request = (continuation or prompt) + feedback
             (self.run_dir / f'{stem}.prompt.md').write_text(request, encoding='utf-8')
             self.report('proposal' if editable else 'patch-review', restart=True,
                         detail=f'{engine.name}; invocation {self.invocations}; attempt {attempt}')
@@ -99,7 +105,8 @@ class PatchLoop:
                                     log_path=self.run_dir / f'{stem}.transcript.log',
                                     workspace=self.candidate, editable=editable)
                 self.assert_current()
-                if not editable and before != self.candidate.state():
+                after = self.candidate.state()
+                if not editable and before != after:
                     raise protocol.CrewError('Reviewer modified the candidate; approval invalidated')
                 if editable:
                     self.save_draft()
@@ -107,6 +114,21 @@ class PatchLoop:
                 if not final_path.exists():
                     final_path.write_text(result.output, encoding='utf-8')
                 if not result.ok:
+                    limited = editable and result.metadata.get('subtype') == 'error_max_turns'
+                    same_session = (result.metadata.get('session_id')
+                                    and result.metadata['session_id'] == getattr(engine, 'session_id', None)
+                                    and str(self.candidate.root) == getattr(engine, 'session_root', None))
+                    if limited and same_session and before != after and attempt < self.attempts:
+                        # A tool-turn boundary is resumable when the author actually
+                        # progressed. It is not an approval or a synthetic response.
+                        error = 'Claude tool-turn limit reached after candidate progress; continuing the same session'
+                        error_class = 'TurnLimitContinuation'
+                        self.remaining(self.agent_timeout)
+                        continuation = prompts.turn_limit_prompt()
+                        feedback = ''
+                        self.report(detail=f'{error}; next attempt {attempt + 1}/{self.attempts}')
+                        print(f'  {error}; attempt {attempt + 1}/{self.attempts}')
+                        continue
                     # Authentication, quotas, tool startup and invocation timeouts
                     # do not improve when we regenerate the whole implementation.
                     raise protocol.CrewError(f'{role} invocation stopped: {result.note or "unknown transport failure"}; candidate retained')
@@ -186,14 +208,69 @@ class PatchLoop:
         self.metric(stage='publish', applied=True, patch_chars=len(patch))
         self.report(applied_edits=len(self.history), detail='Reviewed change published')
 
+    def block(self, explanation, *, author=None):
+        (self.run_dir / 'blocked.json').write_text(json.dumps({
+            'explanation': explanation, 'author': author, 'state': self.expected_state,
+        }, indent=2), encoding='utf-8')
+        self.report('blocked', status='blocked', detail=explanation, error=None,
+                    edit_summary=(author or {}).get('explanation', explanation))
+        print(f'\nBlocked: {explanation}')
+        return 3
+
+    def cloud_operation(self, request, path, *, approval=None):
+        self.cloud.check_request(request)
+        self.report('cloud', detail=f'Review {request["operation"]["kind"]} before execution')
+        review = self.call('reviewer', 'review', prompts.cloud_review_prompt(
+            self.review_objective, request, str(path)), protocol.parse_review)
+        if review['decision'] != 'APPROVED':
+            return 'Cloud operation rejected; repair the request or its implementation:\n' + json.dumps(review)
+        self.assert_current()
+        self.cloud.check_request(request)
+        if request['operation']['kind'] not in {'terraform_init', 'terraform_plan'} and approval != request['id']:
+            command = shlex.join(['python3', 'scripts/substep_crew.py', '--resume', str(self.run_dir),
+                                  '--approve-cloud', request['id']])
+            self.block(f'Cloud operation needs your approval. Review {path}, then run:\n'
+                       + command)
+            return None
+        self.report('cloud', detail=f'Execute reviewed {request["operation"]["kind"]}')
+        receipt = path.parent / f'execution-{request["id"]}.json'
+        start, artifact, error = time.monotonic(), None, None
+        try:
+            artifact = self.cloud.execute(request, approval=approval, receipt_path=receipt)
+            self.assert_current()
+        except BaseException as exc:
+            error = str(exc) or type(exc).__name__
+            raise
+        finally:
+            self.metric(stage='cloud', operation=request['operation']['kind'], request_id=request['id'],
+                        seconds=time.monotonic() - start, artifact=artifact, ok=error is None, error=error)
+        return f'Cloud operation executed. Read actual evidence with cloud_read_artifact: {artifact}. Continue remaining criteria.'
+
     def run(self, *, skip_implement=False):
         for engine in self.roles.values():
             engine.preflight()
         self.candidate = workspace.Candidate(self.run_dir, self.guide.rel)
+        if self.cloud:
+            self.candidate.cloud_servers = {
+                role: {'cloud': self.cloud.server_config(editable=role == 'author')}
+                for role in ('author', 'reviewer')}
+            self.objective += prompts.cloud_instructions(self.cloud.options)
         self.assert_current()
         self.candidate.preflight()
         self.metric(stage='preflight', ok=True, transport='scoped-file-tools', shell_enabled=False)
         feedback = ''
+        if self.cloud:
+            try:
+                self.cloud.identity()
+            except protocol.CrewError as exc:
+                return self.block(str(exc))
+        if self.cloud_approval:
+            request, path = self.cloud_approval
+            if self.restored_proposal:
+                raise protocol.CrewError('Cannot approve cloud writes while restoring an unreviewed code draft')
+            feedback = self.cloud_operation(request, path, approval=request['id'])
+            if feedback is None:
+                return 3
         if self.restored_proposal:
             patch = self.restored_proposal['patch']
             try:
@@ -207,16 +284,28 @@ class PatchLoop:
             self.candidate.diff()
             self.validate(self.acceptance_paths, final=True)
             feedback += '\nCurrent checks:\n' + self.gate_text
-        failures = review_failures = 0
-        last_findings = None
+        failures = 0
+        rejected_states = set()
         for number in range(1, self.max_edits + 1):
             self.remaining(self.agent_timeout)
             self.report('proposal', edit_number=number, edit_summary='Implement the next coherent candidate change')
-            followup = prompts.followup_prompt(feedback, self.history)
+            followup = prompts.followup_prompt(feedback, self.history, review=self.review_feedback)
             retains_context = bool(getattr(self.roles['implementer'], 'session_id', None))
             prompt = followup if number > 1 and retains_context else self.objective + '\n' + followup
             author = self.call('implementer', 'author', prompt, protocol.parse_author)
             patch = self.save_draft(author)
+            if author['action'] == 'BLOCKED':
+                return self.block(author['explanation'], author=author)
+            cloud_pending = bool(self.cloud and self.cloud.pending.exists())
+            if cloud_pending and not patch:
+                request, path = self.cloud.prepare()
+                feedback = self.cloud_operation(request, path)
+                if feedback is None:
+                    return 3
+                continue
+            if self.candidate.state() in rejected_states:
+                raise protocol.CrewError('Author returned a previously rejected candidate without new changes; '
+                                         'candidate and review feedback retained for --resume')
             names = patches.patch_paths(patch, self.guide.rel) if patch else []
             final = author['action'] == 'COMPLETE'
             if final:
@@ -235,17 +324,17 @@ class PatchLoop:
                 continue
             failures = 0
             review = self.call('reviewer', 'review', prompts.patch_review_prompt(
-                self.review_objective, patch, author, self.gate_text, names, final=final), protocol.parse_review)
+                self.review_objective, patch, author, self.gate_text, names, final=final,
+                previous_review=self.review_feedback), protocol.parse_review)
             self.report(review_summary=review['decision'] + ': ' + review['explanation'])
             if review['decision'] == 'CHANGES_REQUIRED':
-                review_failures += 1
-                findings = json.dumps(review['findings'], sort_keys=True)
-                if review_failures >= self.attempts or findings == last_findings:
-                    raise protocol.CrewError('Review findings remain unresolved; candidate retained without publication')
-                last_findings = findings
-                feedback = 'Fix these concrete findings in the retained candidate:\n' + findings
+                self.review_feedback = review
+                rejected_states.add(self.validated_candidate_state)
+                self.save_draft(author)
+                feedback = 'Resolve the outstanding review findings in the retained candidate before starting another change.'
                 continue
-            review_failures, last_findings = 0, None
+            self.review_feedback = None
+            rejected_states.clear()
             self.remaining(self.agent_timeout)
             self.assert_current()
             if self.validated_candidate_state != self.candidate.state():
@@ -255,6 +344,12 @@ class PatchLoop:
                 approval = patches.ReviewedPatch(patch, self.expected_state, 'APPROVED', review['explanation'])
                 self.pending = approval
                 self.apply_reviewed(approval, patch, proposal_explanation=author['explanation'])
+            if cloud_pending:
+                request, path = self.cloud.prepare()
+                feedback = self.cloud_operation(request, path)
+                if feedback is None:
+                    return 3
+                continue
             if final:
                 self.assert_current()
                 (self.run_dir / 'completion.json').write_text(json.dumps({
@@ -264,4 +359,5 @@ class PatchLoop:
                             edit_number=len(self.history), applied_edits=len(self.history))
                 return 0
             feedback = 'The last change was checked, approved and published. Continue remaining requirements.\n' + self.gate_text
-        raise protocol.CrewError('Edit budget exhausted; candidate retained for resume')
+        detail = ' with unresolved review findings' if self.review_feedback else ''
+        raise protocol.CrewError(f'Edit budget exhausted{detail}; candidate and feedback retained for --resume')

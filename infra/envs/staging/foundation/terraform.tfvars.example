@@ -42,3 +42,10 @@ data = {
   queue_retention_days                    = 4
   dlq_retention_days                      = 14
 }
+
+# S7 Cognito. Enable only after the sandbox-pool inventory in docs/ops/auth-onboarding.md
+# is recorded; a new pool means new subjects. The synthetic smoke exception is the
+# staging default and is recorded there.
+auth = {
+  enabled = false
+}

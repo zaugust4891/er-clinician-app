@@ -114,3 +114,30 @@ def recover_proposal(run_dir: Path, guide_path: str) -> tuple[dict, Path] | None
         except (protocol.CrewError, OSError, ValueError, KeyError, TypeError):
             continue
     return fallback
+
+
+def recover_review(run_dir: Path) -> dict | None:
+    """Recover outstanding findings as repair context, never as approval.
+
+    Read validated review artifacts from older candidate runs too. The pending
+    draft carries feedback across resumes that stop before another review.
+    """
+    history = run_dir / 'applied-history.json'
+    cutoff = history.stat().st_mtime_ns if history.exists() else 0
+    sources = [*run_dir.glob('*-reviewer-review.validated.json'), run_dir / 'pending-proposal.json']
+    sources = [path for path in sources if path.is_file() and not path.is_symlink()
+               and path.stat().st_mtime_ns > cutoff]
+    for path in sorted(sources, key=lambda item: (item.stat().st_mtime_ns, item.name), reverse=True):
+        try:
+            if path.stat().st_size > 2_000_000:
+                return None
+            value = protocol.load_json(path.read_text(encoding='utf-8'))
+            if path.name == 'pending-proposal.json':
+                if 'review' not in value:  # Older drafts did not store review feedback.
+                    continue
+                value = value['review']
+            review = protocol.parse_review(json.dumps(value, ensure_ascii=False))
+            return review if review['decision'] == 'CHANGES_REQUIRED' else None
+        except (protocol.CrewError, OSError, ValueError, TypeError):
+            return None
+    return None

@@ -1,4 +1,4 @@
-# Server, worker, migration and DB bootstrap (Phase 4, Step 8 S1–S6)
+# Server, worker, migration, DB bootstrap and onboarding (Phase 4, Step 8 S1–S7)
 
 S1 hardens application startup and resource use. S2 adds a one-shot migration
 binary and a pinned source-only production image. Infrastructure provisioning
@@ -43,10 +43,21 @@ APP_ENV=dev cargo run --locked -p er-server --bin er-migrate
 docker build --platform linux/amd64 -t er-note-app:local .
 ```
 
-The image contains `/usr/local/bin/er-server`, `er-worker`, `er-migrate`, and `er-db-bootstrap`.
+The image contains `/usr/local/bin/er-server`, `er-worker`, `er-migrate`, `er-db-bootstrap`, and `er-onboard` (S7 membership changes, run as
+the onboarding login).
 Its default entrypoint is the API. ECS worker, migration and bootstrap task
 definitions must set `entryPoint` to the corresponding absolute binary path;
-changing only `command` passes arguments to the API instead.
+changing only `command` passes arguments to the API instead. The onboarding task
+uses `entryPoint=["/usr/local/bin/er-onboard"]` in the same way.
+
+S7's [Cognito/onboarding runbook](../../docs/ops/auth-onboarding.md) defines
+`ONBOARDING_ACTION=apply|revoke` and `ONBOARDING_REQUEST` (a JSON array). Run it
+with the dedicated onboarding DB login after migration. Apply is transactional
+and idempotent, refuses subject reassignment or re-grant after revocation, and
+requires synthetic names outside production. The CLI emits fixed outcomes rather
+than identities. The API validates Cognito access tokens, uses bounded/coalesced
+JWKS refresh, and takes org membership only from the database. Live AWS acceptance
+remains pending; local tests use stand-in signing keys and isolated databases.
 
 SQLx's embedded migrator keeps PostgreSQL advisory locking and validates
 applied checksums on every run. The migration connection sets a 15-second lock

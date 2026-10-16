@@ -30,7 +30,7 @@ def _invocation_final_path(log_path, suffix):
 
 
 class ClaudeEngine(Engine):
-    def __init__(self, model='claude-opus-5-5', *, effort='medium', config_dir=None, max_turns=30):
+    def __init__(self, model='claude-opus-5-5', *, effort='medium', config_dir=None, max_turns=60):
         self.model, self.effort, self.max_turns = model, effort, max_turns
         self.config_dir = config_dir or config.default_claude_config_dir()
         self.name = f'claude:{model} (effort={effort})'
@@ -40,6 +40,8 @@ class ClaudeEngine(Engine):
     def preflight(self):
         if not shutil.which('claude'):
             raise protocol.CrewError('claude CLI not found')
+        if self.max_turns < 1:
+            raise protocol.CrewError('Claude max_turns must be at least 1')
 
     def run(self, prompt, timeout, schema=None, *, log_path=None, workspace=None, editable=False):
         self.preflight()
@@ -49,6 +51,9 @@ class ClaudeEngine(Engine):
         final_path.parent.mkdir(parents=True, exist_ok=True)
         final_path.unlink(missing_ok=True)
         servers = {'candidate': workspace.server_config(editable=editable)} if workspace else {}
+        extra = getattr(workspace, 'cloud_servers', {})
+        if isinstance(extra, dict):
+            servers.update(extra.get('author' if editable else 'reviewer', {}))
         # Restricted mode confines built-in file tools and ignores project/user
         # customization. Built-ins are removed entirely; only our path-checked
         # MCP tools remain. Safe mode is not used: it disables MCP as well.
@@ -59,6 +64,8 @@ class ClaudeEngine(Engine):
                 '--output-format', 'json' if schema else 'text', '--max-turns', str(self.max_turns)]
         if workspace:
             argv += ['--allowedTools', 'mcp__candidate__*']
+            if 'cloud' in servers:
+                argv += ['mcp__cloud__*']
         if schema:
             argv += ['--json-schema', json.dumps(json.loads(schema.read_text()))]
         # Only the author retains context; every review starts independently.
@@ -79,12 +86,15 @@ class ClaudeEngine(Engine):
                 envelope = protocol.load_json(raw)
                 if isinstance(envelope, dict) and envelope.get('type') == 'result':
                     result.metadata = {key: envelope.get(key) for key in
-                                       ('duration_ms', 'duration_api_ms', 'num_turns', 'usage', 'modelUsage', 'subtype', 'session_id')}
+                                       ('duration_ms', 'duration_api_ms', 'num_turns', 'usage', 'modelUsage',
+                                        'subtype', 'session_id', 'terminal_reason')}
                     if editable and envelope.get('session_id'):
                         self.session_id = envelope['session_id']
                     if envelope.get('is_error') is not False or envelope.get('subtype') != 'success':
                         result.ok = False
-                        result.note = str(envelope.get('result') or envelope.get('api_error') or envelope.get('subtype'))
+                        result.note = str(envelope.get('result') or envelope.get('api_error')
+                                          or '; '.join(str(item) for item in (envelope.get('errors') or []))
+                                          or envelope.get('subtype'))
                     elif 'structured_output' not in envelope:
                         result.ok = False
                         result.note = 'Claude returned no structured output'
@@ -129,6 +139,12 @@ class CodexEngine(Engine):
                           'mcp_servers.candidate.args=' + json.dumps(server['args']),
                           'mcp_servers.candidate.required=true',
                           'mcp_servers.candidate.startup_timeout_sec=10']
+            extra = getattr(workspace, 'cloud_servers', {})
+            if isinstance(extra, dict):
+                for name, server in extra.get('author' if editable else 'reviewer', {}).items():
+                    overrides += [f'mcp_servers.{name}.command=' + json.dumps(server['command']),
+                                  f'mcp_servers.{name}.args=' + json.dumps(server['args']),
+                                  f'mcp_servers.{name}.required=true', f'mcp_servers.{name}.startup_timeout_sec=10']
         for setting in overrides:
             argv += ['-c', setting]
         if self.oss:

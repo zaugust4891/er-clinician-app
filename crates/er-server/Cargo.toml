@@ -62,6 +62,10 @@ path = "src/bin/migrate.rs"
 name = "er-db-bootstrap"
 path = "src/bin/db_bootstrap.rs"
 
+[[bin]]
+name = "er-onboard"
+path = "src/bin/onboard.rs"
+
 # Tests drive the server through the real client (S9): `RemoteRepository` runs the
 # same Repository contract suite SQLite and Postgres pass, over HTTP. Only the test
 # build turns on `client`; the server binary still links DTOs only (§C9).

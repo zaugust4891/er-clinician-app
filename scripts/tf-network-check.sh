@@ -7,9 +7,10 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 work="$(mktemp -d)"
 trap 'rm -rf "${work}"' EXIT
 
-# modules/data is copied but not tested here: the foundation roots call it, so their
-# configuration cannot be initialised without it. Its own gate is scripts/tf-data-check.sh.
-for relative in modules/network modules/manifest modules/data modules/identity modules/s3-encryption-guards envs/staging/foundation envs/prod/foundation; do
+# modules/auth and modules/data are copied but not tested here: the foundation roots
+# call them, so their configuration cannot be initialised without them. Their own
+# gate is scripts/tf-data-check.sh.
+for relative in modules/network modules/manifest modules/auth modules/data modules/identity modules/s3-encryption-guards envs/staging/foundation envs/prod/foundation; do
   source_dir="${repo_root}/infra/${relative}"
   test_dir="${work}/infra/${relative}"
   mkdir -p "${test_dir}"

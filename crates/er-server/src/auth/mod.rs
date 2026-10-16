@@ -33,6 +33,16 @@ pub enum AuthError {
     Db(#[from] sqlx::Error),
     #[error("jwks fetch failed: {0}")]
     Fetch(#[from] reqwest::Error),
+    #[error("jwks endpoint returned status {0}")]
+    JwksStatus(u16),
+    #[error("jwks response exceeds {0} bytes")]
+    JwksTooLarge(usize),
+    #[error("jwks response is not a key set: {0}")]
+    JwksInvalid(serde_json::Error),
+    #[error("jwks response contains no keys")]
+    JwksEmpty,
+    #[error("jwks response contains an unusable key")]
+    JwksUnusableKey,
     #[error("keyset is not refreshable(dev mode)")]
     NotRefreshable,
 }

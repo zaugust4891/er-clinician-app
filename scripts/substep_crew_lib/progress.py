@@ -22,12 +22,14 @@ STAGES = {
     'apply': (4, 'Publish reviewed edit'),
     'validation': (5, 'Validate current files'),
     'ready': (5, 'Complete'),
+    'cloud': (3, 'Review or execute cloud operation'),
+    'blocked': (3, 'Waiting for external action'),
     # Read-only monitoring remains compatible with snapshots from older runs.
     'proposal-repair': (1, 'Repair proposal'),
     'context': (2, 'Provide review context'),
     'application': (3, 'Confirm reviewed edit'),
 }
-TERMINAL = {'ready', 'failed', 'interrupted'}
+TERMINAL = {'ready', 'failed', 'interrupted', 'blocked'}
 
 
 def now() -> str:

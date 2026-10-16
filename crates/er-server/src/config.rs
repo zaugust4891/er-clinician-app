@@ -97,13 +97,30 @@ pub struct BootstrapConfig {
     pub logins: crate::bootstrap::Logins,
 }
 
+/// Privileged one-shot membership change, run as the onboarding login.
+pub struct OnboardingConfig {
+    pub runtime: RuntimeConfig,
+    pub request: OnboardingRequest,
+}
+
+pub enum OnboardingRequest {
+    Apply(Vec<crate::onboarding::Membership>),
+    Revoke(Vec<crate::onboarding::Revocation>),
+}
+
 macro_rules! runtime_access {
     ($($ty:ty),+) => { $(impl Deref for $ty {
         type Target = RuntimeConfig;
         fn deref(&self) -> &Self::Target { &self.runtime }
     })+ };
 }
-runtime_access!(Config, WorkerConfig, MigrationConfig, BootstrapConfig);
+runtime_access!(
+    Config,
+    WorkerConfig,
+    MigrationConfig,
+    BootstrapConfig,
+    OnboardingConfig
+);
 
 /// One sequential job per worker. The final 10 seconds of the job budget are
 /// reserved for terminal bookkeeping; shutdown never extends the job deadline.
@@ -290,7 +307,7 @@ impl Env<'_> {
             self.optional("DB_SSL_ROOT_CERT").map(PathBuf::from),
             self.number(
                 "DB_MAX_CONNECTIONS",
-                if matches!(process, "migration" | "db-bootstrap") {
+                if matches!(process, "migration" | "db-bootstrap" | "onboarding") {
                     1
                 } else {
                     5
@@ -351,10 +368,10 @@ impl Config {
                 let client_id = env.required("COGNITO_CLIENT_ID")?;
                 anyhow::ensure!(
                     region == runtime.aws_region
-                        && pool_id.starts_with(&format!("{region}_"))
                         && pool_id
-                            .bytes()
-                            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+                            .strip_prefix(&format!("{region}_"))
+                            .is_some_and(|suffix| !suffix.is_empty()
+                                && suffix.bytes().all(|b| b.is_ascii_alphanumeric()))
                         && client_id.bytes().all(|b| b.is_ascii_alphanumeric()),
                     "Cognito identifiers or region are invalid"
                 );
@@ -487,5 +504,43 @@ impl BootstrapConfig {
             runtime: env.runtime("db-bootstrap")?,
             logins,
         })
+    }
+}
+
+/// Upper bound on one request; two synthetic orgs need a handful of entries.
+const MAX_ONBOARDING_ENTRIES: usize = 100;
+
+impl OnboardingConfig {
+    pub fn from_env() -> anyhow::Result<Self> {
+        Self::from_values(&load_env()?)
+    }
+
+    /// `ONBOARDING_ACTION` is `apply` or `revoke`; `ONBOARDING_REQUEST` is the
+    /// JSON entry list. Errors name the setting, never echo its value.
+    pub fn from_values(values: &Values) -> anyhow::Result<Self> {
+        let env = Env(values);
+        let runtime = env.runtime("onboarding")?;
+        let raw = env.required("ONBOARDING_REQUEST")?;
+        let invalid = |_| anyhow::anyhow!("ONBOARDING_REQUEST is not a valid entry list");
+        let request = match env.required("ONBOARDING_ACTION")?.as_str() {
+            "apply" => OnboardingRequest::Apply(serde_json::from_str(&raw).map_err(invalid)?),
+            "revoke" => OnboardingRequest::Revoke(serde_json::from_str(&raw).map_err(invalid)?),
+            _ => anyhow::bail!("ONBOARDING_ACTION must be apply|revoke"),
+        };
+        let len = match &request {
+            OnboardingRequest::Apply(entries) => entries.len(),
+            OnboardingRequest::Revoke(entries) => entries.len(),
+        };
+        anyhow::ensure!(
+            (1..=MAX_ONBOARDING_ENTRIES).contains(&len),
+            "ONBOARDING_REQUEST must hold 1 to {MAX_ONBOARDING_ENTRIES} entries"
+        );
+        Ok(Self { runtime, request })
+    }
+
+    /// Only production may store non-synthetic names; staging and dev hold
+    /// synthetic identities exclusively.
+    pub fn synthetic_only(&self) -> bool {
+        self.runtime.app_env != AppEnv::Prod
     }
 }

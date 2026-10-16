@@ -115,6 +115,21 @@ variable "network" {
   default = {}
 }
 
+variable "auth" {
+  description = <<-EOT
+    S7 Cognito. Leave disabled until the sandbox-pool inventory is recorded. Staging
+    defaults to the labeled synthetic smoke exception (optional MFA and password
+    sign-in for synthetic users only); hosted login stays off without exact URLs.
+  EOT
+  type = object({
+    enabled                   = optional(bool, false)
+    synthetic_smoke_exception = optional(bool, true)
+    callback_urls             = optional(list(string), [])
+    logout_urls               = optional(list(string), [])
+  })
+  default = {}
+}
+
 variable "ci" {
   description = "S11 opt-in role templates; leave null until GitHub environments and OIDC are reviewed."
   type = object({

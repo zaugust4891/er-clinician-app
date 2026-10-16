@@ -61,6 +61,53 @@ run "data_manifest_and_network_wiring" {
     module.data[0].stt_dlq_name == "${module.data[0].stt_queue_name}-dlq")
     error_message = "Staging adopts S0's 7-day backup retention, and the DLQ keeps the name Config::stt_dlq derives."
   }
+  assert {
+    condition = (length(module.auth) == 0 &&
+    length([for key in keys(local.manifest_resources) : key if startswith(key, "cognito_")]) == 0)
+    error_message = "S7 Cognito stays off until the sandbox-pool inventory enables it."
+  }
+  assert {
+    condition     = output.auth == null
+    error_message = "With auth disabled the root publishes no auth interfaces."
+  }
+}
+
+run "auth_enabled_publishes_cognito_and_scopes_onboarding" {
+  command = plan
+  variables {
+    auth = { enabled = true }
+  }
+
+  assert {
+    condition = (length(module.auth) == 1 &&
+      local.manifest_resources.cognito_region == "us-east-2" &&
+      contains(keys(local.manifest_resources), "cognito_pool_id") &&
+    contains(keys(local.manifest_resources), "cognito_client_id"))
+    error_message = "Enabling S7 publishes the pool, client and region the API needs."
+  }
+  # The mocked plan leaves the ARNs unpopulated, so the secret's configured name
+  # (known at plan time) proves the smoke secret exists and reaches the root output.
+  assert {
+    condition = (output.auth != null &&
+      output.auth.synthetic_smoke_secret_name == "ernote-staging/synthetic-smoke-credentials" &&
+    toset(keys(output.auth)) == toset(["user_pool_id", "client_id", "issuer", "synthetic_smoke_secret_arn", "synthetic_smoke_secret_name", "synthetic_smoke_kms_key_arn"]))
+    error_message = "The root exposes the pool/client ids, issuer and the smoke secret/key ARNs that feed SMOKE_SECRET_ARN and ci.smoke_*."
+  }
+}
+
+run "auth_without_smoke_exception_publishes_no_smoke_arns" {
+  command = plan
+  variables {
+    auth = { enabled = true, synthetic_smoke_exception = false }
+  }
+
+  assert {
+    condition = (output.auth != null &&
+      output.auth.synthetic_smoke_secret_name == null &&
+      output.auth.synthetic_smoke_secret_arn == null &&
+    output.auth.synthetic_smoke_kms_key_arn == null)
+    error_message = "Without the staging exception there is no smoke secret or key to publish."
+  }
 }
 
 run "wrong_account_refused_before_any_data_resource" {

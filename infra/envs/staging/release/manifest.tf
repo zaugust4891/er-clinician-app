@@ -74,6 +74,18 @@ resource "terraform_data" "manifest_guard" {
       error_message = "Foundation manifest is missing S6 secret pointers. Apply the foundation first."
     }
 
+    # S7: a present but empty/mismatched auth configuration is no more deployable
+    # than an absent pool. Match the API's fail-closed Cognito configuration gate.
+    precondition {
+      condition = try(
+        local.manifest.resources.cognito_region == var.aws_region &&
+        can(regex("^${var.aws_region}_[A-Za-z0-9]+$", local.manifest.resources.cognito_pool_id)) &&
+        can(regex("^[A-Za-z0-9]+$", local.manifest.resources.cognito_client_id)),
+        false,
+      )
+      error_message = "Foundation manifest must contain valid Cognito pool/client IDs in this release's Region."
+    }
+
     # Defence in depth against the one mistake that would matter: the manifest module
     # validates this on the way out, and this validates it on the way in.
     precondition {

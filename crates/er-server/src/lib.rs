@@ -5,6 +5,7 @@ pub mod bootstrap;
 pub mod config;
 pub mod db;
 pub mod error;
+pub mod onboarding;
 pub mod privileges;
 pub mod queue;
 pub mod repository;

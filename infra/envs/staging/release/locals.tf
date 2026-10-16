@@ -40,6 +40,9 @@ locals {
     "api_execution_role_arn",
     "worker_execution_role_arn",
     "migration_execution_role_arn",
+    "cognito_pool_id",
+    "cognito_client_id",
+    "cognito_region",
   ]
 
   required_secret_ref_keys = ["api_db", "worker_db", "migration_db", "deepgram"]

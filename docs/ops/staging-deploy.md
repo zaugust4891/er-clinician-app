@@ -8,8 +8,9 @@ pass **25 runs**, with overlapping foundation cases. See the
 [budget worksheet](staging-cost-review-2026-10-14.md). **2026-10-15:** S6 IAM/secret
 containers, DB bootstrap/grants and rotation tooling are authored; see
 [identity verification](identity-verification.md). Their live gate remains unperformed.
-S7–S9 still supply Cognito, compute, edge and telemetry. Release/onboarding/rollback
-workflows remain stubs.
+S7 Cognito, onboarding and local auth gates are authored; its live acceptance is
+pending. S8–S9 still supply compute, edge and telemetry. Release/rollback workflows
+and private onboarding task templates remain S8/S11 work.
 
 Staging is **synthetic-only**. Nothing here authorises real patient audio, transcripts,
 or notes; the pre-PHI conditions in [`deployment-contract.md`](deployment-contract.md)
@@ -32,6 +33,7 @@ remain binding.
 - [Network and connectivity (S4)](#network-and-connectivity-s4)
 - [Data stores and acceptance (S5)](#data-stores-and-acceptance-s5)
 - [Identity and credential bootstrap (S6)](#identity-and-credential-bootstrap-s6)
+- [Cognito and synthetic onboarding (S7)](#cognito-and-synthetic-onboarding-s7)
 - [The foundation manifest](#the-foundation-manifest)
 - [Recovery procedures](#recovery-procedures)
 - [Not yet written](#not-yet-written)
@@ -277,8 +279,9 @@ Then fill in each root's `terraform.tfvars` from its `terraform.tfvars.example`,
 
 The staging foundation plan includes S4 networking, S5 data and S6 identity resources, with
 recurring NAT/IP, RDS, storage and key charges. Review the full-stack budget before
-applying. The release root requires the authored S4–S6 manifest keys; older manifests
-fail its required-key guard. S7–S9 still add Cognito, compute, edge and telemetry.
+applying. The staging release root requires the authored S4–S7 manifest keys,
+including valid Cognito pool/client IDs in its Region; older or auth-disabled
+manifests fail the release guard. S8–S9 still add compute, edge and telemetry.
 Production remains disabled.
 
 ### 5. Verify locking
@@ -438,6 +441,17 @@ Rotation uses a scheduled maintenance window and replacement tasks; no live rota
 success is recorded yet. S6 CI templates default to disabled pending S11 protection
 and final provisioning-policy review.
 
+## Cognito and synthetic onboarding (S7)
+
+`module.auth` is off until the read-only inventory of the Step 4 sandbox pool is
+recorded. Follow [auth-onboarding.md](auth-onboarding.md): inventory, enable the
+synthetic pool (or import a matching one with a no-replacement plan), create two
+synthetic users with passwords only in the scoped smoke secret, seed two orgs
+through `er-onboard`, and validate tokens and cross-org denial through the deployed
+router. It also records the staging-only MFA exception, cache lifetimes and the
+emergency offboarding sequence. Local implementation/tests are available; none of
+these AWS/onboarding acceptance steps has been run against staging yet.
+
 ## The foundation manifest
 
 When the staging foundation root applies, it writes one JSON object:
@@ -448,7 +462,8 @@ s3://<deploy bucket>/envs/staging/foundation-manifest.json
 
 Its authored payload contains network interfaces, audio/queue/database identifiers,
 the data-key ARN, application task/execution role ARNs and runtime secret ARN references.
-S7–S9 add Cognito, ECR, cluster, edge and log groups.
+When auth is enabled it also contains Cognito pool/client/Region settings.
+S8–S9 add ECR, cluster, edge and log groups.
 **ARNs of secrets, never secret values.** The module validates that: a
 `secret_refs` entry that is not a Secrets Manager ARN fails the plan, and a `resources`
 key named like a credential fails the plan. `./scripts/tf-manifest-guards.sh` exercises
@@ -492,7 +507,7 @@ key, and no policy grants deletion of state objects.
 |---|---|
 | Live database, queue and bucket acceptance | S5 configuration authored; S6–S9 dependencies and applied-resource evidence pending |
 | Live IAM/DB/secret/rotation acceptance | S6 code and runbook authored; applied S7–S9 dependencies and probes pending |
-| Cognito pool and synthetic clinician onboarding | S7 |
+| Live Cognito pool and synthetic clinician onboarding evidence | S7 procedure authored; applied pool, users and live checks pending |
 | ECS services, the HTTPS edge, first release | S8, S11 |
 | Log groups, alarms, and what is safe to log | S9 |
 | CI gates reproducing the local test suite | S10 |

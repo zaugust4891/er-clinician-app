@@ -41,3 +41,19 @@ output "identity" {
   description = "S6 operator interfaces: role/secret ARNs and ECS injection references, never values."
   value       = module.identity[0]
 }
+
+output "auth" {
+  description = <<-EOT
+    Non-secret S7 interfaces: pool/client ids, issuer, and the synthetic smoke secret and
+    key ARNs that feed SMOKE_SECRET_ARN and ci.smoke_*. ARNs only, never the credentials.
+    Null while auth is disabled; the smoke ARNs are null without the staging exception.
+  EOT
+  value = var.auth.enabled ? {
+    user_pool_id                = module.auth[0].user_pool_id
+    client_id                   = module.auth[0].client_id
+    issuer                      = module.auth[0].issuer
+    synthetic_smoke_secret_arn  = module.auth[0].synthetic_smoke_secret_arn
+    synthetic_smoke_secret_name = module.auth[0].synthetic_smoke_secret_name
+    synthetic_smoke_kms_key_arn = module.auth[0].synthetic_smoke_kms_key_arn
+  } : null
+}
