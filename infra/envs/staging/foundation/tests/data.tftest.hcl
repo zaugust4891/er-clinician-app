@@ -31,6 +31,14 @@ run "data_manifest_and_network_wiring" {
   }
 
   assert {
+    condition = (length(module.cluster) == 1 &&
+      module.cluster[0].repository_name == "ernote-staging" &&
+      local.manifest_resources.ecr_repository_url == module.cluster[0].repository_url &&
+    local.manifest_resources.ecs_cluster_arn == module.cluster[0].cluster_arn)
+    error_message = "S8 must publish the repository and cluster; the repository name must equal S6's execution-role pull scope."
+  }
+
+  assert {
     condition = (length(module.data) == 1 &&
       local.audio_bucket_name == "ernote-staging-audio-000000000000-us-east-2" &&
       local.manifest_resources.audio_bucket == module.data[0].audio_bucket_name &&

@@ -130,6 +130,15 @@ variable "auth" {
   default = {}
 }
 
+variable "cluster" {
+  description = "S8 ECR untagged-image expiry and cluster settings. Tagged images are never expired; see infra/modules/cluster."
+  type = object({
+    untagged_expiry_days = optional(number, 7)
+    container_insights   = optional(string, "disabled")
+  })
+  default = {}
+}
+
 variable "ci" {
   description = "S11 opt-in role templates; leave null until GitHub environments and OIDC are reviewed."
   type = object({
@@ -139,4 +148,24 @@ variable "ci" {
     smoke_kms_key_arn = string
   })
   default = null
+}
+
+variable "edge" {
+  description = "S8 opt-in ALB/ACM/DNS/WAF. Null creates no edge; an edge starts closed until explicit synthetic validation. Use an existing public Route53 zone."
+  type = object({
+    hostname        = string
+    hosted_zone_id  = string
+    ingress_enabled = optional(bool, false)
+    rate_limit      = optional(number, 2000)
+  })
+  default = null
+}
+variable "operator_image_digest" {
+  description = "Optional reviewed digest for private bootstrap/onboarding JSON templates. Produces no registered/running tasks; S9 must create their log groups first."
+  type        = string
+  default     = null
+  validation {
+    condition     = var.operator_image_digest == null || can(regex("^sha256:[0-9a-f]{64}$", var.operator_image_digest))
+    error_message = "operator_image_digest must be sha256 followed by 64 lowercase hex characters."
+  }
 }

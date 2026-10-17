@@ -20,7 +20,7 @@ run "disabled_production_creates_no_data_resources" {
   command = plan
   assert {
     condition = (length(module.data) == 0 && length(module.identity) == 0 && output.identity == null &&
-      output.data == null &&
+      output.data == null && length(module.cluster) == 0 &&
     length(local.manifest_resources) == 1)
     error_message = "Disabled production must create no database, bucket, queue or key, and must publish nothing about them."
   }

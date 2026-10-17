@@ -48,6 +48,7 @@ handoff remain binding even after the staging gate passes.
 - [Implementation record — S5 (2026-10-09)](#implementation-record--s5-2026-10-09)
 - [Implementation record — S6 (2026-10-15)](#implementation-record--s6-2026-10-15)
 - [Implementation record — S7](#implementation-record--s7)
+- [Implementation record — S8](#implementation-record--s8)
 - [Current state audit](#current-state-audit)
 - [Target file layout](#target-file-layout)
 - [Concepts and decisions](#concepts-and-decisions)
@@ -543,6 +544,131 @@ onboarding runs and every live check in `docs/ops/auth-onboarding.md` are
 unperformed, so no real Cognito token has reached `/v1/me`. A running API task keeps a
 cached membership after revocation until its cache entry expires or the task is
 replaced; Cognito user disablement does not revoke already-issued access tokens.
+
+---
+
+## Implementation record — S8
+
+**Status: implementation complete; live acceptance pending.** All S8 resources,
+runtime changes and local gates are authored. Nothing has been applied or exercised
+in AWS for S8. Services and ingress remain disabled by default. S9 telemetry and
+S11's migration/release workflow are prerequisites to activation. See
+[compute/edge verification](../ops/compute-edge-verification.md) for exact inputs,
+operator templates and the remaining live assertions.
+
+**Repository and cluster (task 1).** `infra/modules/cluster/` creates the ECR
+repository `<project>-<environment>` (the name S6's execution roles already scope
+pulls to), with immutable tags, scan-on-push, `force_delete = false`, and a
+Fargate-only cluster (Container Insights off until S9). Retention relies on a
+tag convention S11 must follow: builds push `sha-<sha>`, and every image is
+tagged `release-<sha>` before any task definition references it. No tagged
+image ever expires automatically. A lifecycle rule's only action is expire, so
+any rule over tagged images has a threshold at which it can delete the running
+or rollback image. The policy's single rule expires untagged images 7 days after
+push, and a precondition rejects any rule that selects tagged images. The build
+must push a single-platform manifest with no index or attestation children.
+Tagged images accumulate until reference-aware cleanup exists; storage cost is
+accepted. (Review fixes: a 20-image count window, and then a 10,000-count
+"shield" rule, each still had an eviction threshold.) Wired into staging
+(`cluster.tf`) and the disabled production
+root, which publish `ecr_repository_url`/`ecs_cluster_arn` in the manifest.
+The target layout's single `compute/` module is split: `cluster/` is the
+foundation half, and release services live in `compute/`, with shared task JSON
+in `task/`.
+Tests: `infra/modules/cluster/tests/cluster.tftest.hcl` (repository settings,
+single untagged-only rule, Fargate-only). The `tests/simulate/` helper evaluates
+the policy JSON as ECR documents it. With 200 failed promotions, a
+4,000-day-old accepted image, a 40,000-day-old rollback target and stale
+candidates, only the stale untagged push expires. A control run shows that a
+count rule over released images evicts both protected images. The staging
+foundation test asserts the name and manifest keys, and the disabled
+production test asserts no cluster. Both Terraform check scripts copy the module.
+
+**Backend-hop TLS (task 7).** `crates/er-server/src/tls.rs` generates a 2048-bit
+RSA key and a minimal self-signed X.509 v3 certificate in memory at startup
+(no key file, no sidecar) and serves it through a `TlsListener` for
+`axum::serve` (TLS 1.3 and 1.2, ring provider, 10 s handshake timeout, at most
+256 handshakes in flight; failed handshakes are dropped without logging peer
+input). The certificate is built from already-locked crates (`rsa`, `sha2`,
+`rustls`, `tokio-rustls`), so no new crate entered `Cargo.lock`. `API_TLS`
+(`config.rs`) defaults to `self-signed` outside dev and rejects `off` there;
+dev defaults to plain HTTP and may opt in. **Security-review assumption:** the
+ALB does not validate target certificates, so this is encryption only; who may
+reach port 8443 is decided by target registration, the task SG and IAM, not mTLS.
+
+**Readiness (task 8).** `/healthz` stays a dependency-free liveness probe.
+`/readyz` (`routes.rs`, `AppState::ready` in `state.rs`) does a pool checkout,
+`SELECT 1`, and checks every API table exists and is readable by the current
+login (`has_any_column_privilege`, so unconverged grants also fail), all within
+3 s. It returns static `{"status":"ready"}` / 503 `{"status":"unavailable"}`;
+the cause is logged as a static reason only. JWKS/queue/TLS initialization
+completes before the port is bound (`main.rs`), so a task that cannot start
+never answers a probe. Deepgram/Bedrock are never called.
+
+**Caching.** Every router response, including 401/404, carries
+`Cache-Control: no-store`. The 2 MiB body cap and static error shapes are unchanged.
+
+**Tests.** `crates/er-server/tests/edge_gate.rs`: readiness 200 → 503 after the
+pool is closed while liveness stays 200; dropping `jobs` fails readiness;
+`no-store` on 401/404; a pinned-certificate client (signature still verified)
+completes TLS 1.3 and TLS 1.2 handshakes and receives `/readyz`, plaintext HTTP
+to the TLS port gets no HTTP response, and two identities differ.
+`config_gate.rs` covers `API_TLS` defaults and rejections; `tls.rs` unit tests
+cover DER length encoding and UTCTime/GeneralizedTime selection.
+
+**Services and private tasks (tasks 2–5).** `infra/modules/compute/` renders API,
+worker and migration JSON from one pinned digest and the versioned manifest.
+`services_enabled` defaults false; templates are available for migration before
+activation. API desired count 2 rolls at 100/200 with AZ rebalancing; worker count 1
+rolls at 0/100 with rebalancing disabled. All tasks are Linux/X86_64 Fargate (services
+pin platform 1.4.0), 512 CPU/1024 MiB, non-root, capabilities dropped, read-only root,
+no scratch mounts, no public IP, and no ECS Exec. Worker stop timeout 120 exceeds its
+100-second drain; API stop 60 exceeds its 30-second request timeout and 45-second
+ALB deregistration. Pool caps are 5/5; maximum normal rolling service demand is 25
+connections, with 10 more reserved for one-shots/admin. A smaller available budget
+is rejected. Previous service task revisions stay active for rollback.
+
+`infra/modules/task/` shares those container restrictions and exact binary paths.
+Foundation exposes digest-pinned bootstrap/onboarding JSON and private network
+configuration only through operator outputs. Bootstrap has no task role, uses the
+master/bootstrap execution boundary, and must pass through `db-secrets.py render`
+to pin staged credentials. Migration is a one-shot template, never an implicitly
+executed Terraform provisioner or an ECS service. The API gets its own DB secret;
+worker gets its own DB plus Deepgram. Role, repository, cluster, target group,
+secret and log-group scopes are checked against the environment. Actual S9 log
+names are required before rendering a release candidate. Production stays disabled;
+its separate production Cognito adoption/wiring remains a prerequisite.
+
+**HTTPS edge (tasks 6, 9–10).** Foundation's optional `edge` creates regional ACM DNS
+validation, the managed Route53 alias, public ALB TLS 1.2/1.3, HTTPS IP targets and
+regional WAF. Listeners wait for WAF association; the target-group output waits for
+the listener so ECS cannot attach prematurely. `edge = null` creates nothing, and
+`ingress_enabled = false` blocks all requests at WAF. Foundation rejects client
+CIDRs without the explicit edge ingress gate. HTTP is absent unless explicitly
+configured to redirect. No runner-IP discovery or automatic allowlist widening.
+
+WAF enforces Common Rule Set and an initial 2,000 requests/300 seconds/IP rule,
+with request sampling/raw logs disabled. ALB body inspection is limited to 8 KiB.
+Only the managed size rule is replaced: a nonterminating label recognizes exact
+JSON POST event batches and PUT snapshots; a later rule blocks other oversize bodies.
+Other managed/rate rules still evaluate these sync requests. The application keeps
+the 2 MiB cap. The native API client now sends a static versioned User-Agent to
+satisfy Common Rule Set's missing-header rule without identifiers. All router
+responses, including outer request timeouts, receive `no-store`.
+
+**Additional local verification.** Terraform tests cover edge TLS/readiness/WAF,
+closed ingress and explicit opening, immutable task JSON, role/secret scopes,
+private placement, rollout settings, disabled activation, pinned manifest versions,
+missing telemetry rejection and connection budgets. Runtime tests also exercise
+pool exhaustion with a four-second outer deadline (readiness returns in three),
+a valid 32 KiB event body and a rejected >2 MiB body, plus the client User-Agent.
+Exact final check results are recorded in the linked verification document.
+
+**Limitations.** No live ALB has negotiated with this listener; ALB backend cipher
+compatibility with ring's ECDHE-RSA-AES-GCM suites remains unverified. Live ACM/DNS,
+WAF false positives, Fargate non-root/read-only memory limits, DB budget, worker
+heartbeat/drain, event preservation under replacement and rollback must pass before
+S8 live acceptance is complete. S9 owns telemetry; S11 activates reviewed releases.
 
 ---
 

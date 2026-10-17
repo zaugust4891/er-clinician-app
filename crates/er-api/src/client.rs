@@ -65,6 +65,12 @@ impl ServerApi {
     /// an event-upload 404 is a real error ("that patient isn't registered").
     async fn send(&self, req: reqwest::RequestBuilder) -> StoreResult<reqwest::Response> {
         let resp = req
+            // AWS Common Rule Set rejects a missing User-Agent. Keep this static:
+            // no device, clinician or patient identifier belongs in the header.
+            .header(
+                reqwest::header::USER_AGENT,
+                concat!("er-note/", env!("CARGO_PKG_VERSION")),
+            )
             .bearer_auth(&self.token)
             .send()
             .await

@@ -1,6 +1,5 @@
-use er_server::{config, routes, state};
+use er_server::{config, routes, state, tls};
 
-use std::time::Duration;
 use tracing_subscriber::{EnvFilter, Layer, layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
@@ -9,20 +8,30 @@ async fn main() -> anyhow::Result<()> {
     // JSON in prod, pretty locally (RUST_LOG)
     let config = config::Config::from_env()?;
     tracing::info!(environment = ?config.app_env, process = "api", "configuration validated");
+    // Key/JWKS/DB/queue and TLS initialization all finish before the port opens,
+    // so a task that cannot start never answers a health check.
     let state = state::AppState::build(&config)
         .await
         .map_err(|_| anyhow::anyhow!("api_initialization_failed"))?;
-    let app = routes::router(state)
-        .layer(axum::extract::DefaultBodyLimit::max(2 * 1024 * 1024))
-        .layer(tower_http::trace::TraceLayer::new_for_http())
-        .layer(tower_http::timeout::TimeoutLayer::with_status_code(
-            axum::http::StatusCode::REQUEST_TIMEOUT,
-            Duration::from_secs(30),
-        ));
+    let identity = match config.tls {
+        config::ApiTls::SelfSigned => Some(tls::ServerIdentity::generate()?),
+        config::ApiTls::Off => None,
+    };
+    let app = routes::router(state).layer(tower_http::trace::TraceLayer::new_for_http());
     let listener = tokio::net::TcpListener::bind(&config.bind).await?; //SIGTERM for ECS
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    match identity {
+        Some(identity) => {
+            let listener = tls::TlsListener::new(listener, &identity)?;
+            axum::serve(listener, app)
+                .with_graceful_shutdown(shutdown_signal())
+                .await?;
+        }
+        None => {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(shutdown_signal())
+                .await?;
+        }
+    }
     Ok(())
 }
 

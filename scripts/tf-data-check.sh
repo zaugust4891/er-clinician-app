@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# S5 data, S6 identity/CI and S7 auth gates. All providers are mocked: no AWS credentials or
+# S5-S8 data, identity, auth, compute and edge gates. All providers are mocked: no AWS credentials or
 # cloud mutations, and no RDS instance, bucket, queue or key is created. Copy only
 # Terraform source/tests and committed provider locks, excluding local tfvars, backend
 # configuration, and state.
@@ -12,7 +12,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 work="$(mktemp -d)"
 trap 'rm -rf "${work}"' EXIT
 
-for relative in modules/auth modules/data modules/identity modules/network modules/manifest modules/s3-encryption-guards envs/staging/foundation envs/staging/release envs/prod/foundation; do
+for relative in modules/edge modules/task modules/compute modules/auth modules/cluster modules/data modules/identity modules/network modules/manifest modules/s3-encryption-guards envs/staging/foundation envs/staging/release envs/prod/foundation envs/prod/release; do
   source_dir="${repo_root}/infra/${relative}"
   test_dir="${work}/infra/${relative}"
   mkdir -p "${test_dir}"
@@ -24,11 +24,22 @@ for relative in modules/auth modules/data modules/identity modules/network modul
     cp "${source_dir}/.terraform.lock.hcl" "${test_dir}/"
   fi
 done
-for module in auth data identity; do
+for module in auth cluster data identity edge compute task; do
   cp "${repo_root}/infra/envs/staging/foundation/.terraform.lock.hcl" "${work}/infra/modules/${module}/"
 done
 
-for relative in modules/s3-encryption-guards modules/auth modules/data modules/identity envs/staging/foundation envs/staging/release envs/prod/foundation; do
+targets=(modules/edge modules/task modules/compute modules/s3-encryption-guards modules/auth modules/cluster modules/data modules/identity envs/staging/foundation envs/staging/release envs/prod/foundation envs/prod/release)
+# Optional explicit targets let a focused rerun use the same isolated workflow.
+if (( $# )); then
+  for requested in "$@"; do
+    case " ${targets[*]} " in
+      *" ${requested} "*) ;;
+      *) echo "Unknown Terraform test target: ${requested}" >&2; exit 2 ;;
+    esac
+  done
+  targets=("$@")
+fi
+for relative in "${targets[@]}"; do
   test_dir="${work}/infra/${relative}"
   # A local filesystem provider mirror is optional; the lock still verifies it.
   init_args=()

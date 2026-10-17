@@ -50,7 +50,7 @@ variable "image_digest" {
     The immutable image to run, as `sha256:<64 hex characters>`. A tag names a release;
     only a digest fixes its bytes, and ECS task definitions here reference
     `<repository>@<digest>`. Supplied by the deploy workflow after it pushes and
-    verifies the image. Unused until Step 8 S8 adds the services.
+    verifies the image. Set it to render templates before enabling services.
   EOT
   type        = string
   default     = null
@@ -59,4 +59,15 @@ variable "image_digest" {
     condition     = var.image_digest == null || can(regex("^sha256:[0-9a-f]{64}$", var.image_digest))
     error_message = "image_digest must be sha256: followed by 64 lowercase hex characters."
   }
+}
+
+variable "services_enabled" {
+  description = "S11 activation after the exact-digest migration succeeds and S9 telemetry is installed. False renders templates without deploying services."
+  type        = bool
+  default     = false
+}
+variable "db_connection_budget" {
+  description = "Application connections available after database/system reserves; initial required budget is 35."
+  type        = number
+  default     = 35
 }

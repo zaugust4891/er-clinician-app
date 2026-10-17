@@ -27,5 +27,5 @@ module "network" {
   # depend on the data module that depends on this network.
   s3_bucket_arns = setunion(var.network.s3_bucket_arns, [local.audio_bucket_arn])
 
-  depends_on = [terraform_data.account_guard]
+  depends_on = [terraform_data.account_guard, terraform_data.ingress_guard]
 }

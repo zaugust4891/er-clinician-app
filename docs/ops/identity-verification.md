@@ -118,8 +118,9 @@ After the approved foundation, registry, log groups and candidate image exist:
    passwords. Wait for bounded worker drain and task termination; preserve queued
    work. First deployment already has workloads disabled. This implementation uses
    scheduled maintenance, with one operator/rotation at a time.
-4. Start from S8's reviewed bootstrap task-definition template. It must use one
-   container named `db-bootstrap`, entryPoint `/usr/local/bin/er-db-bootstrap`, the
+4. Start from S8's reviewed bootstrap task-definition template (foundation's
+   `operator_task_templates["db-bootstrap"]`; see [S8 extraction and placement](compute-edge-verification.md)).
+   It must use one container named `db-bootstrap`, entryPoint `/usr/local/bin/er-db-bootstrap`, the
    exact bootstrap execution role, no task role, Fargate/awsvpc, non-secret DB/TLS
    environment, the candidate image digest and its dedicated log group. Render the
    exact version references:

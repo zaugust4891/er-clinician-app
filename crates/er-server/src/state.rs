@@ -3,7 +3,25 @@ use crate::aws::{self, QueueUrls};
 use crate::config::{AuthConfig, Config};
 use crate::repository::PostgresRepository;
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
+
+/// Shorter than the ALB health-check timeout, so a hung database answers 503
+/// instead of timing the probe out.
+const READINESS_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// Tables the API reads (see `privileges::GRANTS`; `clinicians` is a column
+/// grant). A release whose migration has not run, or whose grants have not
+/// converged, is not ready to take traffic.
+const API_TABLES: &[&str] = &[
+    "public.events",
+    "public.snapshots",
+    "public.clinicians",
+    "public.patients",
+    "public.shifts",
+    "public.shift_patients",
+    "public.audio_chunks",
+    "public.jobs",
+];
 
 /// Resolved audio resource locations. `Config` contains deploy-time names;
 /// this contains the bucket and queue URLs that handlers and workers can use
@@ -89,6 +107,42 @@ impl AppState {
         })
     }
 
+    /// Readiness: a bounded pool checkout, `SELECT 1`, and every table the API
+    /// serves present and readable by this login. Configuration, JWKS and queue
+    /// resolution completed in `build`, before the listener existed. The caller
+    /// sees only a boolean; the cause is logged as a static reason.
+    pub async fn ready(&self) -> bool {
+        let check = async {
+            let mut conn = self.pool.acquire().await?;
+            sqlx::query_scalar::<_, i32>("SELECT 1")
+                .fetch_one(&mut *conn)
+                .await?;
+            sqlx::query_scalar::<_, bool>(
+                "SELECT bool_and(CASE WHEN to_regclass(t) IS NULL THEN false \
+                 ELSE has_any_column_privilege(to_regclass(t), 'SELECT') END) \
+                 FROM unnest($1::text[]) AS t",
+            )
+            .bind(API_TABLES)
+            .fetch_one(&mut *conn)
+            .await
+        };
+        match tokio::time::timeout(READINESS_TIMEOUT, check).await {
+            Ok(Ok(true)) => true,
+            Ok(Ok(false)) => {
+                tracing::warn!(reason = "schema_unavailable", "api not ready");
+                false
+            }
+            Ok(Err(_)) => {
+                tracing::warn!(reason = "database_unavailable", "api not ready");
+                false
+            }
+            Err(_) => {
+                tracing::warn!(reason = "readiness_timeout", "api not ready");
+                false
+            }
+        }
+    }
+
     pub fn repo_for(&self, authed: &AuthedClinician) -> PostgresRepository {
         PostgresRepository::for_org(self.pool.clone(), authed.org_id)
     }
@@ -130,6 +184,7 @@ impl AppState {
         let resolver = Arc::new(auth::resolver::ClinicianResolver::new(pool.clone()));
         let config = Config {
             bind: "127.0.0.1:0".to_string(),
+            tls: crate::config::ApiTls::Off,
             runtime: crate::config::MigrationConfig::from_values(
                 &[
                     ("APP_ENV".into(), "dev".into()),

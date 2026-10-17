@@ -6,8 +6,10 @@ may touch which part of it, and how a release learns what a foundation built**. 
 and S6's [identity module](modules/identity/README.md) are authored and wired into both
 foundations; production remains disabled. S7's [auth module](modules/auth/README.md)
 is wired into staging, disabled until sandbox inventory/adoption is recorded.
-S8–S9 still supply compute, edge and telemetry. The release roots have manifest
-guards but no ECS services or task definitions yet.
+S8's [cluster](modules/cluster/README.md), [edge](modules/edge/README.md),
+[compute](modules/compute/README.md) and shared task templates are implemented and
+locally tested. Services/ingress default off; S9 telemetry and S11 migration/release
+activation remain prerequisites. See [S8 verification](../docs/ops/compute-edge-verification.md).
 
 Status updated **2026-10-14**: approved bootstrap is applied, remote state migrated,
 and live storage/locking/recovery/role checks pass. Data and network gates each pass
@@ -30,8 +32,8 @@ is what makes them separately permissioned and separately breakable.
 | Root | Owns | State key |
 |---|---|---|
 | `bootstrap/` | The state bucket, its KMS key, the deployment-artifact bucket, and the IAM policies and roles that gate access to them | `bootstrap/terraform.tfstate` |
-| `envs/staging/foundation/` | Authored: network, data stores, IAM/secret containers, optional Cognito and manifest wiring. Planned: edge, observability, ECR and cluster | `staging/foundation/terraform.tfstate` |
-| `envs/staging/release/` | Authored: manifest consumption and guards. Planned ownership: ECS services and task definitions only | `staging/release/terraform.tfstate` |
+| `envs/staging/foundation/` | Network/data/IAM, optional Cognito, ECR/cluster, optional HTTPS edge/WAF, private operator templates and manifest. Planned: observability | `staging/foundation/terraform.tfstate` |
+| `envs/staging/release/` | Manifest guards, candidate task templates, opt-in ECS services/task definitions | `staging/release/terraform.tfstate` |
 | `envs/prod/foundation/` | Network, data and identity authored; S7 auth not wired. `enabled = false` | `prod/foundation/terraform.tfstate` |
 | `envs/prod/release/` | Same as staging release. Authored, `enabled = false` | `prod/release/terraform.tfstate` |
 
@@ -99,9 +101,10 @@ python3 -m unittest scripts/test_db_secrets.py
 ./scripts/tf-lock-check.sh        # two concurrent operations cannot share a lock
 ```
 
-The data gate also tests S7's auth module and staging release consumer: a release
-requires valid Cognito pool/client settings in the same Region. Tests use
-backend-disabled temporary copies and mocked AWS reads, not live state or manifests.
+The data gate also tests S7 auth and S8 cluster/edge/task/compute plus both release
+consumers: candidates require a pinned manifest, valid Cognito, S8 placement and S9
+log groups. Optional positional targets (for example `modules/compute`) run a focused
+subset. Tests use backend-disabled copies and mocked reads, not live state/manifests.
 
 ## Conventions
 

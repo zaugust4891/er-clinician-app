@@ -1,5 +1,9 @@
 # Step 8 — live AWS setup and completion checklist
 
+S8's compute/edge code is now implemented locally. Follow the
+[S8 activation and verification guide](compute-edge-verification.md) for its exact
+inputs and remaining live checks; no S8 AWS acceptance box is closed by local tests.
+
 Prepared **2026-10-15** for Phase 4 Step 8: Terraform, CI/CD, and the first
 **synthetic-only staging deployment**.
 

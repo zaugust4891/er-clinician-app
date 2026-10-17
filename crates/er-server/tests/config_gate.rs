@@ -74,6 +74,34 @@ fn cognito_pool_must_have_a_nonempty_region_scoped_identifier() {
     }
 }
 
+const TLS_ERROR: &str = "API_TLS must be self-signed (or off in development only)";
+
+#[test]
+fn cloud_api_always_encrypts_the_backend_hop() {
+    use er_server::config::ApiTls;
+    assert_eq!(Config::from_values(&values()).unwrap().tls, ApiTls::Off);
+    assert_eq!(
+        Config::from_values(&cloud()).unwrap().tls,
+        ApiTls::SelfSigned
+    );
+    for (vars, value, expected) in [
+        (values(), "off", Some(ApiTls::Off)),
+        (values(), "self-signed", Some(ApiTls::SelfSigned)),
+        (values(), "on", None),
+        (cloud(), "self-signed", Some(ApiTls::SelfSigned)),
+        (cloud(), "off", None),
+        (cloud(), "plain", None),
+    ] {
+        let mut vars = vars;
+        vars.insert("API_TLS".into(), value.into());
+        let result = Config::from_values(&vars).map(|config| config.tls);
+        match expected {
+            Some(expected) => assert_eq!(result.unwrap(), expected),
+            None => assert_eq!(result.unwrap_err().to_string(), TLS_ERROR),
+        }
+    }
+}
+
 #[test]
 fn environment_is_explicit_and_dev_providers_remain_optional() {
     let mut vars = values();

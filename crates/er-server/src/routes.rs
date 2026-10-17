@@ -74,14 +74,44 @@ pub fn router(state: AppState) -> Router {
 
     // No auth - load balancer probe. This is the tail expression (no `let`, no `;`),
     // so its value — a Router<()> after `.with_state` — is what `router` returns.
+    // `/readyz` is the ALB target health check: static body, no identifiers.
+    // Every response is `no-store`; nothing here is safe for a shared cache.
     Router::new()
         .route("/healthz", get(healthz))
+        .route("/readyz", get(readyz))
         .merge(v1)
+        .layer(axum::extract::DefaultBodyLimit::max(2 * 1024 * 1024))
+        .layer(tower_http::timeout::TimeoutLayer::with_status_code(
+            StatusCode::REQUEST_TIMEOUT,
+            std::time::Duration::from_secs(30),
+        ))
+        // Outermost: even a timeout or rejected body must not be cached.
+        .layer(middleware::map_response(no_store))
         .with_state(state)
 }
 
+async fn no_store(mut response: axum::response::Response) -> axum::response::Response {
+    response.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-store"),
+    );
+    response
+}
+
+/// Liveness only: the process is serving HTTP. No dependency is consulted.
 async fn healthz() -> impl IntoResponse {
     (StatusCode::OK, Json(json!({ "status": "ok" })))
+}
+
+async fn readyz(State(state): State<AppState>) -> impl IntoResponse {
+    if state.ready().await {
+        (StatusCode::OK, Json(json!({ "status": "ready" })))
+    } else {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({ "status": "unavailable" })),
+        )
+    }
 }
 
 async fn me(authed: AuthedClinician) -> impl IntoResponse {

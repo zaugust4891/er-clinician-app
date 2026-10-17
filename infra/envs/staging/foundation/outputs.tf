@@ -57,3 +57,21 @@ output "auth" {
     synthetic_smoke_kms_key_arn = module.auth[0].synthetic_smoke_kms_key_arn
   } : null
 }
+
+output "edge" {
+  description = "S8 edge interfaces, null until DNS/certificate setup is requested."
+  value       = one(module.edge[*])
+}
+output "operator_task_templates" {
+  description = "Private bootstrap/onboarding RegisterTaskDefinition payloads. Bootstrap must be pinned by db-secrets.py render before registration."
+  value       = { for p, task in module.operator_task : p => task.definition }
+}
+output "operator_task_networks" {
+  value = { for p, task in module.operator_task : p => {
+    awsvpcConfiguration = {
+      subnets        = module.network[0].private_subnet_ids
+      securityGroups = [module.network[0].security_group_ids[p == "db-bootstrap" ? "migration" : "onboarding"]]
+      assignPublicIp = "DISABLED"
+    }
+  } }
+}

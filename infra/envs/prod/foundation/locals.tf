@@ -31,7 +31,7 @@ locals {
   # neither, and the module rejects them.
   # The v1 manifest is map(string): subnet lists are JSON arrays encoded as strings.
   # Release decodes private_subnet_ids with jsondecode, never split on commas.
-  manifest_resources = merge({
+  manifest_resources = merge(local.edge_manifest_resources, {
     deploy_artifacts_bucket = var.deploy_artifacts_bucket
     }, var.enabled ? {
     vpc_id                       = module.network[0].vpc_id
@@ -61,7 +61,20 @@ locals {
     api_execution_role_arn       = module.identity[0].execution_role_arns.api
     worker_execution_role_arn    = module.identity[0].execution_role_arns.worker
     migration_execution_role_arn = module.identity[0].execution_role_arns.migration
+
+    # S8: where release task definitions find their image and run.
+    ecr_repository_url = module.cluster[0].repository_url
+    ecs_cluster_arn    = module.cluster[0].cluster_arn
   } : {})
+
+  edge_manifest_resources = local.edge_enabled ? {
+    api_target_group_arn        = module.edge[0].api_target_group_arn
+    api_base_url                = module.edge[0].api_base_url
+    alb_arn                     = module.edge[0].alb_arn
+    alb_arn_suffix              = module.edge[0].alb_arn_suffix
+    api_target_group_arn_suffix = module.edge[0].target_group_arn_suffix
+    waf_acl_arn                 = module.edge[0].waf_acl_arn
+  } : {}
 
   manifest_secret_refs = var.enabled ? {
     api_db       = module.identity[0].secret_arns.api_db

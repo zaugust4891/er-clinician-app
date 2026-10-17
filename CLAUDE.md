@@ -53,9 +53,10 @@ Key differentiator: **multi-encounter merging** — captures every interaction a
 - No application AWS deployment yet: S3 bootstrap is applied and verified. Step 8 S4–S6 authored
   network/data, scoped IAM/secret containers, `er-db-bootstrap`, runtime grants and maintenance rotation;
   their live acceptance remains pending. S7 Cognito/onboarding code and local tests are complete,
-  with AWS adoption/provisioning/token acceptance pending. ECR/ECS/ALB (S8), telemetry (S9) and
-  CI/CD (S10–S11) remain. Application tests run against docker-compose; production stays disabled
-- The server listens on plain HTTP at `BIND_ADDR`; the HTTPS listener on 8443 that the network security groups expect is S8 work
+  with AWS adoption/provisioning/token acceptance pending. S8 ECR/ECS/ALB/WAF and private
+  task templates are implemented and tested locally; live acceptance remains pending.
+  Telemetry (S9) and CI/CD (S10–S11) remain. Services/ingress default off; production stays disabled
+- The server listens on plain HTTP at `BIND_ADDR` only in dev; outside dev it serves TLS with a per-task in-memory self-signed certificate (`API_TLS`, S8). S8 activation and live checks are in `docs/ops/compute-edge-verification.md`
 - The presigned-upload overwrite race is open: a URL can be replayed within its 15 minutes. Bucket versioning makes the
   original recoverable, not immutable; binding a chunk to a version ID or checksum at completion is Step 9
 

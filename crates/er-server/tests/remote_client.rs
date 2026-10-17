@@ -451,3 +451,20 @@ async fn the_app_layer_runs_unchanged_over_http(pool: PgPool) {
     assert!(text.starts_with("ED PROVIDER NOTE"), "got: {text}");
     assert!(text.contains("Chief Complaint: chest pain"), "got: {text}");
 }
+
+/// The cloud WAF's NoUserAgent_HEADER rule must work with our native client.
+#[tokio::test]
+async fn api_calls_include_a_non_identifying_user_agent() {
+    let edge = axum::Router::new().route(
+        "/v1/shifts/active",
+        axum::routing::get(|headers: axum::http::HeaderMap| async move {
+            match headers.get("user-agent").and_then(|v| v.to_str().ok()) {
+                Some(agent) if agent.starts_with("er-note/") => axum::http::StatusCode::NOT_FOUND,
+                _ => axum::http::StatusCode::FORBIDDEN,
+            }
+        }),
+    );
+    let base = common::spawn_server(edge).await;
+    let api = ServerApi::new(base, "synthetic-access-token");
+    assert!(api.active_shift().await.unwrap().is_none());
+}

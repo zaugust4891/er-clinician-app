@@ -63,11 +63,20 @@ impl RuntimeConfig {
     }
 }
 
+/// How the API listener carries traffic. Cloud always encrypts the ALB → task
+/// hop; plain HTTP exists only for explicit local development.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ApiTls {
+    Off,
+    SelfSigned,
+}
+
 /// HTTP process: no STT/AI credentials or provider initialization.
 #[derive(Clone)]
 pub struct Config {
     pub runtime: RuntimeConfig,
     pub bind: String,
+    pub tls: ApiTls,
     pub auth_mode: AuthConfig,
     pub audio_bucket: String,
     pub stt_queue: String,
@@ -386,9 +395,16 @@ impl Config {
         let bind = env.required("BIND_ADDR")?;
         bind.parse::<std::net::SocketAddr>()
             .map_err(|_| anyhow::anyhow!("BIND_ADDR must be a socket address"))?;
+        let tls = match env.optional("API_TLS").as_deref() {
+            Some("self-signed") => ApiTls::SelfSigned,
+            None if runtime.app_env != AppEnv::Dev => ApiTls::SelfSigned,
+            Some("off") | None if runtime.app_env == AppEnv::Dev => ApiTls::Off,
+            _ => anyhow::bail!("API_TLS must be self-signed (or off in development only)"),
+        };
         Ok(Self {
             runtime,
             bind,
+            tls,
             auth_mode,
             audio_bucket: env.required("AUDIO_BUCKET")?,
             stt_queue: env.required("STT_QUEUE")?,
