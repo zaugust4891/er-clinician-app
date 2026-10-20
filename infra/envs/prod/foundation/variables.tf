@@ -180,3 +180,18 @@ variable "operator_image_digest" {
     error_message = "operator_image_digest must be sha256 followed by 64 lowercase hex characters."
   }
 }
+
+variable "telemetry" {
+  description = "S9 retained logs, audit and alarms. Complete live delivery/canary verification before activation."
+  type = object({
+    alarm_emails            = optional(set(string), [])
+    alarms_enabled          = optional(bool, false)
+    operator_principal_arns = optional(set(string), [])
+    log_retention_days      = optional(number, 14)
+    audit_retention_days    = optional(number, 365)
+    audio_data_events       = optional(bool, false)
+    monthly_budget_usd      = optional(number, 50)
+    db_connection_threshold = optional(number, 35)
+  })
+  default = {}
+}

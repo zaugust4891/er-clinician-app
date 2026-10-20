@@ -46,3 +46,27 @@ pub enum AuthError {
     #[error("keyset is not refreshable(dev mode)")]
     NotRefreshable,
 }
+
+impl AuthError {
+    /// The loggable reason. `Display` can carry a client-supplied `kid`, a
+    /// token subject, or driver/HTTP error text, so it is never logged.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::MissingToken => "missing_token",
+            Self::Jwt(_) => "jwt_invalid",
+            Self::MissingKid => "missing_kid",
+            Self::UnknownKid(_) => "unknown_kid",
+            Self::WrongTokenUse => "wrong_token_use",
+            Self::WrongClientId => "wrong_client_id",
+            Self::UnknownClinician(_) => "unknown_clinician",
+            Self::Db(_) => "auth_db_failed",
+            Self::Fetch(_) => "jwks_fetch_failed",
+            Self::JwksStatus(_) => "jwks_status",
+            Self::JwksTooLarge(_) => "jwks_too_large",
+            Self::JwksInvalid(_) => "jwks_invalid",
+            Self::JwksEmpty => "jwks_empty",
+            Self::JwksUnusableKey => "jwks_unusable_key",
+            Self::NotRefreshable => "jwks_not_refreshable",
+        }
+    }
+}

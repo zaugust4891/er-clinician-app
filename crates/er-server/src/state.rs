@@ -88,13 +88,15 @@ impl AppState {
         };
         let audio = Arc::new(AudioConfig::new(&config.audio_bucket, queues));
 
-        tracing::info!(
-            bucket = %audio.bucket,
-            stt_queue_url = %audio.stt_queue_url,
-            stt_dlq_url = %audio.stt_dlq_url,
-            bootstrapped = config.uses_aws_endpoint_overrides(),
-            "audio infrastructure ready"
-        );
+        if crate::telemetry::admit(concat!(file!(), ":", line!())).is_some() {
+            tracing::info!(
+                bucket = %audio.bucket,
+                stt_queue_url = %audio.stt_queue_url,
+                stt_dlq_url = %audio.stt_dlq_url,
+                bootstrapped = config.uses_aws_endpoint_overrides(),
+                "audio infrastructure ready"
+            );
+        }
 
         Ok(AppState {
             config: config.clone(),
@@ -129,15 +131,21 @@ impl AppState {
         match tokio::time::timeout(READINESS_TIMEOUT, check).await {
             Ok(Ok(true)) => true,
             Ok(Ok(false)) => {
-                tracing::warn!(reason = "schema_unavailable", "api not ready");
+                if crate::telemetry::admit(concat!(file!(), ":", line!())).is_some() {
+                    tracing::warn!(reason = "schema_unavailable", "api not ready");
+                }
                 false
             }
             Ok(Err(_)) => {
-                tracing::warn!(reason = "database_unavailable", "api not ready");
+                if crate::telemetry::admit(concat!(file!(), ":", line!())).is_some() {
+                    tracing::warn!(reason = "database_unavailable", "api not ready");
+                }
                 false
             }
             Err(_) => {
-                tracing::warn!(reason = "readiness_timeout", "api not ready");
+                if crate::telemetry::admit(concat!(file!(), ":", line!())).is_some() {
+                    tracing::warn!(reason = "readiness_timeout", "api not ready");
+                }
                 false
             }
         }

@@ -12,8 +12,10 @@ use er_ai::claude::ClaudeSummarizer;
 use er_ai::summarizer::{AppSummarizer, MockSummarizer};
 use er_ai::transport::ClaudeTransport;
 use er_pipeline::speech_to_text::{AppSpeechToText, MockSpeechToText};
+use std::process::ExitCode;
+
+use er_server::telemetry::{self, StartupFailure};
 use er_server::{aws, config, worker};
-use tracing_subscriber::{EnvFilter, Layer, layer::SubscriberExt, util::SubscriberInitExt};
 
 /// The API server long-polls nothing; the worker does. 20 s is SQS's maximum and
 /// the right default: one held connection replaces a busy loop of empty receives,
@@ -22,16 +24,30 @@ use tracing_subscriber::{EnvFilter, Layer, layer::SubscriberExt, util::Subscribe
 const LONG_POLL_SECONDS: i32 = 20;
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    init_tracing();
+async fn main() -> ExitCode {
+    // JSON and bounded outside dev; installed before config so failures share it.
+    telemetry::init("worker");
+    match run().await {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(failure) => {
+            failure.report();
+            ExitCode::FAILURE
+        }
+    }
+}
 
-    let config = config::WorkerConfig::from_env()?;
+async fn run() -> Result<(), StartupFailure> {
+    let config = config::WorkerConfig::from_env().map_err(StartupFailure::config)?;
     tracing::info!(environment = ?config.app_env, process = "worker", "configuration validated");
 
     // Same pool, same clients, same bootstrap as `AppState::build` — the worker is
     // a second consumer of the identical infrastructure, not a parallel
     // implementation of it.
-    let pool = config.database.connect().await?;
+    let pool = config
+        .database
+        .connect()
+        .await
+        .map_err(StartupFailure::at("database"))?;
     let clients = aws::configured_clients(&config.runtime).await;
 
     let dlq = config.stt_dlq();
@@ -48,15 +64,17 @@ async fn main() -> anyhow::Result<()> {
             &dlq,
         )
         .await
-        .map_err(|_| anyhow::anyhow!("worker_audio_initialization_failed"))?
+        .map_err(|_| StartupFailure::code("audio", "worker_audio_initialization_failed"))?
     } else {
         aws::resolve_queue_urls(&clients.sqs, &config.stt_queue, &dlq)
             .await
-            .map_err(|_| anyhow::anyhow!("worker_queue_resolution_failed"))?
+            .map_err(|_| StartupFailure::code("queue", "worker_queue_resolution_failed"))?
     };
 
-    let stt = build_transcriber(&config)?;
-    let summarizer = build_summarizer(&config).await?;
+    let stt = build_transcriber(&config).map_err(StartupFailure::at("speech_to_text"))?;
+    let summarizer = build_summarizer(&config)
+        .await
+        .map_err(StartupFailure::at("ai_provider"))?;
 
     let ctx = worker::WorkerCtx {
         pool,
@@ -152,19 +170,6 @@ fn build_transcriber(config: &config::WorkerConfig) -> anyhow::Result<AppSpeechT
             Ok(AppSpeechToText::Mock(MockSpeechToText::new()))
         }
     }
-}
-
-fn init_tracing() {
-    let fmt_layer = if std::env::var("RUST_LOG").is_ok() {
-        tracing_subscriber::fmt::layer().json().boxed()
-    } else {
-        tracing_subscriber::fmt::layer().pretty().boxed()
-    };
-
-    tracing_subscriber::registry()
-        .with(EnvFilter::from_default_env())
-        .with(fmt_layer)
-        .init();
 }
 
 /// SIGTERM (what ECS sends before it kills a task) and SIGINT (what Ctrl-C sends).

@@ -1,6 +1,7 @@
 //! One-shot schema migration, then the runtime grants that follow the schema.
 //! Database roles are created beforehand by the one-shot `er-db-bootstrap`.
-use std::time::Duration;
+use er_server::telemetry::{self, StartupFailure};
+use std::{process::ExitCode, time::Duration};
 
 use er_server::config::{AppEnv, MigrationConfig};
 use er_server::privileges;
@@ -14,10 +15,26 @@ const RUN_TIMEOUT: Duration = Duration::from_secs(600);
 const GRANT_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> ExitCode {
+    telemetry::init("migration");
+    match execute().await {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            StartupFailure::at("migration")(error).report();
+            ExitCode::FAILURE
+        }
+    }
+}
+
+async fn execute() -> anyhow::Result<()> {
     let config = MigrationConfig::from_env()
-        .map_err(|_| anyhow::anyhow!("migration_configuration_invalid"))?;
-    let pool = config.database.connect().await?;
+        .map_err(|_| telemetry::Classified("migration_configuration_invalid"))?;
+    // `main` prints its error's Debug chain; a driver error can name hosts or SQL.
+    let pool = config
+        .database
+        .connect()
+        .await
+        .map_err(|_| anyhow::anyhow!("database_connect_failed"))?;
     let result = run(&pool, config.app_env != AppEnv::Dev).await;
     // On a deadline, exiting the process closes the connection and aborts the
     // outstanding database transaction. Do not wait without a bound here.
@@ -32,14 +49,14 @@ async fn run(pool: &PgPool, cloud: bool) -> anyhow::Result<()> {
     migrate(pool).await?;
     let converge = privileges::converge(pool, cloud);
     match tokio::time::timeout(GRANT_TIMEOUT, converge).await {
-        Ok(Ok(true)) => eprintln!("grants status=complete"),
-        Ok(Ok(false)) => eprintln!("grants status=skipped_without_runtime_roles"),
+        Ok(Ok(true)) => tracing::info!(status = "complete", "grants"),
+        Ok(Ok(false)) => tracing::info!(status = "skipped_without_runtime_roles", "grants"),
         Ok(Err(_)) => {
-            eprintln!("grants status=failed");
+            tracing::error!(status = "failed", "grants");
             anyhow::bail!("grants_failed");
         }
         Err(_) => {
-            eprintln!("grants status=timeout");
+            tracing::error!(status = "timeout", "grants");
             anyhow::bail!("grants_failed");
         }
     }
@@ -57,7 +74,7 @@ async fn migrate(pool: &PgPool) -> anyhow::Result<()> {
                 .map(|migration| migration.version)
                 .max()
                 .unwrap_or(0);
-            eprintln!("migration version={version} status=complete");
+            tracing::info!(version, status = "complete", "migration");
             Ok(())
         }
         Ok(Err(error)) => {
@@ -65,7 +82,7 @@ async fn migrate(pool: &PgPool) -> anyhow::Result<()> {
             Err(anyhow::anyhow!("migration_failed"))
         }
         Err(_) => {
-            eprintln!("migration status=run_timeout");
+            tracing::error!(status = "run_timeout", "migration");
             Err(anyhow::anyhow!("migration_failed"))
         }
     }
@@ -81,7 +98,7 @@ fn report_failure(error: &MigrateError) {
         MigrateError::ExecuteMigration(_, version) => (*version, "execution_failed"),
         _ => (0, "database_failed"),
     };
-    eprintln!("migration version={version} status={status}");
+    tracing::error!(version, status, "migration");
 }
 
 #[cfg(test)]

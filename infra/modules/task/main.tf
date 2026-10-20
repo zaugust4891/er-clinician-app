@@ -48,7 +48,7 @@ locals {
     volumesFrom  = []
     portMappings = var.component == "api" ? [{ containerPort = var.api_https_port, hostPort = var.api_https_port, protocol = "tcp" }] : []
     stopTimeout  = var.component == "worker" ? 120 : 60
-    environment  = [for k, v in var.environment : { name = k, value = v }]
+    environment  = [for k, v in merge(var.environment, { RELEASE_ID = split("@", var.image)[1] }) : { name = k, value = v }]
     secrets      = [for k, v in var.secrets : { name = k, valueFrom = v }]
     logConfiguration = {
       logDriver = "awslogs"

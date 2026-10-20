@@ -58,3 +58,8 @@ output "operator_task_networks" {
     }
   } }
 }
+
+output "telemetry" {
+  description = "Restricted operator references; subscriptions and KMS delivery still require live verification."
+  value       = one(module.observability[*])
+}

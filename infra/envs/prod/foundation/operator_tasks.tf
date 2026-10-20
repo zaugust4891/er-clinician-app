@@ -19,5 +19,5 @@ module "operator_task" {
     RUST_LOG           = "info"
   }
   secrets   = module.identity[0].ecs_secrets[each.key]
-  log_group = module.identity[0].log_group_names[each.key]
+  log_group = module.observability[0].log_group_names[each.key]
 }

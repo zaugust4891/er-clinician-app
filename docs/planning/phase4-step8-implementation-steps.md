@@ -14,7 +14,8 @@ unapplied pending budget and later dependencies. **2026-10-15:** S6 code/offline
 are implemented; its live IAM/RDS/ECS gate is unperformed. See the
 [S6 implementation record](#implementation-record--s6-2026-10-15). S7 code and local
 checks are complete; its AWS acceptance remains pending in the
-[S7 implementation record](#implementation-record--s7). S8 onward remain a plan.*
+[S7 implementation record](#implementation-record--s7). S8/S9 code and local checks are complete; their live acceptance remains pending.
+S10 onward remain a plan.*
 
 **Sources:** [Phase 4 playbook](phase4-implementation-guide.md), [Phase 4 plan](phase4.md),
 [Step 3 Postgres guide](phase4-step3-postgres-guide.md),
@@ -49,6 +50,8 @@ handoff remain binding even after the staging gate passes.
 - [Implementation record — S6 (2026-10-15)](#implementation-record--s6-2026-10-15)
 - [Implementation record — S7](#implementation-record--s7)
 - [Implementation record — S8](#implementation-record--s8)
+- [Implementation record — S9](#implementation-record--s9)
+- [Implementation record — S9](#implementation-record--s9)
 - [Current state audit](#current-state-audit)
 - [Target file layout](#target-file-layout)
 - [Concepts and decisions](#concepts-and-decisions)
@@ -669,6 +672,63 @@ compatibility with ring's ECDHE-RSA-AES-GCM suites remains unverified. Live ACM/
 WAF false positives, Fargate non-root/read-only memory limits, DB budget, worker
 heartbeat/drain, event preservation under replacement and rollback must pass before
 S8 live acceptance is complete. S9 owns telemetry; S11 activates reviewed releases.
+
+## Implementation record — S9
+
+**Status: implementation complete; live acceptance pending (2026-10-19).** The
+interrupted candidate's application redaction was recovered, reviewed and completed
+with telemetry infrastructure, operational counters and verification. No application
+foundation/release was applied. See [telemetry verification](../ops/telemetry-verification.md)
+for exact local results, activation, diagnostic SQL and the remaining AWS evidence.
+
+**Application logging (tasks 1–3).** `telemetry.rs` supplies the shared subscriber
+for API, worker, migration, bootstrap and onboarding. Cloud always emits JSON and
+allows only reviewed application targets; dependency SQL/SDK/HTTP logs remain off
+even with `RUST_LOG=trace`. Startup and panic output use static categories, not error
+chains. HTTP uses server-generated correlation, method, matched route template,
+status, duration, service and the digest-based release id. Unmatched paths become
+`unmatched`; successful probes are omitted. All user-controlled request fields and
+patient/encounter/job/chunk identifiers are omitted. Each worker delivery gets fresh
+random correlation. Repeated errors, duplicate/final-failure details and request logs
+are bounded by static category/site, with classified error suppression counts.
+
+**Retained destinations (tasks 4–7).** New `infra/modules/observability/`, wired
+into both foundations, creates all five log groups with explicit 14-day retention,
+a dedicated rotating KMS key, scoped execution grants and an explicit operator read
+role. It provisions an account-wide multi-region management trail with validation,
+versioned protected SSE-KMS audit storage, lifecycle retention and opt-in audio-bucket
+object events. Account trail ownership is intentional; existing organization coverage
+must be inventoried before apply to avoid duplicating or replacing central trails.
+Audit metadata contains linkable keys/principals; it is restricted, not anonymous or
+immutable. WAF samples/raw logs and ALB access logs remain disabled. Native metrics
+provide initial edge visibility. No SSE-S3 exception is needed while ALB logs are off.
+
+The PostgreSQL parameter group suppresses ordinary error messages as well as
+statements/binds/sampling, because the error text itself can echo row values. No
+engine log export, query capture, enhanced monitoring or invocation-body logging is
+enabled. A disposable PostgreSQL regression check verifies effective settings and
+literal/bind-error canary absence; RDS application remains a live gate.
+
+**Progress and alarms (tasks 8–9).** Worker counters aggregate job/provider outcomes,
+classified provider errors, summed latency, input/output/cache tokens and usage-write
+failures. A maximum once-per-minute flush follows a completed receive/handler cycle;
+no detached heartbeat can stay healthy while work is blocked. Two dimension-free
+metric filters expose progress and usage-write failures; other aggregates stay in
+Logs Insights. Native alarms cover target health, target/ALB 5xx, queue age, DLQ,
+RDS storage/connections; SNS email and actual/forecast budgets are configured.
+Notification flags default off, require operator principals/recipients when enabled,
+and are checked by ingress and release-service guards. Email confirmation and actual
+alarm receipt cannot be established offline. Production remains disabled.
+
+**Validation.** Runtime gates cover canaries in HTTP fields, malformed enums, real
+DB errors, provider failures, startup output and invalid queue bodies; a held database
+row lock proves a stalled handler cannot report progress. Unit tests pin bounded
+flush/suppression and classifier behavior. Terraform checks cover encryption context,
+audit grants/retention, selective data events, alarm windows/missing data, release
+digest logging and activation/production guards. The retained agent candidate was
+blocked by MinIO disk capacity; validation uses disposable memory-backed MinIO and
+an endpoint-aware upload test. All remaining live destinations/exercises are listed
+explicitly in the verification record; S10–S12 remain separate work.
 
 ---
 

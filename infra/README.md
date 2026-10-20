@@ -8,7 +8,8 @@ foundations; production remains disabled. S7's [auth module](modules/auth/README
 is wired into staging, disabled until sandbox inventory/adoption is recorded.
 S8's [cluster](modules/cluster/README.md), [edge](modules/edge/README.md),
 [compute](modules/compute/README.md) and shared task templates are implemented and
-locally tested. Services/ingress default off; S9 telemetry and S11 migration/release
+locally tested. Services/ingress default off; S9 telemetry is implemented locally (see
+[verification](../docs/ops/telemetry-verification.md)); its live acceptance and S11 migration/release
 activation remain prerequisites. See [S8 verification](../docs/ops/compute-edge-verification.md).
 
 Status updated **2026-10-14**: approved bootstrap is applied, remote state migrated,

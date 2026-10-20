@@ -1,4 +1,5 @@
 mock_provider "aws" {
+  mock_resource "aws_sns_topic" { defaults = { arn = "arn:aws:sns:us-east-2:000000000000:ernote-staging-alarms" } }
   mock_resource "aws_db_instance" {
     defaults = { master_user_secret = [{ secret_arn = "arn:aws:secretsmanager:us-east-2:000000000000:secret:rds!db-synthetic-AbCdEf", secret_status = "active", kms_key_id = "arn:aws:kms:us-east-2:000000000000:key/00000000-0000-0000-0000-000000000000" }] }
   }
@@ -18,6 +19,11 @@ variables {
 
 run "data_manifest_and_network_wiring" {
   command = apply
+  assert {
+    condition     = length(module.observability) == 1 && local.manifest_resources.api_log_group == "/ecs/ernote-staging/api" && local.manifest_resources.worker_log_group == "/ecs/ernote-staging/worker" && local.manifest_resources.migration_log_group == "/ecs/ernote-staging/migration" && local.manifest_resources.alarm_topic_arn == module.observability[0].alarm_topic_arn && local.manifest_resources.telemetry_notifications_enabled == "false"
+    error_message = "S9 must publish real log groups/topic while activation remains off."
+  }
+
 
   assert {
     condition = (length(module.identity) == 1 &&

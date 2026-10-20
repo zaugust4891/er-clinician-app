@@ -69,6 +69,13 @@ locals {
     worker_execution_role_arn    = module.identity[0].execution_role_arns.worker
     migration_execution_role_arn = module.identity[0].execution_role_arns.migration
 
+    # S9: actual managed groups, with creation completed before manifest publication.
+    api_log_group                   = module.observability[0].log_group_names.api
+    worker_log_group                = module.observability[0].log_group_names.worker
+    migration_log_group             = module.observability[0].log_group_names.migration
+    alarm_topic_arn                 = module.observability[0].alarm_topic_arn
+    telemetry_notifications_enabled = tostring(var.telemetry.alarms_enabled)
+
     # S8: where release task definitions find their image and run.
     ecr_repository_url = module.cluster[0].repository_url
     ecs_cluster_arn    = module.cluster[0].cluster_arn

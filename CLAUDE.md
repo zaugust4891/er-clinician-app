@@ -55,7 +55,9 @@ Key differentiator: **multi-encounter merging** — captures every interaction a
   their live acceptance remains pending. S7 Cognito/onboarding code and local tests are complete,
   with AWS adoption/provisioning/token acceptance pending. S8 ECR/ECS/ALB/WAF and private
   task templates are implemented and tested locally; live acceptance remains pending.
-  Telemetry (S9) and CI/CD (S10–S11) remain. Services/ingress default off; production stays disabled
+  S9 privacy-aware logging, encrypted log/audit destinations and deployment alarms are
+  implemented with local checks; live delivery/canary acceptance remains pending.
+  CI/CD (S10–S11) remains. Services/ingress default off; production stays disabled
 - The server listens on plain HTTP at `BIND_ADDR` only in dev; outside dev it serves TLS with a per-task in-memory self-signed certificate (`API_TLS`, S8). S8 activation and live checks are in `docs/ops/compute-edge-verification.md`
 - The presigned-upload overwrite race is open: a URL can be replayed within its 15 minutes. Bucket versioning makes the
   original recoverable, not immutable; binding a chunk to a version ID or checksum at completion is Step 9
@@ -143,8 +145,8 @@ All automated tests use `MockSummarizer` (no network, deterministic). `crates/er
 
 Implemented per `docs/planning/phase4.md` and, for Step 5, the S0–S11 breakdown in
 `docs/planning/phase4-step5-implementation-steps.md`. Steps 6–7 are summarized in the next
-section; Step 8 (deployment) is in progress with S0–S5 done offline; Steps 9–10 (hardening,
-load) are not started.
+section; Step 8 (deployment) has S0–S9 implemented and locally checked, with remaining
+cloud acceptance and S10–S12 work pending; Steps 9–10 (hardening, load) are not started.
 
 | Step | What landed |
 |---|---|

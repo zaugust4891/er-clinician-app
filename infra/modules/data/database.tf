@@ -37,6 +37,27 @@ resource "aws_db_parameter_group" "postgres" {
     apply_method = "immediate"
   }
 
+  # ERROR messages themselves can include offending values even when statement
+  # logging is off. Keep ordinary engine errors out of persistent logs; API/worker
+  # emit classified codes. Live canary verification also checks pending-reboot state.
+  dynamic "parameter" {
+    for_each = {
+      log_min_messages                  = "panic"
+      log_min_error_statement           = "panic"
+      log_parameter_max_length          = "0"
+      log_parameter_max_length_on_error = "0"
+      log_duration                      = "0"
+      log_min_duration_sample           = "-1"
+      log_statement_sample_rate         = "0"
+      log_transaction_sample_rate       = "0"
+    }
+    content {
+      name         = parameter.key
+      value        = parameter.value
+      apply_method = "immediate"
+    }
+  }
+
   lifecycle {
     create_before_destroy = true
   }
@@ -101,7 +122,8 @@ resource "aws_db_instance" "this" {
 
   apply_immediately = var.db_apply_immediately
 
-  # Enhanced monitoring, Performance Insights and engine log export are S9's telemetry
-  # decisions: each one creates a new destination with its own retention, and exporting
-  # engine logs before S9 sets retention would create an unmanaged copy.
+  # S9 uses native RDS metrics. No engine export, query capture or extra log copies.
+  enabled_cloudwatch_logs_exports = []
+  performance_insights_enabled    = false
+  monitoring_interval             = 0
 }

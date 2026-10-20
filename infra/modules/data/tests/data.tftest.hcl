@@ -320,3 +320,19 @@ run "reject_database_without_security_group" {
   variables { db_security_group_ids = [] }
   expect_failures = [var.db_security_group_ids]
 }
+
+run "database_does_not_persist_clinical_errors_or_binds" {
+  command = plan
+  assert {
+    condition = alltrue([for name, expected in {
+      log_min_messages         = "panic", log_min_error_statement = "panic",
+      log_parameter_max_length = "0", log_parameter_max_length_on_error = "0",
+      log_min_duration_sample  = "-1", log_statement_sample_rate = "0", log_transaction_sample_rate = "0"
+    } : [for p in aws_db_parameter_group.postgres.parameter : p.value if p.name == name][0] == expected])
+    error_message = "SQL errors, sampled statements and bound values must not create clinical log copies."
+  }
+  assert {
+    condition     = length(aws_db_instance.this.enabled_cloudwatch_logs_exports) == 0 && !aws_db_instance.this.performance_insights_enabled && aws_db_instance.this.monitoring_interval == 0
+    error_message = "Do not enable unreviewed database telemetry destinations."
+  }
+}

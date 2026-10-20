@@ -9,7 +9,9 @@ pass **25 runs**, with overlapping foundation cases. See the
 containers, DB bootstrap/grants and rotation tooling are authored; see
 [identity verification](identity-verification.md). Their live gate remains unperformed.
 S7 Cognito, onboarding and local auth gates are authored; its live acceptance is
-pending. S8–S9 still supply compute, edge and telemetry. Release/rollback workflows
+pending. S8–S9 compute, edge and telemetry are authored and locally tested; live acceptance
+remains in [compute/edge](compute-edge-verification.md) and
+[telemetry verification](telemetry-verification.md). Release/rollback workflows
 and private onboarding task templates remain S8/S11 work.
 
 Staging is **synthetic-only**. Nothing here authorises real patient audio, transcripts,
@@ -281,7 +283,7 @@ The staging foundation plan includes S4 networking, S5 data and S6 identity reso
 recurring NAT/IP, RDS, storage and key charges. Review the full-stack budget before
 applying. The staging release root requires the authored S4–S7 manifest keys,
 including valid Cognito pool/client IDs in its Region; older or auth-disabled
-manifests fail the release guard. S8–S9 still add compute, edge and telemetry.
+manifests fail the release guard. S8–S9 now supply compute, edge and telemetry; live acceptance remains pending.
 Production remains disabled.
 
 ### 5. Verify locking
@@ -463,7 +465,7 @@ s3://<deploy bucket>/envs/staging/foundation-manifest.json
 Its authored payload contains network interfaces, audio/queue/database identifiers,
 the data-key ARN, application task/execution role ARNs and runtime secret ARN references.
 When auth is enabled it also contains Cognito pool/client/Region settings.
-S8–S9 add ECR, cluster, edge and log groups.
+S8–S9 provide ECR, cluster, edge and log groups; apply/verify them before starting tasks.
 **ARNs of secrets, never secret values.** The module validates that: a
 `secret_refs` entry that is not a Secrets Manager ARN fails the plan, and a `resources`
 key named like a credential fails the plan. `./scripts/tf-manifest-guards.sh` exercises
@@ -509,6 +511,6 @@ key, and no policy grants deletion of state objects.
 | Live IAM/DB/secret/rotation acceptance | S6 code and runbook authored; applied S7–S9 dependencies and probes pending |
 | Live Cognito pool and synthetic clinician onboarding evidence | S7 procedure authored; applied pool, users and live checks pending |
 | ECS services, the HTTPS edge, first release | S8, S11 |
-| Log groups, alarms, and what is safe to log | S9 |
+| Log groups, alarms, and what is safe to log | S9 implemented locally; [live telemetry acceptance](telemetry-verification.md) pending |
 | CI gates reproducing the local test suite | S10 |
 | Release, rollback, and the staging gate evidence | S11, S12 |

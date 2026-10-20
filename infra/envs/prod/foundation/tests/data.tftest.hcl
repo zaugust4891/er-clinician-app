@@ -1,4 +1,5 @@
 mock_provider "aws" {
+  mock_resource "aws_sns_topic" { defaults = { arn = "arn:aws:sns:us-east-2:000000000000:ernote-staging-alarms" } }
   mock_resource "aws_db_instance" {
     defaults = { master_user_secret = [{ secret_arn = "arn:aws:secretsmanager:us-east-2:000000000000:secret:rds!db-synthetic-AbCdEf", secret_status = "active", kms_key_id = "arn:aws:kms:us-east-2:000000000000:key/00000000-0000-0000-0000-000000000000" }] }
   }
@@ -19,7 +20,7 @@ variables {
 run "disabled_production_creates_no_data_resources" {
   command = plan
   assert {
-    condition = (length(module.data) == 0 && length(module.identity) == 0 && output.identity == null &&
+    condition = (length(module.observability) == 0 && output.telemetry == null && length(module.data) == 0 && length(module.identity) == 0 && output.identity == null &&
       output.data == null && length(module.cluster) == 0 &&
     length(local.manifest_resources) == 1)
     error_message = "Disabled production must create no database, bucket, queue or key, and must publish nothing about them."

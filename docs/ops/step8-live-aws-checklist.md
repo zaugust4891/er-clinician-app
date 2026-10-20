@@ -102,13 +102,14 @@ disabled by default, and have no live acceptance. See the
 [S7 completion record](../planning/phase4-step8-implementation-steps.md#implementation-record--s7).
 The following are implementation prerequisites:
 
-- [ ] **S8 compute and edge:** implement the ECR/ECS/ALB/ACM/DNS/WAF Terraform,
-  release task definitions/services, private one-shot task templates, API HTTPS
-  listener on 8443, and bounded `/readyz` checks. The current tree has no compute
-  or edge modules and no release ECS resources; the API still needs backend TLS.
-- [ ] **S9 telemetry:** implement safe structured logging, worker progress signals,
-  log groups, audit configuration, alarms, and privacy-canary checks before live
-  provider traffic. Create log groups for bootstrap/onboarding as well as services.
+- [x] **S8 compute and edge — code/local gates:** ECR/ECS/ALB/ACM/DNS/WAF,
+  private task templates, API TLS and readiness are implemented. Live acceptance is
+  pending in [compute/edge verification](compute-edge-verification.md).
+- [x] **S9 telemetry — code/local gates:** allowlisted structured logging, bounded
+  worker progress/counters, encrypted groups for all five entrypoints, restricted audit
+  storage, alarms and canary tests are implemented. **Live acceptance is pending**
+  in [telemetry verification](telemetry-verification.md); confirm notification delivery,
+  RDS parameters and every configured destination before traffic.
 - [ ] **S10 CI:** add required PR checks for formatting, Clippy, workspace/local
   integration tests, feature boundaries, SQLx cache, Terraform, and image/runtime
   packaging. The `.github/workflows/` directory is absent in this working tree.

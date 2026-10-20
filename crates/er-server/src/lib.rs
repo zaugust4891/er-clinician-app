@@ -11,5 +11,6 @@ pub mod queue;
 pub mod repository;
 pub mod routes;
 pub mod state;
+pub mod telemetry;
 pub mod tls;
 pub mod worker;

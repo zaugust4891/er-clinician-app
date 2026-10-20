@@ -10,7 +10,7 @@ trap 'rm -rf "${work}"' EXIT
 # modules/auth, modules/cluster and modules/data are copied but not tested here: the
 # foundation roots call them, so their configuration cannot be initialised without
 # them. Their own gate is scripts/tf-data-check.sh.
-for relative in modules/network modules/manifest modules/edge modules/task modules/compute modules/auth modules/cluster modules/data modules/identity modules/s3-encryption-guards envs/staging/foundation envs/prod/foundation; do
+for relative in modules/observability modules/network modules/manifest modules/edge modules/task modules/compute modules/auth modules/cluster modules/data modules/identity modules/s3-encryption-guards envs/staging/foundation envs/prod/foundation; do
   source_dir="${repo_root}/infra/${relative}"
   test_dir="${work}/infra/${relative}"
   mkdir -p "${test_dir}"
@@ -21,6 +21,15 @@ for relative in modules/network modules/manifest modules/edge modules/task modul
   if [[ -f "${source_dir}/.terraform.lock.hcl" ]]; then
     cp "${source_dir}/.terraform.lock.hcl" "${test_dir}/"
   fi
+done
+
+# Terraform 1.10 mock-apply teardown still enforces prevent_destroy. Verify the
+# two source guards exist, then relax ONLY the disposable mocked copy for cleanup.
+# Nothing below runs an unmocked plan/apply or touches a real backend/state.
+for file in main.tf audit.tf; do
+  guard_file="${repo_root}/infra/modules/observability/${file}"
+  rg -q 'prevent_destroy = true' "${guard_file}"
+  sed -i 's/prevent_destroy = true/prevent_destroy = false/' "${work}/infra/modules/observability/${file}"
 done
 cp "${repo_root}/infra/envs/staging/foundation/.terraform.lock.hcl" "${work}/infra/modules/network/"
 

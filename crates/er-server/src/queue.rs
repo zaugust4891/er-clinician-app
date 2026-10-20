@@ -40,12 +40,13 @@ pub enum Job {
 /// knows what a send failure means for the request it is answering.
 pub async fn send_job(sqs: &aws_sdk_sqs::Client, queue_url: &str, job: &Job) -> anyhow::Result<()> {
     let body = serde_json::to_string(job).context("serialize background job")?;
+    // SDK errors can include request details; keep a stable code only (S9).
     sqs.send_message()
         .queue_url(queue_url)
         .message_body(body)
         .send()
         .await
-        .with_context(|| format!("failed to enqueue job on {queue_url}"))?;
+        .map_err(|_| crate::telemetry::Classified("queue_send_failed"))?;
     Ok(())
 }
 

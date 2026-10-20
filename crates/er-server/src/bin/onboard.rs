@@ -1,7 +1,8 @@
 //! One-shot privileged membership change inside the VPC, run as the onboarding
 //! login. It prints one fixed outcome per entry, in request order: never a
 //! subject, a name or a credential.
-use std::time::Duration;
+use er_server::telemetry::{self, StartupFailure};
+use std::{process::ExitCode, time::Duration};
 
 use er_server::{
     config::{OnboardingConfig, OnboardingRequest},
@@ -11,9 +12,20 @@ use er_server::{
 const RUN_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> ExitCode {
+    telemetry::init("onboarding");
+    match execute().await {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            StartupFailure::at("onboarding")(error).report();
+            ExitCode::FAILURE
+        }
+    }
+}
+
+async fn execute() -> anyhow::Result<()> {
     let config = OnboardingConfig::from_env()
-        .map_err(|_| anyhow::anyhow!("onboarding_configuration_invalid"))?;
+        .map_err(|_| telemetry::Classified("onboarding_configuration_invalid"))?;
     let pool = config.database.connect().await?;
     let run = async {
         match &config.request {
@@ -29,18 +41,22 @@ async fn main() -> anyhow::Result<()> {
     match result {
         Ok(Ok(outcomes)) => {
             for (index, outcome) in outcomes.iter().enumerate() {
-                eprintln!("onboarding entry={index} outcome={}", outcome.as_str());
+                tracing::info!(entry = index, outcome = outcome.as_str(), "onboarding");
             }
-            eprintln!("onboarding status=complete");
+            tracing::info!(status = "complete", "onboarding");
             Ok(())
         }
         Ok(Err(error)) => {
             // apply() and revoke() report a fixed step or check name, never a value.
-            eprintln!("onboarding status=failed reason={error}");
+            tracing::error!(
+                status = "failed",
+                error_kind = telemetry::error_kind(&error),
+                "onboarding"
+            );
             Err(anyhow::anyhow!("onboarding_failed"))
         }
         Err(_) => {
-            eprintln!("onboarding status=timeout");
+            tracing::error!(status = "timeout", "onboarding");
             Err(anyhow::anyhow!("onboarding_failed"))
         }
     }

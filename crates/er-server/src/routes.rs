@@ -22,8 +22,8 @@ use crate::{
     state::AppState,
 };
 
-// Log identifiers, never content.
-// patient_id = %id is safe; payload = ?event is not because an event can contain a transcript.
+// Ordinary logs use fresh request correlation, never clinical identifiers or
+// content. Even opaque job/chunk ids are linkable and are omitted (S9).
 
 /// Map from (path, method) -> handler
 /// caputre state clone so Middleware's State(state) parameter can be injected as require_auth's State<AppState> first argument.
@@ -85,6 +85,9 @@ pub fn router(state: AppState) -> Router {
             StatusCode::REQUEST_TIMEOUT,
             std::time::Duration::from_secs(30),
         ))
+        // Allowlisted request log (S9): outside the timeout so a 408 is
+        // recorded; `Router::layer` runs after routing, so the template is known.
+        .layer(middleware::from_fn(crate::telemetry::record_request))
         // Outermost: even a timeout or rejected body must not be cached.
         .layer(middleware::map_response(no_store))
         .with_state(state)
@@ -209,14 +212,14 @@ async fn request_mdm(
         repo.mark_job_enqueued(inserted.row.id).await?;
     }
 
-    tracing::info!(
-        job_id = %inserted.row.id,
-        %patient_id,
-        created = inserted.created,
-        enqueued = should_enqueue,
-        status = %inserted.row.status,
-        "MDM generation request accepted"
-    );
+    if crate::telemetry::admit(concat!(file!(), ":", line!())).is_some() {
+        tracing::info!(
+            created = inserted.created,
+            enqueued = should_enqueue,
+            status = %inserted.row.status,
+            "MDM generation request accepted"
+        );
+    }
 
     Ok((
         StatusCode::ACCEPTED,
@@ -453,11 +456,12 @@ async fn audio_complete(
     // it deliberately does not narrow to "only on transition", because the
     // marked-but-not-enqueued case above must still be able to recover.
     if er_api::chunk_status::is_terminal(&row.status) {
-        tracing::info!(
-            chunk_id = %row.id,
-            status = %row.status,
-            "completion re-confirmed for an already-terminal audio chunk; not re-queued"
-        );
+        if crate::telemetry::admit(concat!(file!(), ":", line!())).is_some() {
+            tracing::info!(
+                status = %row.status,
+                "completion re-confirmed for an already-terminal audio chunk; not re-queued"
+            );
+        }
         return Ok(Json(chunk_view(&row)?));
     }
 
@@ -471,13 +475,13 @@ async fn audio_complete(
 
     // Identifiers and state only — never the key, never the presigned URL, and
     // never a byte of what was said (§C5).
-    tracing::info!(
-        chunk_id = %row.id,
-        encounter_id = %row.encounter_id,
-        chunk_index = row.chunk_index,
-        is_final = row.is_final,
-        "audio chunk queued for transcription"
-    );
+    if crate::telemetry::admit(concat!(file!(), ":", line!())).is_some() {
+        tracing::info!(
+            chunk_index = row.chunk_index,
+            is_final = row.is_final,
+            "audio chunk queued for transcription"
+        );
+    }
 
     Ok(Json(chunk_view(&row)?))
 }

@@ -19,6 +19,11 @@ locals {
 resource "terraform_data" "ingress_guard" {
   lifecycle {
     precondition {
+      condition     = !try(var.edge.ingress_enabled, false) || var.telemetry.alarms_enabled
+      error_message = "Enable S9 notifications and verify delivery before opening ingress."
+    }
+
+    precondition {
       condition     = length(var.network.client_ipv4_cidrs) == 0 || (local.edge_enabled && try(var.edge.ingress_enabled, false))
       error_message = "Keep client CIDRs empty until the WAF-protected edge is explicitly enabled for synthetic validation."
     }

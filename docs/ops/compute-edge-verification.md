@@ -30,15 +30,17 @@ WAF association. While closed, WAF also blocks every request, including when an
 ALB security group was previously opened.
 
 Only when synthetic validation is ready, explicitly set `edge.ingress_enabled = true`
-and a reviewed `network.client_ipv4_cidrs` set. The foundation rejects CIDRs without
+and a reviewed `network.client_ipv4_cidrs` set. S9 also requires enabled notifications
+and confirmed delivery; see [telemetry verification](telemetry-verification.md). The foundation rejects CIDRs without
 an enabled WAF edge. It never discovers runner IPs or expands the allowlist. Port 80
 is absent by default; `network.http_redirect_enabled = true` creates only an HTTPS
 redirect. Sensitive clients must start with HTTPS.
 
 An image candidate requires a nonempty `manifest_version_id`. Rendering a release
 candidate also requires the complete S7/S8/S9 manifest, including existing log groups
-named `/ecs/<project>-<environment>/{api,worker,migration}`. S9 must create them and
-publish their names; S8 deliberately does not fabricate the missing telemetry contract.
+named `/ecs/<project>-<environment>/{api,worker,migration}`. S9 now creates and publishes them; apply the foundation and verify their encrypted
+delivery before running tasks. Service activation also requires enabled notifications
+in the pinned foundation manifest.
 Production remains disabled and its foundation still needs the separate production
 Cognito wiring before it can supply a complete release manifest.
 
@@ -63,7 +65,7 @@ terraform -chdir=infra/envs/staging/foundation output -json operator_task_templa
 
 Follow [identity verification](identity-verification.md) to stage credentials and run
 `db-secrets.py render` before registration; the raw template uses AWSPENDING references
-that must be replaced with exact version IDs. S9 must create the `db-bootstrap` and
+that must be replaced with exact version IDs. The S9 foundation must create the `db-bootstrap` and
 `onboarding` log groups first. Onboarding's reviewed membership input is a one-shot
 RunTask override described in [auth onboarding](auth-onboarding.md), not a Terraform
 variable. Use Fargate platform `1.4.0`, disabled public IP and the provided private

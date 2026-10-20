@@ -6,6 +6,8 @@ variables {
   aws_region     = "us-east-2"
   image_digest   = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   resources = {
+    telemetry_notifications_enabled = "true"
+    alarm_topic_arn                 = "arn:aws:sns:us-east-2:000000000000:ernote-staging-alarms"
     "deploy_artifacts_bucket" : "ernote-deploy-synthetic",
     "vpc_id" : "vpc-0123456789abcdef0",
     "ecr_repository_url" : "000000000000.dkr.ecr.us-east-2.amazonaws.com/ernote-staging",
@@ -51,6 +53,7 @@ run "templates_do_not_activate_services" {
   assert {
     condition = alltrue([for p, t in output.task_templates : (
       t.containerDefinitions[0].image == "000000000000.dkr.ecr.us-east-2.amazonaws.com/ernote-staging@${var.image_digest}" &&
+      { for e in t.containerDefinitions[0].environment : e.name => e.value }["RELEASE_ID"] == var.image_digest &&
       t.containerDefinitions[0].user == "65532:65532" && t.containerDefinitions[0].readonlyRootFilesystem &&
       !t.containerDefinitions[0].privileged && t.containerDefinitions[0].linuxParameters.capabilities.drop == ["ALL"] &&
       length(t.containerDefinitions[0].mountPoints) == 0 && t.cpu == "512" && t.memory == "1024" &&
@@ -236,4 +239,13 @@ run "reject_mutable_image" {
   command = plan
   variables { image_digest = "latest" }
   expect_failures = [var.image_digest]
+}
+
+run "reject_services_without_notifications" {
+  command = plan
+  variables {
+    services_enabled = true
+    resources        = merge(var.resources, { telemetry_notifications_enabled = "false" })
+  }
+  expect_failures = [terraform_data.contract]
 }

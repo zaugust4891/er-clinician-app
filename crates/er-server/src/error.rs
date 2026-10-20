@@ -48,13 +48,54 @@ impl IntoResponse for ApiError {
             ApiError::Validation(m) => (StatusCode::BAD_REQUEST, *m),
             ApiError::Conflict(m) => (StatusCode::CONFLICT, *m),
             ApiError::Internal(e) => {
-                // The ONLY place a 500's cause exists is the server log.
-                tracing::error!(error = ?e, "internal error");
+                // A stable code plus the request span's id. SQL, serde and
+                // provider error text can echo row values or request input.
+                let error_kind = crate::telemetry::error_kind(e);
+                if let Some(suppressed) = crate::telemetry::admit(error_kind) {
+                    tracing::error!(error_kind, suppressed, "internal error");
+                }
                 (StatusCode::INTERNAL_SERVER_ERROR, "internal")
             }
         };
         // Machine-readable, human-terse, PHI-free. Clients branch on status
         // the code string is for humans reading a debugger, not for parsing.
         (status, Json(json!({ "error": code }))).into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+    use tracing_subscriber::layer::SubscriberExt;
+
+    #[derive(Clone, Default)]
+    struct Capture(Arc<Mutex<Vec<u8>>>);
+    impl std::io::Write for Capture {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// A database error carrying row values is logged as its code only.
+    #[test]
+    fn internal_errors_log_a_code_not_the_error_text() {
+        let capture = Capture::default();
+        let writer = capture.clone();
+        let subscriber = tracing_subscriber::registry()
+            .with(crate::telemetry::json_layer(move || writer.clone()));
+        let response = tracing::subscriber::with_default(subscriber, || {
+            let source = sqlx::Error::Protocol("row (CANARYROW, chest pain)".into());
+            ApiError::from(er_store::StoreError::backend(source)).into_response()
+        });
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let text = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
+        assert!(!text.contains("CANARYROW"), "{text}");
+        let line: serde_json::Value = serde_json::from_str(text.trim()).unwrap();
+        assert_eq!(line["error_kind"], "db_protocol");
     }
 }

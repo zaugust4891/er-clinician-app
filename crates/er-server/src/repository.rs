@@ -917,7 +917,10 @@ impl PostgresRepository {
         .bind(cost)
         .execute(&self.pool)
         .await
-        .map_err(StoreError::backend)?;
+        .map_err(|error| {
+            crate::telemetry::usage_write_failed();
+            StoreError::backend(error)
+        })?;
         Ok(())
     }
 }
@@ -1088,11 +1091,14 @@ impl Repository for PostgresRepository {
         // so load_patient_note falls back to replaying the event stream.
         let computed = snapshot_checksum(&r.snapshot);
         if computed != r.checksum {
-            tracing::warn!(
-                patient_id = %patient_id,
-                sequence_id = r.sequence_id,
-                "snapshot checksum mismatch — falling back to full replay"
-            );
+            // No patient id: the enclosing request/job span supplies correlation.
+            if crate::telemetry::admit(concat!(file!(), ":", line!())).is_some() {
+                tracing::warn!(
+                    error_kind = "snapshot_checksum_mismatch",
+                    sequence_id = r.sequence_id,
+                    "snapshot checksum mismatch — falling back to full replay"
+                );
+            }
             return Ok(None);
         }
 

@@ -457,16 +457,41 @@ fn endpoint_pair_and_approved_model_family_are_enforced() {
 
 #[test]
 fn missing_app_env_exits_before_opening_a_developer_dotenv_or_network() {
-    for binary in [
-        env!("CARGO_BIN_EXE_er-server"),
-        env!("CARGO_BIN_EXE_er-worker"),
+    for (binary, code) in [
+        (env!("CARGO_BIN_EXE_er-server"), "configuration_invalid"),
+        (env!("CARGO_BIN_EXE_er-worker"), "configuration_invalid"),
+        (
+            env!("CARGO_BIN_EXE_er-migrate"),
+            "migration_configuration_invalid",
+        ),
+        (
+            env!("CARGO_BIN_EXE_er-db-bootstrap"),
+            "bootstrap_configuration_invalid",
+        ),
+        (
+            env!("CARGO_BIN_EXE_er-onboard"),
+            "onboarding_configuration_invalid",
+        ),
     ] {
         let output = std::process::Command::new(binary)
             .env_clear()
+            .env("RUST_LOG", "trace,sqlx=trace")
             .output()
             .unwrap();
         assert!(!output.status.success());
-        assert!(String::from_utf8_lossy(&output.stderr).contains("APP_ENV is required"));
+        assert!(
+            output.stderr.is_empty(),
+            "startup must not print a raw exception"
+        );
+        let logs: Vec<serde_json::Value> = String::from_utf8(output.stdout)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("cloud startup uses JSON"))
+            .collect();
+        assert!(
+            logs.iter()
+                .any(|line| line["message"] == "startup failed" && line["error_kind"] == code)
+        );
     }
 }
 

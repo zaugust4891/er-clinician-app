@@ -62,9 +62,13 @@ async fn valid_intent_persists_pending_row_and_returns_scoped_put_url(pool: PgPo
     assert_eq!(response.expires_in_secs, 900);
 
     let url = reqwest::Url::parse(&response.upload_url).expect("valid presigned URL");
-    assert_eq!(url.scheme(), "http");
-    assert_eq!(url.host_str(), Some("localhost"));
-    assert_eq!(url.port(), Some(9000));
+    let endpoint = reqwest::Url::parse(
+        &std::env::var("S3_ENDPOINT_URL").unwrap_or_else(|_| "http://localhost:9000".into()),
+    )
+    .expect("test S3 endpoint");
+    assert_eq!(url.scheme(), endpoint.scheme());
+    assert_eq!(url.host_str(), endpoint.host_str());
+    assert_eq!(url.port(), endpoint.port());
     assert_eq!(
         url.path(),
         format!("/er-audio-test/{ORG_A}/{patient_id}/{encounter_id}/0-{chunk_id}")

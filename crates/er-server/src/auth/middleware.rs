@@ -20,8 +20,8 @@ Success — `authed = AuthedClinician { clinician_id: …0002, org_id: …0001 }
 
 Failure (say, expired token → `Err(AuthError::Jwt(..))`):
 
-- `tracing::warn!(error = %err, …)` logs the reason server-side; `%err` uses the value's
-  `Display` (your `thiserror` `#[error("…")]` strings). This is the *only* place the reason exists.
+- `tracing::warn!(reason = err.code(), …)` logs a stable reason code server-side (S9). The
+  `Display` strings can carry a client-supplied `kid` or a subject, so they are never logged.
 - `StatusCode::UNAUTHORIZED.into_response()` — `.into_response()` (from axum's `IntoResponse`)
   builds a `Response` with status 401 and an *empty body*. The caller learns nothing; the logs know
   everything. Crucially, **`next` is never called** — the handler cannot run.
@@ -38,7 +38,11 @@ pub async fn require_auth(
             next.run(req).await
         }
         Err(err) => {
-            tracing::warn!(error = %err, "auth rejected");
+            // Rejections are attacker-driven volume: classified and budgeted.
+            let reason = err.code();
+            if let Some(suppressed) = crate::telemetry::admit(reason) {
+                tracing::warn!(reason, suppressed, "auth rejected");
+            }
             axum::http::StatusCode::UNAUTHORIZED.into_response()
         }
     }

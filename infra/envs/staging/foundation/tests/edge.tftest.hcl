@@ -1,4 +1,5 @@
 mock_provider "aws" {
+  mock_resource "aws_sns_topic" { defaults = { arn = "arn:aws:sns:us-east-2:000000000000:ernote-staging-alarms" } }
   mock_resource "aws_db_instance" {
     defaults = { master_user_secret = [{ secret_arn = "arn:aws:secretsmanager:us-east-2:000000000000:secret:rds!db-synthetic-AbCdEf", secret_status = "active", kms_key_id = "arn:aws:kms:us-east-2:000000000000:key/00000000-0000-0000-0000-000000000000" }] }
   }
@@ -97,10 +98,19 @@ run "reject_redirect_without_edge" {
   variables { network = { http_redirect_enabled = true } }
   expect_failures = [terraform_data.ingress_guard]
 }
-run "explicit_test_ip_can_open_with_waf" {
+run "reject_ingress_without_alarms" {
   command = plan
   variables {
     edge    = { hostname = "api.example.test", hosted_zone_id = "ZSYNTHETIC", ingress_enabled = true }
     network = { client_ipv4_cidrs = ["192.0.2.1/32"] }
+  }
+  expect_failures = [terraform_data.ingress_guard]
+}
+run "explicit_test_ip_can_open_with_waf" {
+  command = plan
+  variables {
+    telemetry = { alarms_enabled = true, alarm_emails = ["ops@example.test"], operator_principal_arns = ["arn:aws:iam::000000000000:role/Operator"] }
+    edge      = { hostname = "api.example.test", hosted_zone_id = "ZSYNTHETIC", ingress_enabled = true }
+    network   = { client_ipv4_cidrs = ["192.0.2.1/32"] }
   }
 }

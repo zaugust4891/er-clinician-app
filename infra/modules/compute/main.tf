@@ -49,6 +49,11 @@ locals {
 resource "terraform_data" "contract" {
   lifecycle {
     precondition {
+      condition     = !var.services_enabled || (try(var.resources.telemetry_notifications_enabled, "false") == "true" && try(var.resources.alarm_topic_arn, "") == "arn:aws:sns:${var.aws_region}:${var.aws_account_id}:${var.name}-alarms")
+      error_message = "Services require the S9 alarm topic and enabled notifications in the pinned foundation manifest."
+    }
+
+    precondition {
       condition     = alltrue([for k in local.resource_keys : local.resources[k] != ""])
       error_message = "The release requires the complete S8 edge and S9 log-group manifest before task templates can be rendered."
     }

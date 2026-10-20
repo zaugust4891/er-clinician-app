@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# S5-S8 data, identity, auth, compute and edge gates. All providers are mocked: no AWS credentials or
+# S5-S9 data, identity, auth, compute, edge and telemetry gates. All providers are mocked: no AWS credentials or
 # cloud mutations, and no RDS instance, bucket, queue or key is created. Copy only
 # Terraform source/tests and committed provider locks, excluding local tfvars, backend
 # configuration, and state.
@@ -12,7 +12,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 work="$(mktemp -d)"
 trap 'rm -rf "${work}"' EXIT
 
-for relative in modules/edge modules/task modules/compute modules/auth modules/cluster modules/data modules/identity modules/network modules/manifest modules/s3-encryption-guards envs/staging/foundation envs/staging/release envs/prod/foundation envs/prod/release; do
+for relative in modules/observability modules/edge modules/task modules/compute modules/auth modules/cluster modules/data modules/identity modules/network modules/manifest modules/s3-encryption-guards envs/staging/foundation envs/staging/release envs/prod/foundation envs/prod/release; do
   source_dir="${repo_root}/infra/${relative}"
   test_dir="${work}/infra/${relative}"
   mkdir -p "${test_dir}"
@@ -24,11 +24,20 @@ for relative in modules/edge modules/task modules/compute modules/auth modules/c
     cp "${source_dir}/.terraform.lock.hcl" "${test_dir}/"
   fi
 done
-for module in auth cluster data identity edge compute task; do
+
+# Terraform 1.10 mock-apply teardown still enforces prevent_destroy. Verify the
+# two source guards exist, then relax ONLY the disposable mocked copy for cleanup.
+# Nothing below runs an unmocked plan/apply or touches a real backend/state.
+for file in main.tf audit.tf; do
+  guard_file="${repo_root}/infra/modules/observability/${file}"
+  rg -q 'prevent_destroy = true' "${guard_file}"
+  sed -i 's/prevent_destroy = true/prevent_destroy = false/' "${work}/infra/modules/observability/${file}"
+done
+for module in observability auth cluster data identity edge compute task; do
   cp "${repo_root}/infra/envs/staging/foundation/.terraform.lock.hcl" "${work}/infra/modules/${module}/"
 done
 
-targets=(modules/edge modules/task modules/compute modules/s3-encryption-guards modules/auth modules/cluster modules/data modules/identity envs/staging/foundation envs/staging/release envs/prod/foundation envs/prod/release)
+targets=(modules/observability modules/edge modules/task modules/compute modules/s3-encryption-guards modules/auth modules/cluster modules/data modules/identity envs/staging/foundation envs/staging/release envs/prod/foundation envs/prod/release)
 # Optional explicit targets let a focused rerun use the same isolated workflow.
 if (( $# )); then
   for requested in "$@"; do

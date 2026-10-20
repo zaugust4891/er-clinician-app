@@ -49,3 +49,13 @@ data = {
 auth = {
   enabled = false
 }
+
+# S9: choose exact operator role ARNs/emails locally. Confirm SNS subscription,
+# exercise one real alarm and inspect all destinations before enabling traffic.
+# telemetry = {
+#   alarm_emails = ["operations@example.test"]
+#   operator_principal_arns = ["arn:aws:iam::000000000000:role/ReviewedOperator"]
+#   alarms_enabled = false
+#   monthly_budget_usd = 50 # replace only after the separate full-stack budget review
+#   audio_data_events = false # restricted object-key/principal evidence; see runbook
+# }

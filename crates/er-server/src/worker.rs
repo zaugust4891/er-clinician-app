@@ -22,12 +22,12 @@
 //! [`PostgresRepository::chunk_row_any_org`], exists only to *discover* the org
 //! and its result is used for nothing else.
 //!
-//! **PHI (§C5).** Queue messages carry an opaque id; logs carry ids, statuses and
-//! durations. Transcript text lives in `audio_chunks.transcript` and in the event
-//! payload, and is never logged — `log identifiers, never content`, the same
-//! house rule `routes.rs` follows.
+//! **Privacy (S9).** Queue messages carry an opaque id; ordinary logs use a fresh
+//! delivery correlation id, fixed codes and aggregate counters. Transcript text
+//! lives in `audio_chunks.transcript` and in the event payload, never in logs.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
+use tracing::Instrument;
 
 use anyhow::{Context, anyhow};
 use aws_sdk_sqs::types::{Message, MessageSystemAttributeName};
@@ -44,6 +44,7 @@ use er_store::repository::Repository;
 use crate::config::WorkerLimits;
 use crate::queue::Job;
 use crate::repository::{ChunkRow, NewUsage, PostgresRepository};
+use crate::telemetry;
 
 #[derive(Debug, thiserror::Error)]
 #[error("job_deadline_exceeded")]
@@ -62,12 +63,16 @@ async fn within_job_budget<T>(
 }
 
 async fn within_provider_budget<T>(
+    kind: &'static str,
     limits: &WorkerLimits,
     work: impl Future<Output = Result<T, AiError>>,
 ) -> Result<T, AiError> {
-    tokio::time::timeout(limits.provider_timeout, work)
+    let started = Instant::now();
+    let result = tokio::time::timeout(limits.provider_timeout, work)
         .await
-        .map_err(|_| AiError::Transport("provider_deadline_exceeded".into()))?
+        .unwrap_or_else(|_| Err(AiError::Transport("provider_deadline_exceeded".into())));
+    telemetry::provider_finished(kind, started, result.as_ref().err().map(telemetry::ai_kind));
+    result
 }
 
 /// Keep the lease and handler in one cancellation scope. A failed or stalled
@@ -100,8 +105,15 @@ where
 }
 
 async fn process_message(ctx: &WorkerCtx, message: &Message) {
+    let span = tracing::info_span!(target: "er_server::telemetry", "delivery", delivery_id = %Uuid::new_v4());
+    process_delivery(ctx, message).instrument(span).await;
+}
+
+async fn process_delivery(ctx: &WorkerCtx, message: &Message) {
     let Some(receipt) = message.receipt_handle() else {
-        tracing::error!(error_kind = "queue_receipt_missing", "job not started");
+        if crate::telemetry::admit(concat!(file!(), ":", line!())).is_some() {
+            tracing::error!(error_kind = "queue_receipt_missing", "job not started");
+        }
         return;
     };
     let renew = || async {
@@ -120,9 +132,12 @@ async fn process_message(ctx: &WorkerCtx, message: &Message) {
     if supervise(ctx.limits, Box::pin(handle_message(ctx, message)), renew)
         .await
         .is_err()
+        && let Some(suppressed) = telemetry::admit("job_cancelled")
+        && crate::telemetry::admit(concat!(file!(), ":", line!())).is_some()
     {
         tracing::warn!(
             error_kind = "job_cancelled",
+            suppressed,
             "job left unacknowledged after deadline or lease failure"
         );
     }
@@ -223,6 +238,7 @@ pub async fn poll_once(ctx: &WorkerCtx) -> anyhow::Result<usize> {
         process_message(ctx, message).await;
     }
 
+    telemetry::poll_completed();
     Ok(handled)
 }
 
@@ -244,7 +260,7 @@ async fn receive_batch(ctx: &WorkerCtx) -> anyhow::Result<Vec<Message>> {
         .message_system_attribute_names(MessageSystemAttributeName::ApproximateReceiveCount)
         .send()
         .await
-        .with_context(|| format!("receive from {}", ctx.queue_url))?;
+        .map_err(|_| crate::telemetry::Classified("queue_receive_failed"))?;
 
     Ok(received.messages().to_vec())
 }
@@ -264,12 +280,18 @@ async fn handle_message(ctx: &WorkerCtx, message: &Message) {
             // A body we cannot read is exactly what a dead-letter queue is for.
             // Deleting it would be tidier and would destroy the only copy of the
             // evidence; striking out costs three deliveries and leaves a corpse
-            // the Step 9 alarm can point at.
-            tracing::error!(
-                error_kind = "invalid_job_message",
-                delivery,
-                "undecodable job body; leaving it to strike out to the dead-letter queue"
-            );
+            // the Step 9 alarm can point at. The serde error echoes the body, so
+            // only the code is logged, within the shared budget (S9).
+            if let Some(suppressed) = telemetry::admit("invalid_job_message")
+                && crate::telemetry::admit(concat!(file!(), ":", line!())).is_some()
+            {
+                tracing::error!(
+                    error_kind = "invalid_job_message",
+                    delivery,
+                    suppressed,
+                    "undecodable job body; leaving it to strike out to the dead-letter queue"
+                );
+            }
             return;
         }
     };
@@ -281,17 +303,20 @@ async fn handle_message(ctx: &WorkerCtx, message: &Message) {
                 Box::pin(handle_transcribe_chunk(ctx, chunk_id)),
             )
             .await
+            .inspect(|_| telemetry::job_finished("transcribe", false))
+            .inspect_err(|_| telemetry::job_finished("transcribe", true))
             {
                 Ok(()) => {
                     delete_message(ctx, message, chunk_id).await;
                 }
                 Err(error) if non_retryable_ai_error(&error).is_some() => {
-                    tracing::error!(
-                        %chunk_id,
-                        delivery,
-                        error_kind = non_retryable_ai_error(&error).unwrap_or("unknown"),
-                        "encounter summarization failed permanently; transcript retained"
-                    );
+                    if crate::telemetry::admit(concat!(file!(), ":", line!())).is_some() {
+                        tracing::error!(
+                            delivery,
+                            error_kind = non_retryable_ai_error(&error).unwrap_or("unknown"),
+                            "encounter summarization failed permanently; transcript retained"
+                        );
+                    }
                     delete_message(ctx, message, chunk_id).await;
                 }
                 Err(error) if delivery >= MAX_DELIVERIES && retryable_ai_error(&error) => {
@@ -300,12 +325,13 @@ async fn handle_message(ctx: &WorkerCtx, message: &Message) {
                     // message move to the DLQ; routing this through
                     // record_failure would re-enter assembly and pay for a
                     // second provider call on the final delivery.
-                    tracing::error!(
-                        %chunk_id,
-                        delivery,
-                        error_kind = failure_code(&error),
-                        "encounter summarization exhausted retries; transcript retained"
-                    );
+                    if crate::telemetry::admit(concat!(file!(), ":", line!())).is_some() {
+                        tracing::error!(
+                            delivery,
+                            error_kind = failure_code(&error),
+                            "encounter summarization exhausted retries; transcript retained"
+                        );
+                    }
                 }
                 Err(error) if delivery >= MAX_DELIVERIES => {
                     // Last delivery. Two obligations before letting go, in this
@@ -313,15 +339,17 @@ async fn handle_message(ctx: &WorkerCtx, message: &Message) {
                     // the encounter, because the note is worth more than the
                     // chunk — a gap-marked transcript still documents the visit
                     // (§C3, D6.14).
-                    tracing::error!(
-                        %chunk_id,
-                        delivery,
-                        error_kind = failure_code(&error),
-                        "chunk transcription failed on its final delivery; marking failed"
-                    );
-                    if let Err(mark_error) = record_failure(ctx, chunk_id, &error).await {
+                    if crate::telemetry::admit(concat!(file!(), ":", line!())).is_some() {
                         tracing::error!(
-                            %chunk_id,
+                            delivery,
+                            error_kind = failure_code(&error),
+                            "chunk transcription failed on its final delivery; marking failed"
+                        );
+                    }
+                    if let Err(mark_error) = record_failure(ctx, chunk_id, &error).await
+                        && crate::telemetry::admit(concat!(file!(), ":", line!())).is_some()
+                    {
+                        tracing::error!(
                             error_kind = failure_code(&mark_error),
                             "could not record the terminal failure for this chunk"
                         );
@@ -332,12 +360,17 @@ async fn handle_message(ctx: &WorkerCtx, message: &Message) {
                 Err(error) => {
                     // Strikes 1..MAX-1: say nothing to SQS. The visibility timeout
                     // expires and the message comes back on its own.
-                    tracing::warn!(
-                        %chunk_id,
-                        delivery,
-                        error_kind = failure_code(&error),
-                        "chunk transcription failed; leaving the message for redelivery"
-                    );
+                    let error_kind = failure_code(&error);
+                    if let Some(suppressed) = telemetry::admit(error_kind)
+                        && crate::telemetry::admit(concat!(file!(), ":", line!())).is_some()
+                    {
+                        tracing::warn!(
+                            delivery,
+                            error_kind,
+                            suppressed,
+                            "chunk transcription failed; leaving the message for redelivery"
+                        );
+                    }
                 }
             }
         }
@@ -347,21 +380,24 @@ async fn handle_message(ctx: &WorkerCtx, message: &Message) {
                 Box::pin(handle_generate_mdm(ctx, patient_id, job_id)),
             )
             .await
+            .inspect_err(|_| telemetry::job_finished("mdm", true))
             {
-                Ok(()) => delete_message(ctx, message, job_id).await,
+                Ok(()) => {
+                    delete_message(ctx, message, job_id).await;
+                }
                 Err(error) if delivery >= MAX_DELIVERIES => {
-                    tracing::error!(
-                        %job_id,
-                        %patient_id,
-                        delivery,
-                        error_kind = failure_code(&error),
-                        "MDM generation failed on its final delivery"
-                    );
+                    if crate::telemetry::admit(concat!(file!(), ":", line!())).is_some() {
+                        tracing::error!(
+                            delivery,
+                            error_kind = failure_code(&error),
+                            "MDM generation failed on its final delivery"
+                        );
+                    }
                     if let Err(mark_error) =
                         record_mdm_terminal_failure(ctx, patient_id, job_id, &error).await
+                        && crate::telemetry::admit(concat!(file!(), ":", line!())).is_some()
                     {
                         tracing::error!(
-                            %job_id,
                             error_kind = failure_code(&mark_error),
                             "could not record terminal MDM job failure"
                         );
@@ -369,13 +405,17 @@ async fn handle_message(ctx: &WorkerCtx, message: &Message) {
                     // Leave the message for the queue's redrive policy and DLQ.
                 }
                 Err(error) => {
-                    tracing::warn!(
-                        %job_id,
-                        %patient_id,
-                        delivery,
-                        error_kind = failure_code(&error),
-                        "MDM generation failed transiently; leaving for redelivery"
-                    );
+                    let error_kind = failure_code(&error);
+                    if let Some(suppressed) = telemetry::admit(error_kind)
+                        && crate::telemetry::admit(concat!(file!(), ":", line!())).is_some()
+                    {
+                        tracing::warn!(
+                            delivery,
+                            error_kind,
+                            suppressed,
+                            "MDM generation failed transiently; leaving for redelivery"
+                        );
+                    }
                 }
             }
         }
@@ -399,11 +439,15 @@ pub async fn handle_transcribe_chunk(ctx: &WorkerCtx, chunk_id: Uuid) -> anyhow:
     // `mark_chunk_transcribing` only accepts `uploaded` and `transcribing`. So
     // this is a shrug, and the shrug ends in a delete.
     if er_api::chunk_status::is_terminal(&row.status) {
-        tracing::info!(
-            %chunk_id,
-            status = %row.status,
-            "duplicate delivery for an already-terminal chunk; nothing to do"
-        );
+        if let Some(suppressed) = telemetry::admit("duplicate_delivery")
+            && crate::telemetry::admit(concat!(file!(), ":", line!())).is_some()
+        {
+            tracing::info!(
+                status = %row.status,
+                suppressed,
+                "duplicate delivery for an already-terminal chunk; nothing to do"
+            );
+        }
         return try_assemble(ctx, &row).await;
     }
 
@@ -423,11 +467,14 @@ pub async fn handle_transcribe_chunk(ctx: &WorkerCtx, chunk_id: Uuid) -> anyhow:
     )
     .await?;
 
-    let result = ctx
-        .stt
-        .transcribe(&bytes, &row.content_type)
-        .await
-        .with_context(|| format!("transcribe chunk {chunk_id}"))?;
+    let started = Instant::now();
+    let result = ctx.stt.transcribe(&bytes, &row.content_type).await;
+    telemetry::provider_finished(
+        "transcribe",
+        started,
+        result.as_ref().err().map(|_| "provider_stt_failed"),
+    );
+    let result = result.with_context(|| format!("transcribe chunk {chunk_id}"))?;
 
     let duration_ms = duration_to_millis(result.audio_duration_secs);
 
@@ -437,15 +484,15 @@ pub async fn handle_transcribe_chunk(ctx: &WorkerCtx, chunk_id: Uuid) -> anyhow:
         .ok_or_else(|| anyhow!("chunk {chunk_id} vanished while storing its transcript"))?;
 
     // Identifiers, sizes and durations — never a word of what was said (§C5).
-    tracing::info!(
-        %chunk_id,
-        encounter_id = %row.encounter_id,
-        chunk_index = row.chunk_index,
-        audio_bytes = bytes.len(),
-        duration_ms,
-        transcript_chars = result.text.len(),
-        "chunk transcribed"
-    );
+    if crate::telemetry::admit(concat!(file!(), ":", line!())).is_some() {
+        tracing::info!(
+            chunk_index = row.chunk_index,
+            audio_bytes = bytes.len(),
+            duration_ms,
+            transcript_chars = result.text.len(),
+            "chunk transcribed"
+        );
+    }
 
     // Every chunk that goes terminal asks the same question, and all but one get
     // the same answer. There is no coordinator deciding who is last: assembly is
@@ -528,14 +575,14 @@ async fn assemble(ctx: &WorkerCtx, row: &ChunkRow, summarize: bool) -> anyhow::R
         .await
         .context("append the TranscriptReady event")?;
 
-    tracing::info!(
-        encounter_id = %row.encounter_id,
-        patient_id = %row.patient_id,
-        %event_id,
-        sequence_id,
-        chunks = chunks.len(),
-        "encounter transcript assembled and published"
-    );
+    // The delivery span correlates this operation without clinical identifiers.
+    if crate::telemetry::admit(concat!(file!(), ":", line!())).is_some() {
+        tracing::info!(
+            sequence_id,
+            chunks = chunks.len(),
+            "encounter transcript assembled and published"
+        );
+    }
 
     if summarize {
         summarize_encounter_for(ctx, row, &text).await
@@ -595,6 +642,7 @@ async fn summarize_encounter_for(
     let safe_transcript = Deidentifier::scrub(transcript);
 
     let generated = within_provider_budget(
+        "summarize",
         &ctx.limits,
         Box::pin(ctx.summarizer.summarize_encounter(
             &safe_transcript,
@@ -605,6 +653,7 @@ async fn summarize_encounter_for(
     .await
     .context("summarize the assembled encounter")?;
 
+    telemetry::usage("summarize", &generated.usage);
     repo.append_event(
         row.patient_id,
         Uuid::now_v7(),
@@ -628,9 +677,9 @@ async fn summarize_encounter_for(
             usage: &generated.usage,
         })
         .await
+        && crate::telemetry::admit(concat!(file!(), ":", line!())).is_some()
     {
         tracing::error!(
-            encounter_id = %row.encounter_id,
             error_kind = "usage_record_failed",
             "summary succeeded but its usage row could not be recorded"
         );
@@ -747,6 +796,7 @@ pub async fn handle_generate_mdm(
         .collect::<Vec<_>>();
 
     let generated = match within_provider_budget(
+        "mdm",
         &ctx.limits,
         Box::pin(ctx.summarizer.generate_mdm(
             &note.note_sections,
@@ -760,12 +810,14 @@ pub async fn handle_generate_mdm(
         Err(error) if !error.is_retryable() => {
             repo.mark_job_failed(job_id, permanent_ai_code(&error))
                 .await?;
+            telemetry::job_finished("mdm", true);
             lock.commit().await?;
             return Ok(());
         }
         Err(error) => return Err(error).context("generate MDM"),
     };
 
+    telemetry::usage("mdm", &generated.usage);
     // Clinical content first, state transition second. A crash between these
     // writes is repaired by the recovery branch above.
     repo.append_event(
@@ -793,9 +845,9 @@ pub async fn handle_generate_mdm(
             usage: &generated.usage,
         })
         .await
+        && crate::telemetry::admit(concat!(file!(), ":", line!())).is_some()
     {
         tracing::error!(
-            %job_id,
             error_kind = "usage_record_failed",
             "MDM succeeded but its usage row could not be recorded"
         );
@@ -803,6 +855,7 @@ pub async fn handle_generate_mdm(
     repo.mark_job_done(job_id)
         .await
         .context("mark MDM job done")?;
+    telemetry::job_finished("mdm", false);
     lock.commit().await.context("release MDM lock")?;
     Ok(())
 }
@@ -978,9 +1031,14 @@ fn delivery_count(message: &Message) -> u32 {
 /// Remove a message we are done with. Failing to delete is survivable — the job
 /// simply arrives again and the duplicate-delivery shrug above handles it — so it
 /// is logged rather than propagated.
-async fn delete_message(ctx: &WorkerCtx, message: &Message, chunk_id: Uuid) {
+async fn delete_message(ctx: &WorkerCtx, message: &Message, _chunk_id: Uuid) {
     let Some(receipt) = message.receipt_handle() else {
-        tracing::error!(%chunk_id, "message has no receipt handle; cannot delete");
+        if crate::telemetry::admit(concat!(file!(), ":", line!())).is_some() {
+            tracing::error!(
+                error_kind = "queue_receipt_missing",
+                "cannot delete message"
+            );
+        }
         return;
     };
 
@@ -991,9 +1049,9 @@ async fn delete_message(ctx: &WorkerCtx, message: &Message, chunk_id: Uuid) {
         .receipt_handle(receipt)
         .send()
         .await
+        && crate::telemetry::admit(concat!(file!(), ":", line!())).is_some()
     {
         tracing::warn!(
-            %chunk_id,
             error_kind = "queue_delete_failed",
             "failed to delete a completed job; it will be redelivered and shrugged at"
         );
@@ -1011,32 +1069,25 @@ pub async fn run(ctx: &WorkerCtx, mut shutdown: impl Future<Output = ()> + Unpin
     loop {
         let messages = tokio::select! {
             biased;
-            _ = &mut shutdown => {
-                tracing::info!("shutdown signal received; transcription worker stopping");
-                return;
-            }
+            _ = &mut shutdown => return,
             received = receive_batch(ctx) => match received {
                 Ok(messages) => messages,
                 Err(_error) => {
-                    // Almost always the queue being unreachable. Back off rather
-                    // than spinning a tight loop of failing API calls — and let
-                    // the signal interrupt the backoff, so an outage cannot make
-                    // shutdown take five seconds longer than it should.
-                    tracing::error!(error_kind = "queue_receive_failed", "poll cycle failed");
+                    if let Some(suppressed) = telemetry::admit("queue_receive_failed") {
+                        tracing::error!(error_kind = "queue_receive_failed", suppressed, "poll cycle failed");
+                    }
+                    // A failing receive advances no progress signal. Back off,
+                    // but let a shutdown signal interrupt the delay.
                     tokio::select! {
                         biased;
-                        _ = &mut shutdown => {
-                            tracing::info!("shutdown signal received; transcription worker stopping");
-                            return;
-                        }
+                        _ = &mut shutdown => return,
                         _ = tokio::time::sleep(Duration::from_secs(5)) => continue,
                     }
                 }
             },
         };
-
-        // Stop receives immediately on a signal; keep the same handler and lease
-        // alive during the bounded drain, then drop without acknowledgement.
+        // Keep handler and lease alive during the bounded drain. No independent
+        // timer can report progress while this handler is stuck.
         for message in &messages {
             if finish_or_drain(
                 process_message(ctx, message),
@@ -1048,6 +1099,7 @@ pub async fn run(ctx: &WorkerCtx, mut shutdown: impl Future<Output = ()> + Unpin
                 return;
             }
         }
+        telemetry::poll_completed();
     }
 }
 
@@ -1068,9 +1120,10 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn provider_deadline_is_retryable_and_includes_the_whole_future() {
         let started = tokio::time::Instant::now();
-        let error = within_provider_budget::<()>(&WorkerLimits::default(), std::future::pending())
-            .await
-            .unwrap_err();
+        let error =
+            within_provider_budget::<()>("mdm", &WorkerLimits::default(), std::future::pending())
+                .await
+                .unwrap_err();
         assert!(error.is_retryable());
         assert_eq!(started.elapsed(), Duration::from_secs(45));
     }
