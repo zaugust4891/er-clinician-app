@@ -58,6 +58,9 @@ All core code lives under:
 
 ## Runtime modes
 
+See the [API contract](docs/api-contract.md) for HTTP endpoints, payload schemas,
+authentication, synchronization, audio upload, and external service contracts.
+
 ### Local mode
 
 - Uses local SQLite database (`er_notes.db`)
