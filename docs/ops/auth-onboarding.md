@@ -212,3 +212,19 @@ Without step 3, denial can lag by up to the membership cache lifetime; without
 step 2, a disabled user's token keeps working until it expires. Step 9 must settle
 the clinical revocation SLA and its implementation before any real clinician uses
 the system.
+
+## S11/S12 smoke-client handoff (2026-10-31)
+
+The automated gate also requires a third synthetic Cognito user named
+`synthetic-unprovisioned`. Create it through the same no-invitation/permanent-password
+operator procedure, add `unprovisioned: {username, password}` to the existing smoke
+secret, and **do not** run onboarding for its subject. A/B must map to different orgs.
+The third user's valid access token must receive 401 because no bridge row exists.
+
+Use `scripts/demo-remote.sh` for an operator smoke or the separate `staging-smoke`
+workflow job. They retrieve the one synthetic secret, authenticate directly with
+Cognito, and pass access/ID tokens to the Rust client via stdin; no token is printed
+or placed in command arguments. Fixture, checksum, expected-term and role settings
+are listed in the [final setup checklist](step8-final-aws-live-checklist.md). The
+60-minute default token lifetime covers the 15-minute smoke deadline; this script
+is deliberately not a production authentication implementation.

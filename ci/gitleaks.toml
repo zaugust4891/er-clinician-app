@@ -1,0 +1,12 @@
+[extend]
+useDefault = true
+
+# S0 owner-confirmed public development fixture. ci-security.py verifies the exact
+# bytes before scanning; replacing this file with a real key is a hard failure.
+[allowlist]
+description = "Known public dev signing fixture, hash-checked by ci-security.py"
+paths = ['''^dev/keys/dev_private\.pem$''']
+
+# Fabricated security-group ID in Terraform mock manifests; not a credential.
+regexTarget = "secret"
+regexes = ['''^sg-0123456789abcdef0$''']

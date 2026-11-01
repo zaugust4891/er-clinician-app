@@ -15,7 +15,8 @@ JSON policy documents.
 
 Optional `ci` inputs create S11's staging role templates with exact GitHub protected
 environment trust. They default to null. The infrastructure template has state
-access only until S11 attaches a reviewed provisioning policy; release and smoke
+and restricted plan-artifact access only; an independently reviewed provisioning
+policy must be attached by the AWS owner (or use SSO for foundation applies); release and smoke
 have separate application-deployment and synthetic-secret permissions. No CI role
 can pass the bootstrap/onboarding roles or chain into a production identity.
 
@@ -23,3 +24,10 @@ Run `bash scripts/tf-data-check.sh` from the repository root for mocked module a
 foundation checks. The full bootstrap, maintenance rotation, naming contract, IAM
 tradeoffs and remaining live probes are in
 [identity-verification.md](../../../docs/ops/identity-verification.md).
+
+S11 additionally scopes release records to the staging artifact prefix, smoke reads
+to one approved WAV, and migration RunTask to the cluster and private subnets with
+public IP assignment disabled. Exact `ci.subjects` overrides support immutable
+repository IDs; defaults retain the standard environment-subject format. No role
+trust is enabled until `ci` is explicitly populated. See the
+[final setup checklist](../../../docs/ops/step8-final-aws-live-checklist.md).

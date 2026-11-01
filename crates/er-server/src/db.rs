@@ -57,10 +57,19 @@ impl DatabaseConfig {
                 password,
             } => parts_options(&host, port, &database, &username, &password)?,
         };
+        // SQLx creates its migration ledger and schema objects without qualified
+        // names. An explicit pg_catalog first would target the system schema and
+        // fail. Omitting it keeps implicit catalog lookup first while CREATE uses
+        // public. Runtime sessions retain their explicit catalog-first path.
+        let search_path = if process == "migration" {
+            "public"
+        } else {
+            "pg_catalog,public"
+        };
         let mut options = options
             .application_name(&format!("er-{process}"))
             .disable_statement_logging()
-            .options([("search_path", "pg_catalog,public")]);
+            .options([("search_path", search_path)]);
         if matches!(process, "migration" | "db-bootstrap") {
             // PostgreSQL enforces these on every migration and bootstrap session,
             // including SQLx's advisory-lock wait and each DDL statement. Each

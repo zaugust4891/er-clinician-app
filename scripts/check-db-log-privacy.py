@@ -27,7 +27,7 @@ def main():
     try:
         command = ["docker", "run", "--detach", "--rm", "--name", container,
                    "--pull=never", "--network=none", "--tmpfs", "/var/lib/postgresql/data:rw,size=256m",
-                   "--env", "POSTGRES_PASSWORD=synthetic-only", "postgres:16"]
+                   "--env", "POSTGRES_PASSWORD=synthetic-only", "postgres:16@sha256:081f1bc7bd5e143dbb6e487b710bbc27712cdcfaced4c071b8e47349aa1b4171"]
         command += [item for name, value in settings.items() for item in ("-c", f"{name}={value}")]
         run(*command)
         for _ in range(60):

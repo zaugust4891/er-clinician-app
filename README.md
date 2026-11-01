@@ -21,6 +21,19 @@ Its core goal is to capture fragmented, non-linear encounters across a patientâ€
 
 Most ambient tools focus on one conversation. This app is designed for **multi-encounter merging** in the ED, where a single visit can involve many short interactions over hours.
 
+## Pull-request checks
+
+[The S10 CI guide](docs/ops/ci-verification.md) documents the full application,
+SQLx, infrastructure, dependency/secret and candidate-image gates. Run
+`scripts/ci-services.sh` for the isolated local application gate; it generates fresh
+keys and starts disposable services without reading `.env` or changing the dev stack.
+
+## Synthetic staging deployment
+
+[The deployment runbook](docs/ops/staging-deploy.md) covers OIDC releases, migration
+gates, smoke and rollback. Start with the [final AWS live-test checklist](docs/ops/step8-final-aws-live-checklist.md).
+Cloud acceptance is pending; production remains disabled.
+
 ## Technology stack
 
 - **Language:** Rust

@@ -3,7 +3,16 @@ module "identity" {
   source = "../../../modules/identity"
   count  = 1
 
-  ci                        = var.ci
+  ci = var.ci == null ? null : {
+    repository              = var.ci.repository
+    environment             = var.ci.environment
+    smoke_secret_arn        = var.ci.smoke_secret_arn
+    smoke_kms_key_arn       = var.ci.smoke_kms_key_arn
+    subjects                = var.ci.subjects
+    deploy_artifacts_bucket = var.deploy_artifacts_bucket
+    deploy_kms_key_arn      = var.deploy_kms_key_arn
+    private_subnet_ids      = module.network[0].private_subnet_ids
+  }
   name                      = "${var.project}-${local.environment}"
   aws_region                = var.aws_region
   aws_account_id            = var.aws_account_id

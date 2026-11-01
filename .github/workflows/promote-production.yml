@@ -1,0 +1,21 @@
+name: Production promotion (inactive)
+on:
+  workflow_dispatch:
+    inputs:
+      accepted_staging_release:
+        description: Exact accepted staging release record (digest, config and evidence)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  promotion-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Production remains disabled pending its reviewed contract
+        run: |
+          echo 'Production promotion is inactive. Complete docs/ops/production-promotion.md.'
+          exit 1

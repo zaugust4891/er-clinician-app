@@ -30,3 +30,8 @@ client = ["dep:er-store", "dep:reqwest", "dep:async-trait", "dep:serde_json"]
 # serde_json out of the shipped (no-feature) dependency graph.
 [dev-dependencies]
 serde_json.workspace = true
+tokio.workspace = true
+
+[[example]]
+name = "remote_smoke"
+required-features = ["client"]

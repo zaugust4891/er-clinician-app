@@ -1,0 +1,11 @@
+[
+  {
+    "id": "RUSTSEC-2023-0071",
+    "package": "rsa",
+    "owner": "Repository maintainer (zaugust4891)",
+    "expires": "2026-11-20",
+    "impact": "Marvin timing attack on private RSA operations; no patched rsa release is available in the reviewed dependency graph.",
+    "mitigation": "Cloud authentication verifies Cognito signatures using public keys. Private RSA signing is confined to the local mint_dev_token fixture utility and synthetic tests. Reassess before any network-accessible signing/decryption feature.",
+    "evidence": "docs/reviews/phase4-step6-s6-review.md"
+  }
+]

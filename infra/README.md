@@ -10,7 +10,12 @@ S8's [cluster](modules/cluster/README.md), [edge](modules/edge/README.md),
 [compute](modules/compute/README.md) and shared task templates are implemented and
 locally tested. Services/ingress default off; S9 telemetry is implemented locally (see
 [verification](../docs/ops/telemetry-verification.md)); its live acceptance and S11 migration/release
-activation remain prerequisites. See [S8 verification](../docs/ops/compute-edge-verification.md).
+activation remain live prerequisites. S11/S12 automation is now authored; use the
+[final AWS setup checklist](../docs/ops/step8-final-aws-live-checklist.md) and
+[release/rollback runbook](../docs/ops/staging-deploy.md). Foundation provisioning
+permissions require separate review; the default CI infrastructure role cannot provision. S10 [PR CI](../docs/ops/ci-verification.md) now runs
+all-root validation and mocked policy tests without cloud credentials; hosted activation
+and required-check protection remain pending. See [S8 verification](../docs/ops/compute-edge-verification.md).
 
 Status updated **2026-10-14**: approved bootstrap is applied, remote state migrated,
 and live storage/locking/recovery/role checks pass. Data and network gates each pass

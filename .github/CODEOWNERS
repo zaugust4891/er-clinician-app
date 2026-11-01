@@ -1,0 +1,8 @@
+# Branch rules must require this owner and disallow bypass for protection to apply.
+/.github/ @zaugust4891
+/infra/ @zaugust4891
+/ci/ @zaugust4891
+/scripts/ @zaugust4891
+/Dockerfile @zaugust4891
+/crates/er-server/migrations/ @zaugust4891
+/crates/er-api/examples/remote_smoke.rs @zaugust4891

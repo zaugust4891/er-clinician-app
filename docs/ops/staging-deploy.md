@@ -503,14 +503,134 @@ key, and no policy grants deletion of state objects.
 
 ---
 
-## Not yet written
+## Automated staging releases (S11/S12)
+
+Start with [the final AWS setup checklist](step8-final-aws-live-checklist.md).
+It supersedes the earlier setup inventory and lists every external setting, secret,
+fixture, GitHub variable and live test. This implementation has not deployed AWS.
+
+`Deploy staging` follows successful `CI` for this repository's current `master`.
+It rejects PR-triggered CI and superseded commits, pins the source SHA and holds
+the same `aws-staging-mutation` concurrency group as the foundation workflow for
+the entire release/smoke/recovery sequence. Runs queue; they do not cancel an active
+migration. Terraform adds its own remote-state lock.
+
+1. `scripts/deploy.py deploy` reuses an existing immutable commit tag on retry or
+   builds/exercises/scans the candidate with `ci-image.sh`, publishes it once, and
+   reads/scans the registry digest. It requires `linux/amd64`.
+2. It snapshots the accepted predecessor, pins the current foundation-manifest S3
+   version, and saves a release plan with `services_enabled=true`. The separate
+   plan-time `deployment` output provides the migration template/network without
+   applying any service changes.
+3. It refuses to start while another task in the migration family is active,
+   registers the exact candidate migration, checks RunTask failures, and waits up
+   to 15 minutes for the exact task/container to stop with exit code zero. Timeout
+   stops only that migration and fails. Task startup, missing exit code and nonzero
+   exits leave services unchanged. The task ARN is printed as safe correlation.
+4. It marks `rollout_started` before applying the saved plan. Terraform's circuit
+   breaker is only the first check: the verifier also checks desired/running/pending
+   counts, completed deployment, exact task revisions and container image digests,
+   and healthy ALB targets matching both running API task IPs.
+5. The `staging-smoke` job assumes a different role, reads only the synthetic
+   credential/fixture, authenticates A/B/unprovisioned users and passes tokens on
+   stdin to the Rust `remote_smoke` example. The example reuses `er-api` DTOs and
+   `RemoteRepository`. No token appears in argv or a file; the checksum-verified
+   synthetic WAV uses a private temporary directory and is removed on exit.
+6. Only a successful smoke allows `accept` to update the versioned
+   `envs/staging/accepted-release.json` pointer. Each attempt is recorded at
+   `envs/staging/releases/<GitHub run>-<attempt>.json`, including source, digest,
+   architecture, exact input config/manifest version, migration hashes and prior
+   accepted release. Only one predecessor is embedded; S3 preserves record history.
+
+Terraform/process diagnostics are captured to prevent accidental data disclosure
+in hosted logs. On a fixed-label failure, inspect the restricted plan, AWS task
+status and process log group with the operator role. Do not paste raw task or
+Terraform output into a public issue.
+
+### Rollback, interruption and failure exercises
+
+The workflow's recovery job runs on deployment/smoke failure after a record was
+created. A failed preflight/migration does not touch services. After rollout begins,
+recovery checks schema compatibility, extracts the **previous accepted source
+commit**, initializes its release root, and applies its exact recorded input config
+and manifest version. It never runs a down migration. It then verifies the prior
+digest and runs the same synthetic smoke through the separate smoke identity.
+The candidate workflow remains failed even when recovery succeeds.
+
+Automatic rollback is allowed when migration filenames/hashes are identical. A
+schema-changing release requires a reviewed entry in
+`ci/release-policy.json` → `rollback_compatible_migration_sets`:
+
+```json
+{"from": {"<previous migration filename>": "<sha256>"},
+ "to": {"<candidate migration filename>": "<sha256>"}}
+```
+
+Each map must contain the **complete** migration set, exactly as recorded in the
+release records. Approval means the old code can safely operate against the new
+schema. An empty policy is deliberately the default. Without compatibility, or on
+first-deploy failure with no accepted predecessor, the release root disables services
+and records a stopped state for forward repair. If Terraform itself cannot stop or
+restore resources, recovery fails visibly and the operator must close ingress and
+inspect the state; do not report successful recovery.
+
+GitHub cancellation or runner loss can interrupt even the recovery job. Before
+retrying, inspect the attempt record, active/stopped migration tasks and live service
+revisions. If needed, under approved release-equivalent SSO authority and the same
+source commit, set the non-secret `STAGING_RELEASE_CONFIG` and original `RELEASE_ID`
+and run:
+
+```bash
+scripts/deploy-staging.sh recover
+# If recovery reports rollback=true, authenticate with the separate smoke identity
+# and use the restored API origin/client ID plus fixture variables from the checklist:
+scripts/demo-remote.sh
+# Only after that smoke succeeded, restore release authority and record it:
+scripts/deploy-staging.sh recovery-verified
+```
+
+Do not rerun `deploy` with an existing attempt ID. A new workflow attempt gets a new
+record; completed SQLx migrations are idempotent, and active migration tasks block
+another submission. A lost RunTask response is an inspection case, not permission to
+start another task blindly. Re-running only the smoke job after recovery is unsafe;
+rerun the complete CI/deployment sequence after investigating.
+
+Rehearse failures only in synthetic staging with an operator present:
+
+- Accept two distinct source commits first. Record both manifests/task definitions.
+- In an isolated synthetic DB rehearsal, use the existing image checksum-mismatch
+  procedure from `ci-image.sh`, or a reviewed failing migration candidate. Verify
+  explicit failure and unchanged API/worker definitions. Never corrupt a production
+  schema or use a down migration to restore accepted records.
+- Use a reviewed staging-only candidate with an API startup failure (migration
+  entrypoint must remain valid). Confirm the circuit breaker/explicit verifier
+  rejects it and recovery restores the accepted digest/config; record rollback smoke.
+- Stop one worker task during an identified synthetic job; allow replacement and
+  inspect eventual completion/explicit failure and DLQ counts. Do not purge queues.
+- Capture safe evidence in [step8-verification.md](step8-verification.md). Remove
+  temporary failure code/settings and verify both roots converge afterward.
+
+### Foundation changes and production
+
+`Staging foundation` saves encrypted plans to a restricted, versioned S3 prefix.
+An operator reviews the exact plan under SSO; a separate dispatch supplies its ID,
+version and SHA256. Apply checks source commit and plan bytes and lets Terraform
+reject stale state. The infrastructure environment must require review. Its role's
+provisioning policy remains separately approved/manual; broad provisioning authority
+was rejected by automatic review and is not included in this change.
+
+The [production promotion contract](production-promotion.md) remains inactive and
+receives no AWS credentials. Activation requires separate production authentication,
+account controls, pre-PHI closure and digest-preserving promotion.
+
+## Live acceptance still pending
 
 | Section | Arrives with |
 |---|---|
 | Live database, queue and bucket acceptance | S5 configuration authored; S6–S9 dependencies and applied-resource evidence pending |
 | Live IAM/DB/secret/rotation acceptance | S6 code and runbook authored; applied S7–S9 dependencies and probes pending |
 | Live Cognito pool and synthetic clinician onboarding evidence | S7 procedure authored; applied pool, users and live checks pending |
-| ECS services, the HTTPS edge, first release | S8, S11 |
+| ECS services, the HTTPS edge, first release | S8/S11 code authored; applied-resource and hosted-release evidence pending |
 | Log groups, alarms, and what is safe to log | S9 implemented locally; [live telemetry acceptance](telemetry-verification.md) pending |
-| CI gates reproducing the local test suite | S10 |
-| Release, rollback, and the staging gate evidence | S11, S12 |
+| CI gates reproducing the local test suite | S10 implemented; [local evidence and GitHub activation](ci-verification.md) |
+| Release, rollback, and the staging gate evidence | S11/S12 automation authored; [live verification record](step8-verification.md) remains unperformed |

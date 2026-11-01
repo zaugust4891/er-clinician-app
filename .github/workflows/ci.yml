@@ -1,0 +1,118 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Hosted ephemeral runners only. No secrets, environments, OIDC, artifact exports,
+# shared caches, pull_request_target, path filters or continue-on-error.
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_BUILD_JOBS: '2'
+  CARGO_PROFILE_DEV_DEBUG: '0'
+  CARGO_PROFILE_TEST_DEBUG: '0'
+  CARGO_INCREMENTAL: '0'
+  SQLX_OFFLINE: 'true'
+  APP_ENV: dev
+  AWS_ACCESS_KEY_ID: dev
+  AWS_SECRET_ACCESS_KEY: devdevdev
+  AWS_REGION: us-east-2
+  AWS_EC2_METADATA_DISABLED: 'true'
+  AWS_CONFIG_FILE: /dev/null
+  AWS_SHARED_CREDENTIALS_FILE: /dev/null
+
+jobs:
+  application:
+    name: Application
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust and SQLx CLI
+        run: |
+          rustup show active-toolchain
+          rustup component add rustfmt clippy
+          cargo install sqlx-cli --version 0.8.6 --locked --no-default-features --features rustls,postgres
+      - name: Full application and online SQLx metadata gates
+        run: scripts/ci-services.sh
+
+  security:
+    name: Security
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Install checksum-pinned scanners and locked audit CLI
+        run: |
+          scripts/ci-install-tools.sh scanners
+          cargo install cargo-audit --version 0.22.2 --locked
+      - name: Verify fail-closed scan policy
+        run: |
+          actionlint .github/workflows/*.yml
+          PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_ci_policy.py
+          PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_deploy.py
+      - name: Tracked data boundary and secret scan
+        run: python3 scripts/ci-security.py
+      - name: Dependency advisories and expiring exceptions
+        run: python3 scripts/ci-audit.py
+
+  infrastructure:
+    name: Infrastructure
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Install pinned Terraform
+        run: scripts/ci-install-tools.sh terraform
+      - name: Pull pinned database privacy fixture
+        run: docker pull postgres:16@sha256:081f1bc7bd5e143dbb6e487b710bbc27712cdcfaced4c071b8e47349aa1b4171
+      - name: Validate every root and run mocked security policies
+        run: scripts/ci-terraform.sh
+
+  image:
+    name: Candidate image
+    needs: [application, security, infrastructure]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Install checksum-pinned image scanner
+        run: scripts/ci-install-tools.sh scanners
+      - name: Build once, exercise and scan the local candidate
+        run: scripts/ci-image.sh
+
+  required:
+    name: Required CI
+    if: always()
+    needs: [application, security, infrastructure, image]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every gate to pass (including skipped/cancelled dependencies)
+        env:
+          APPLICATION: ${{ needs.application.result }}
+          SECURITY: ${{ needs.security.result }}
+          INFRASTRUCTURE: ${{ needs.infrastructure.result }}
+          IMAGE: ${{ needs.image.result }}
+        run: |
+          test "$APPLICATION" = success
+          test "$SECURITY" = success
+          test "$INFRASTRUCTURE" = success
+          test "$IMAGE" = success

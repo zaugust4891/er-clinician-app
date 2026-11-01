@@ -1,5 +1,7 @@
 # Step 8 — live AWS setup and completion checklist
 
+**Historical checklist. Superseded on 2026-10-31 by the [final AWS live-test setup checklist](step8-final-aws-live-checklist.md).** The unchecked S11/S12 code items below describe the earlier state; current implementation and remaining manual prerequisites are in the new document.
+
 S8's compute/edge code is now implemented locally. Follow the
 [S8 activation and verification guide](compute-edge-verification.md) for its exact
 inputs and remaining live checks; no S8 AWS acceptance box is closed by local tests.
@@ -110,9 +112,9 @@ The following are implementation prerequisites:
   storage, alarms and canary tests are implemented. **Live acceptance is pending**
   in [telemetry verification](telemetry-verification.md); confirm notification delivery,
   RDS parameters and every configured destination before traffic.
-- [ ] **S10 CI:** add required PR checks for formatting, Clippy, workspace/local
+- [x] **S10 CI — code:** [workflow and local gates](ci-verification.md) implement PR checks for formatting, Clippy, workspace/local
   integration tests, feature boundaries, SQLx cache, Terraform, and image/runtime
-  packaging. The `.github/workflows/` directory is absent in this working tree.
+  packaging. Hosted runs and required-check protection on `master` remain pending.
 - [ ] **S11 deployment:** implement OIDC workflows, reviewed infrastructure policy,
   digest/manifest pinning, migration completion checks, release, smoke, rollback,
   and the inactive production promotion path. Existing CI role templates are

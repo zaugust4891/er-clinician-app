@@ -7,6 +7,11 @@ variable "ci" {
     environment       = string
     smoke_secret_arn  = string
     smoke_kms_key_arn = string
+    # Exact observed subjects, including immutable repository IDs when configured.
+    subjects                = optional(map(string), {})
+    deploy_artifacts_bucket = optional(string)
+    deploy_kms_key_arn      = optional(string)
+    private_subnet_ids      = optional(list(string), [])
   })
   default = null
 
@@ -17,7 +22,8 @@ variable "ci" {
       endswith(var.name, "-${var.ci.environment}") &&
       can(regex("^arn:aws:secretsmanager:${var.aws_region}:${var.aws_account_id}:secret:", var.ci.smoke_secret_arn)) &&
       can(regex("^arn:aws:kms:${var.aws_region}:${var.aws_account_id}:key/", var.ci.smoke_kms_key_arn)) &&
-      var.ci.environment == "staging"
+      var.ci.environment == "staging" &&
+      alltrue([for key, subject in var.ci.subjects : contains(["infrastructure", "release", "smoke"], key) && startswith(subject, "repo:") && try(replace(split(":", subject)[1], "/@[0-9]+/", "") == var.ci.repository, false) && endswith(subject, ":environment:${var.ci.environment}${key == "infrastructure" ? "-infrastructure" : key == "smoke" ? "-smoke" : ""}") && !strcontains(subject, "*") && !strcontains(subject, "?")])
     )
     error_message = "CI requires one exact repository, this staging environment and account-local synthetic secret/key ARNs. Production smoke has no synthetic-credential exception."
   }
@@ -48,8 +54,9 @@ locals {
 }
 
 resource "aws_iam_role" "ci" {
-  for_each = local.ci_components
-  name     = "${var.name}-ci-${each.key}"
+  for_each             = local.ci_components
+  name                 = "${var.name}-ci-${each.key}"
+  max_session_duration = 7200
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -57,7 +64,7 @@ resource "aws_iam_role" "ci" {
       Principal = { Federated = "arn:aws:iam::${var.aws_account_id}:oidc-provider/token.actions.githubusercontent.com" }
       Condition = { StringEquals = {
         "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
-        "token.actions.githubusercontent.com:sub" = "repo:${var.ci.repository}:environment:${local.ci_environment_names[each.key]}"
+        "token.actions.githubusercontent.com:sub" = lookup(var.ci.subjects, each.key, "repo:${var.ci.repository}:environment:${local.ci_environment_names[each.key]}")
       } }
     }]
   })
@@ -76,9 +83,14 @@ resource "aws_iam_role_policy" "ci_boundary" {
   name     = "${var.name}-ci-boundary"
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [local.ci_deny_data, local.ci_deny_secrets, {
+    Statement = [merge(local.ci_deny_data, {
+      # Terraform's HeadBucket metadata check needs ListBucket. Object content
+      # remains explicitly denied; a separately reviewed provisioning policy must
+      # grant any metadata access before infrastructure can manage that bucket.
+      Action = [for action in local.ci_deny_data.Action : action if each.key != "infrastructure" || action != "s3:ListBucket"]
+      }), local.ci_deny_secrets, {
       Sid      = "NoRoleChainingOrProviders", Effect = "Deny"
-      Action   = ["sts:AssumeRole", "sts:AssumeRoleWithWebIdentity", "bedrock:*", "sqs:*"]
+      Action   = concat(["sts:AssumeRole", "sts:AssumeRoleWithWebIdentity", "bedrock:*"], each.key == "infrastructure" ? [] : ["sqs:*"])
       Resource = "*"
     }]
   })
@@ -94,7 +106,7 @@ resource "aws_iam_role_policy" "ci_release" {
       { Sid = "RegistryToken", Effect = "Allow", Action = "ecr:GetAuthorizationToken", Resource = "*" },
       {
         Sid      = "PublishApplicationImage", Effect = "Allow"
-        Action   = ["ecr:BatchCheckLayerAvailability", "ecr:InitiateLayerUpload", "ecr:UploadLayerPart", "ecr:CompleteLayerUpload", "ecr:PutImage", "ecr:BatchGetImage", "ecr:DescribeImages"]
+        Action   = ["ecr:BatchCheckLayerAvailability", "ecr:InitiateLayerUpload", "ecr:UploadLayerPart", "ecr:CompleteLayerUpload", "ecr:PutImage", "ecr:BatchGetImage", "ecr:DescribeImages", "ecr:ListImages", "ecr:GetDownloadUrlForLayer"]
         Resource = local.ecr_repository_arn
       },
       {
@@ -114,9 +126,22 @@ resource "aws_iam_role_policy" "ci_release" {
         Resource = [for component in ["api", "worker"] : "arn:aws:ecs:${var.aws_region}:${var.aws_account_id}:service/${var.name}/${var.name}-${component}"]
       },
       {
-        Sid       = "RunMigrationOnly", Effect = "Allow", Action = "ecs:RunTask"
-        Resource  = "arn:aws:ecs:${var.aws_region}:${var.aws_account_id}:task-definition/${var.name}-migration:*"
+        Sid      = "RunMigrationOnly", Effect = "Allow", Action = "ecs:RunTask"
+        Resource = "arn:aws:ecs:${var.aws_region}:${var.aws_account_id}:task-definition/${var.name}-migration:*"
+        Condition = merge({ ArnEquals = { "ecs:cluster" = "arn:aws:ecs:${var.aws_region}:${var.aws_account_id}:cluster/${var.name}" } }, jsondecode(length(var.ci.private_subnet_ids) == 0 ? "{}" : jsonencode({
+          "ForAllValues:StringEquals" = { "ecs:subnet" = var.ci.private_subnet_ids }
+          Bool                        = { "ecs:auto-assign-public-ip" = "false" }
+          Null                        = { "ecs:subnet" = "false" }
+        })))
+      },
+      {
+        # ListTasks has no usable task ARN before discovery; cluster condition fences it.
+        Sid       = "ListClusterTasks", Effect = "Allow", Action = "ecs:ListTasks", Resource = "*"
         Condition = { ArnEquals = { "ecs:cluster" = "arn:aws:ecs:${var.aws_region}:${var.aws_account_id}:cluster/${var.name}" } }
+      },
+      {
+        # ELB DescribeTargetHealth requires Resource=*; it returns health metadata only.
+        Sid = "TargetHealth", Effect = "Allow", Action = "elasticloadbalancing:DescribeTargetHealth", Resource = "*"
       },
       {
         Sid      = "InspectApplicationTasks", Effect = "Allow", Action = ["ecs:DescribeTasks", "ecs:StopTask"]

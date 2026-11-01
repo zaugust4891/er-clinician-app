@@ -146,6 +146,11 @@ variable "ci" {
     environment       = string
     smoke_secret_arn  = string
     smoke_kms_key_arn = string
+    # Exact observed subjects, including immutable repository IDs when configured.
+    subjects                = optional(map(string), {})
+    deploy_artifacts_bucket = optional(string)
+    deploy_kms_key_arn      = optional(string)
+    private_subnet_ids      = optional(list(string), [])
   })
   default = null
 }

@@ -1,0 +1,195 @@
+name: Deploy staging
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [master]
+
+permissions:
+  contents: read
+
+# Shared with infra.yml, held across migration, smoke, acceptance and recovery.
+concurrency:
+  group: aws-staging-mutation
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-2
+  AWS_DEFAULT_REGION: us-east-2
+  AWS_EC2_METADATA_DISABLED: 'true'
+  AWS_PAGER: ''
+  TF_IN_AUTOMATION: 'true'
+  STAGING_RELEASE_CONFIG: ${{ vars.STAGING_RELEASE_CONFIG }}
+  RELEASE_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+  CARGO_BUILD_JOBS: '2'
+  CARGO_PROFILE_DEV_DEBUG: '0'
+  CARGO_INCREMENTAL: '0'
+  SQLX_OFFLINE: 'true'
+
+jobs:
+  deploy:
+    if: >-
+      vars.STAGING_DEPLOY_ENABLED == 'true' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.head_branch == 'master' &&
+      (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch')
+    environment: staging
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 110
+    outputs:
+      record_created: ${{ steps.release.outputs.record_created }}
+      api_base_url: ${{ steps.release.outputs.api_base_url }}
+      cognito_client_id: ${{ steps.release.outputs.cognito_client_id }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Skip superseded source before acquiring AWS authority
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/master" --jq '.object.sha')" = "$SOURCE_SHA"
+      - name: Install pinned tools
+        run: |
+          scripts/ci-install-tools.sh terraform
+          scripts/ci-install-tools.sh scanners
+      - name: Assume release identity
+        env:
+          DEPLOY_ROLE_ARN: ${{ vars.AWS_RELEASE_ROLE_ARN }}
+        run: python3 scripts/aws-oidc.py
+      - name: Publish, migrate and verify exact running release
+        id: release
+        run: scripts/deploy-staging.sh deploy
+
+  smoke:
+    needs: deploy
+    environment: staging-smoke
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+      - name: Build DTO-based smoke client before credentials
+        run: cargo build --locked -p er-api --features client --example remote_smoke
+      - name: Assume synthetic smoke identity
+        env:
+          DEPLOY_ROLE_ARN: ${{ vars.AWS_SMOKE_ROLE_ARN }}
+        run: python3 scripts/aws-oidc.py
+      - name: Synthetic lifecycle and tenant isolation
+        env:
+          API_BASE_URL: ${{ needs.deploy.outputs.api_base_url }}
+          COGNITO_CLIENT_ID: ${{ needs.deploy.outputs.cognito_client_id }}
+          SMOKE_SECRET_ARN: ${{ vars.SMOKE_SECRET_ARN }}
+          DEPLOY_ARTIFACTS_BUCKET: ${{ vars.DEPLOY_ARTIFACTS_BUCKET }}
+          SMOKE_WAV_SHA256: ${{ vars.SMOKE_WAV_SHA256 }}
+          SMOKE_EXPECTED_TERMS: ${{ vars.SMOKE_EXPECTED_TERMS }}
+        run: python3 scripts/remote-smoke.py
+
+  accept:
+    needs: [deploy, smoke]
+    environment: staging
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+      - name: Assume release identity
+        env:
+          DEPLOY_ROLE_ARN: ${{ vars.AWS_RELEASE_ROLE_ARN }}
+        run: python3 scripts/aws-oidc.py
+      - run: scripts/deploy-staging.sh accept
+
+  recover:
+    if: >-
+      always() && needs.deploy.outputs.record_created == 'true' &&
+      (needs.deploy.result == 'failure' || needs.smoke.result == 'failure')
+    needs: [deploy, smoke]
+    environment: staging
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    outputs:
+      rollback: ${{ steps.recover.outputs.rollback }}
+      api_base_url: ${{ steps.recover.outputs.api_base_url }}
+      cognito_client_id: ${{ steps.recover.outputs.cognito_client_id }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - run: scripts/ci-install-tools.sh terraform
+      - name: Assume release identity
+        env:
+          DEPLOY_ROLE_ARN: ${{ vars.AWS_RELEASE_ROLE_ARN }}
+        run: python3 scripts/aws-oidc.py
+      - id: recover
+        run: scripts/deploy-staging.sh recover
+
+  rollback-smoke:
+    if: always() && needs.recover.result == 'success' && needs.recover.outputs.rollback == 'true'
+    needs: recover
+    environment: staging-smoke
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+      - run: cargo build --locked -p er-api --features client --example remote_smoke
+      - name: Assume synthetic smoke identity
+        env:
+          DEPLOY_ROLE_ARN: ${{ vars.AWS_SMOKE_ROLE_ARN }}
+        run: python3 scripts/aws-oidc.py
+      - name: Verify restored release with the same synthetic gate
+        env:
+          API_BASE_URL: ${{ needs.recover.outputs.api_base_url }}
+          COGNITO_CLIENT_ID: ${{ needs.recover.outputs.cognito_client_id }}
+          SMOKE_SECRET_ARN: ${{ vars.SMOKE_SECRET_ARN }}
+          DEPLOY_ARTIFACTS_BUCKET: ${{ vars.DEPLOY_ARTIFACTS_BUCKET }}
+          SMOKE_WAV_SHA256: ${{ vars.SMOKE_WAV_SHA256 }}
+          SMOKE_EXPECTED_TERMS: ${{ vars.SMOKE_EXPECTED_TERMS }}
+        run: python3 scripts/remote-smoke.py
+
+  record-recovery:
+    if: always() && needs.rollback-smoke.result == 'success'
+    needs: rollback-smoke
+    environment: staging
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+      - name: Assume release identity
+        env:
+          DEPLOY_ROLE_ARN: ${{ vars.AWS_RELEASE_ROLE_ARN }}
+        run: python3 scripts/aws-oidc.py
+      - run: scripts/deploy-staging.sh recovery-verified

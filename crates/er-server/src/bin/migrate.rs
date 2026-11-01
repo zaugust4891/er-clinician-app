@@ -107,6 +107,32 @@ mod tests {
 
     #[sqlx::test(migrations = false)]
     async fn empty_database_then_noop_then_checksum_mismatch(pool: PgPool) {
+        // Exercise the entrypoint's real connection configuration, not just the
+        // sqlx::test pool: an explicit pg_catalog-first creation path broke fresh
+        // deployments even though direct Migrator tests passed.
+        let mut url = reqwest::Url::parse(&std::env::var("DATABASE_URL").unwrap()).unwrap();
+        url.set_path(pool.connect_options().get_database().unwrap());
+        let config = er_server::db::DatabaseConfig::new(
+            er_server::db::DatabaseSource::Url(url.to_string()),
+            AppEnv::Dev,
+            "migration",
+            None,
+            1,
+            Duration::from_secs(5),
+            Duration::from_secs(10),
+        )
+        .unwrap();
+        let pool = config.connect().await.unwrap();
+        let schemas: Vec<String> = sqlx::query_scalar("SELECT current_schemas(true)::text[]")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(schemas, ["pg_catalog", "public"]);
+        let creation_schema: String = sqlx::query_scalar("SELECT current_schema()::text")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(creation_schema, "public");
         run(&pool, false).await.unwrap();
         let first_count: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations WHERE success")

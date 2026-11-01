@@ -1,0 +1,69 @@
+name: Staging foundation
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Save a plan for review, or apply an exact reviewed plan version
+        type: choice
+        options: [plan, apply]
+        required: true
+      source_sha:
+        description: Reviewed 40-character commit on master (must still be current)
+        type: string
+        required: true
+      plan_id:
+        description: Reviewed plan run-attempt ID (apply only)
+        type: string
+      plan_version_id:
+        description: Exact S3 plan version (apply only)
+        type: string
+      plan_sha256:
+        description: SHA256 of the plan reviewed through restricted SSO access (apply only)
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aws-staging-mutation
+  cancel-in-progress: false
+
+jobs:
+  foundation:
+    if: github.ref == 'refs/heads/master' && vars.STAGING_INFRA_ENABLED == 'true'
+    environment: staging-infrastructure
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    env:
+      AWS_REGION: us-east-2
+      AWS_DEFAULT_REGION: us-east-2
+      AWS_EC2_METADATA_DISABLED: 'true'
+      AWS_PAGER: ''
+      TF_IN_AUTOMATION: 'true'
+      STAGING_RELEASE_CONFIG: ${{ vars.STAGING_RELEASE_CONFIG }}
+      STAGING_FOUNDATION_TFVARS: ${{ vars.STAGING_FOUNDATION_TFVARS }}
+      INFRA_ACTION: ${{ inputs.action }}
+      PLAN_ID: ${{ inputs.plan_id }}
+      PLAN_VERSION_ID: ${{ inputs.plan_version_id }}
+      PLAN_SHA256: ${{ inputs.plan_sha256 }}
+    steps:
+      - name: Verify trusted source before checking out or acquiring credentials
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/master" --jq '.object.sha')" = "$SOURCE_SHA"
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+      - run: scripts/ci-install-tools.sh terraform
+      - name: Assume separately approved foundation identity
+        env:
+          DEPLOY_ROLE_ARN: ${{ vars.AWS_INFRA_ROLE_ARN }}
+        run: python3 scripts/aws-oidc.py
+      - run: python3 scripts/infra-staging.py

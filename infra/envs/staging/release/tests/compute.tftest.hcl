@@ -24,6 +24,8 @@ override_data {
     "ecs_cluster_arn": "arn:aws:ecs:us-east-2:000000000000:cluster/ernote-staging",
     "private_subnet_ids": "[\"subnet-0123456789abcdef0\", \"subnet-0123456789abcdef1\"]",
     "api_target_group_arn": "arn:aws:elasticloadbalancing:us-east-2:000000000000:targetgroup/ernote-staging-api/1234567890abcdef",
+    "alarm_topic_arn": "arn:aws:sns:us-east-2:000000000000:ernote-staging-alarms",
+    "telemetry_notifications_enabled": "true",
     "api_https_port": "8443",
     "db_endpoint": "synthetic.us-east-2.rds.amazonaws.com",
     "db_port": "5432",
@@ -62,6 +64,22 @@ run "services_off_by_default" {
   assert {
     condition     = output.compute == null
     error_message = "No candidate or service is deployed by default."
+  }
+}
+run "migration_is_known_in_the_service_plan_before_any_apply" {
+  command = plan
+  variables {
+    image_digest        = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    manifest_version_id = "synthetic-version"
+    services_enabled    = true
+  }
+  assert {
+    condition = (
+      output.deployment.migration.containerDefinitions[0].entryPoint[0] == "/usr/local/bin/er-migrate" &&
+      output.deployment.migration.containerDefinitions[0].image == "000000000000.dkr.ecr.us-east-2.amazonaws.com/ernote-staging@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" &&
+      output.deployment.network.awsvpcConfiguration.assignPublicIp == "DISABLED"
+    )
+    error_message = "The pipeline must be able to render the exact private migration from a plan without applying services first."
   }
 }
 run "pinned_candidate_renders_before_activation" {

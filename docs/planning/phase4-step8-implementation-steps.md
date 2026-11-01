@@ -15,7 +15,12 @@ are implemented; its live IAM/RDS/ECS gate is unperformed. See the
 [S6 implementation record](#implementation-record--s6-2026-10-15). S7 code and local
 checks are complete; its AWS acceptance remains pending in the
 [S7 implementation record](#implementation-record--s7). S8/S9 code and local checks are complete; their live acceptance remains pending.
-S10 onward remain a plan.*
+S10 CI is implemented; hosted execution and branch protection remain pending. See the
+[S10 implementation record](#implementation-record--s10). **2026-10-31:** S11 staging
+release automation and S12 smoke/evidence tooling are implemented; foundation provisioning
+permissions require separate manual review, and all new live/hosted acceptance remains
+unperformed. See the [S11/S12 record](#implementation-record--s11s12-2026-10-31) and
+[final AWS setup checklist](../ops/step8-final-aws-live-checklist.md). Production remains inactive.*
 
 **Sources:** [Phase 4 playbook](phase4-implementation-guide.md), [Phase 4 plan](phase4.md),
 [Step 3 Postgres guide](phase4-step3-postgres-guide.md),
@@ -51,7 +56,8 @@ handoff remain binding even after the staging gate passes.
 - [Implementation record — S7](#implementation-record--s7)
 - [Implementation record — S8](#implementation-record--s8)
 - [Implementation record — S9](#implementation-record--s9)
-- [Implementation record — S9](#implementation-record--s9)
+- [Implementation record — S10](#implementation-record--s10)
+- [Implementation record — S11/S12 (2026-10-31)](#implementation-record--s11s12-2026-10-31)
 - [Current state audit](#current-state-audit)
 - [Target file layout](#target-file-layout)
 - [Concepts and decisions](#concepts-and-decisions)
@@ -729,6 +735,165 @@ digest logging and activation/production guards. The retained agent candidate wa
 blocked by MinIO disk capacity; validation uses disposable memory-backed MinIO and
 an endpoint-aware upload test. All remaining live destinations/exercises are listed
 explicitly in the verification record; S10–S12 remain separate work.
+
+---
+
+## Implementation record — S10
+
+Implemented **2026-10-21**. The authoritative implementation/verification record is
+[CI verification](../ops/ci-verification.md). `.github/workflows/ci.yml` defines
+read-only PR/default-branch checks, isolated Compose services and disposable signing
+keys, full locked Rust gates, separate online SQLx freshness, dependency/secret scans,
+all-root Terraform validation and native mocked security policies, plus an offline-built
+candidate image with migration/runtime checks and a blocking container scan.
+
+`Required CI` aggregates every job and fails on skipped/cancelled dependencies. No
+OIDC, provider credentials, shared caches, image publication or diagnostic artifacts
+are available to this workflow. Terraform-native policy tests reuse the existing
+S3–S9 coverage instead of adding a second scanner's overlapping configuration rules.
+The tracked public development key is hash-checked for its narrow secret-scan exception;
+tests generate new keys in a disposable source tree. The prior RSA advisory has an
+explicit expiring exception, while patched TLS dependencies address the new scan findings.
+The real migration entrypoint exposed a prerequisite bug hidden by direct test pools:
+its connection search path targeted `pg_catalog` for ledger creation. Migration
+connections now create in `public` while retaining implicit catalog-first lookup;
+the migration regression exercises that actual configuration.
+
+Local results, exact tool pins, residual scan warnings and activation steps live in
+the linked record. Hosted PR execution, actual `master` required-check protection and
+fork-permission verification remain unperformed. S11 owns trusted publication/OIDC/
+release; S12 owns real AWS/provider acceptance. No cloud resources were applied.
+
+---
+
+## Implementation record — S11/S12 (2026-10-31)
+
+This record supersedes the S11/S12 outlines where they differ. The remaining repository
+implementation now includes staging deployment, migration completion, exact runtime
+verification, a separate synthetic smoke identity, accepted-release records, recovery,
+foundation plan review, and a deliberately inactive production promotion contract.
+**The Step 8 live gate is not complete.** No AWS apply, credential read, provider call,
+GitHub environment edit or hosted workflow run was performed for this implementation.
+
+### What and how
+
+The default-branch CI completion event supplies a pinned source commit. Only successful
+push/manual CI from this repository's current `master` is accepted; fork/PR results do
+not acquire OIDC. The environment-scoped jobs share a non-cancelling concurrency group
+with foundation changes. Optional bootstrap OIDC ownership supports importing an existing
+provider, exact environment subjects (including immutable owner/repository IDs), scoped
+release-record permissions, private migration placement and task/target inspection.
+
+The release state machine builds/tests/scans one publishable image (or reuses an immutable
+commit tag on retry), obtains the ECR digest, pins a foundation-manifest version, and
+plans services. A separate known-at-plan output renders the exact private migration before
+any service apply. Submission failures, an active migration, missing exit status, task
+startup failure, timeout or nonzero exit block rollout. A saved Terraform plan is applied
+only after migration exit zero; stale plans fail rather than silently replan.
+
+Health means the intended task definitions, desired/running/pending counts, completed
+rollouts, every running container's digest, and healthy target IPs matching the API tasks.
+ECS stability after a circuit-breaker rollback cannot count as candidate success. A
+separate smoke role retrieves only synthetic credentials and the checksum-approved fixture,
+authenticates against Cognito, and passes tokens on stdin to an `er-api` example using
+actual DTOs/RemoteRepository. It checks invalid/ID/unprovisioned authentication, cross-org
+reads/shift/audio/job denial, real audio → transcript → summary → objective vital → MDM,
+retry idempotency, fresh cursor replay, snapshot, signing/export and shift closure. Polling
+budgets are five minutes per async stage and fifteen minutes overall. Output contains
+fixed assertions and synthetic UUIDs; provider errors/notes/URLs/tokens are not printed.
+
+The accepted release pointer moves only after smoke. Attempt records retain commit,
+architecture, digest, exact input config/manifest version, migration file hashes and the
+previous accepted record. Recovery checks schema compatibility, extracts the previous
+accepted source tree, and applies that tree's exact release inputs, followed by digest
+verification and another separately authenticated smoke. It never down-migrates. With no
+predecessor or unreviewed migration compatibility, services are disabled through Terraform
+and an operator forward repair is required. Cancellation/runner loss still needs manual
+inspection; GitHub cannot guarantee recovery after the workflow itself is cancelled.
+
+Foundation automation persists encrypted, versioned plans for restricted operator review,
+then requires source SHA, exact plan version and checksum on a second dispatch. No raw
+plan/state artifacts go to GitHub. Its provisioning policy is **not included**: automatic
+approval review rejected the proposed broad regional infrastructure/IAM/KMS/destructive
+permissions. The safer implemented path leaves foundation on SSO or on an independently
+reviewed policy attached by the AWS owner. This is explicitly a remaining activation
+prerequisite, not a claim that a state-only role can provision a foundation.
+
+### Files added
+
+| Files | Purpose |
+|---|---|
+| `.github/workflows/deploy.yml` | CI-completion staging release, separate smoke/accept/recovery jobs, shared concurrency |
+| `.github/workflows/infra.yml` | Protected plan/review/apply dispatch using an exact encrypted plan version |
+| `.github/workflows/promote-production.yml` | Explicit inactive production contract; no OIDC or workloads |
+| `.github/CODEOWNERS` | Owner review routes for workflow, infra, scripts, migrations and smoke client |
+| `ci/release-policy.json` | Empty-by-default explicit schema rollback compatibility review |
+| `scripts/aws-oidc.py` | Environment OIDC exchange, stdin JWT submission, masked temporary credentials |
+| `scripts/deploy.py`, `scripts/deploy-staging.sh` | Image publication, migration/release state machine, acceptance and recovery |
+| `scripts/infra-staging.py` | Restricted plan persistence, source/version/checksum validation and apply |
+| `scripts/remote-smoke.py`, `scripts/demo-remote.sh` | Synthetic-only secret/fixture authentication and safe smoke launcher |
+| `scripts/test_deploy.py` | Offline completion, migration/rollout failure, acceptance and rollback fault injection |
+| `crates/er-api/examples/remote_smoke.rs` | Bounded DTO-based live lifecycle and isolation assertions |
+| `infra/bootstrap/oidc.tf`, `infra/bootstrap/tests/oidc.tftest.hcl` | Optional account-owned GitHub provider and opt-in/audience tests |
+| `infra/modules/identity/ci-artifacts.tf`, `infra/modules/identity/tests/ci.tftest.hcl` | Exact deployment/fixture object scopes, immutable subject/private-placement tests |
+| `docs/ops/step8-final-aws-live-checklist.md` | New authoritative ordered manual AWS/GitHub prerequisites and live tests |
+| `docs/ops/step8-verification.md` | Dated evidence template with every unperformed essential gate and handoff owner |
+| `docs/ops/production-promotion.md` | Digest-preserving future promotion, approval and pre-PHI activation contract |
+
+### Files updated
+
+| Files | Change |
+|---|---|
+| `.github/workflows/ci.yml` | Lint all workflows; execute deployment regression suite without credentials |
+| `scripts/ci-image.sh` | Optional retention of the exact tested/scanned local image for protected publication; no attestation index, so ECR and ECS container digests match |
+| `crates/er-api/Cargo.toml`, `Cargo.lock` | Client-feature-gated smoke example and existing Tokio dev dependency |
+| `infra/modules/identity/ci.tf` | Exact optional subject overrides, two-hour sessions, registry pull/list, cluster task discovery, target health and private RunTask constraints |
+| `infra/envs/staging/foundation/identity.tf` | Wire existing artifact key/bucket and private subnets into CI role inputs |
+| `infra/envs/{staging,prod}/foundation/variables.tf` | Matching optional CI subject/artifact/network input shape; production stays disabled |
+| `infra/envs/{staging,prod}/release/outputs.tf` | Known-at-plan migration template/network output without deploying services |
+| `infra/envs/staging/release/tests/compute.tftest.hcl` | Prove migration rendering before applying the activated-service plan |
+| `docs/planning/phase4-step8-implementation-steps.md` | This implementation, deviations, validation and file inventory |
+| `docs/ops/staging-deploy.md` | Deployment transaction, failure recovery, interruption, schema review and live drills |
+| `docs/ops/step8-live-aws-checklist.md` | Historical status banner pointing to the new final checklist |
+| `docs/ops/auth-onboarding.md` | Required third unprovisioned synthetic user and current smoke launcher |
+| `docs/ops/ci-verification.md` | Current publication/release handoff and added offline checks |
+| `infra/modules/identity/README.md`, `infra/README.md`, `README.md` | Current setup, automation and remaining live/principal-approval boundaries |
+
+Existing uncommitted S10 application/image/security changes were preserved. This record
+lists the S11/S12 additions/updates, not unrelated pre-existing working-tree edits.
+
+### Validation and limits
+
+Local validation: `python3 scripts/test_deploy.py`, `python3 scripts/test_ci_policy.py`,
+`cargo clippy --locked -p er-api --features client --all-targets -- -D warnings`,
+`cargo test --locked -p er-api --features client`, pinned `actionlint` over every workflow,
+Python compilation, shell syntax, Rust/Terraform formatting and `git diff --check`.
+Terraform validation/mock tests cover identity, staging foundation/release, inactive
+production foundation/release, and the bootstrap OIDC opt-in. Final results:
+
+- **14/14** deployment fault-injection tests and **7/7** existing CI-policy tests pass.
+- **6/6** `er-api` tests pass; the smoke example compiles and targeted all-target
+  Clippy passes with warnings denied. A malformed-input probe exits 1 with only
+  `smoke_input`, without echoing the supplied token canary.
+- **48/48** targeted Terraform mocked runs pass: identity 10, staging release 10,
+  staging foundation 12, production release 5, production foundation 8, bootstrap 3.
+  The five roots and identity module validate in disposable backend-disabled copies
+  using locked AWS provider 6.64.0; bootstrap is plan-only because of protection guards.
+- Pinned actionlint **1.7.7** validates all four workflows. Python compilation,
+  shell syntax, Rust/Terraform formatting and `git diff --check` pass.
+
+The unrelated full workspace/Compose/image/security-scan suite was not rerun for this
+S11/S12 change; S10's prior evidence remains in its record. CI invokes those gates on
+the committed candidate before allowing the deployment workflow. Image publication,
+remote state application and the real-provider smoke were not run locally.
+
+Live acceptance remains entirely in [step8-verification.md](../ops/step8-verification.md).
+Failure drills, worker replacement, real CLI timeout/reload, metering/cache diagnostics,
+negative IAM/TLS, privacy canaries, alarms, cost and clean-checkout convergence are manual
+AWS/operator gates. The full lifecycle smoke automates a subset, not all of S12. No
+approved audio fixture is invented or distributed by this change. Production is an
+inactive reviewable contract; a runnable production pipeline/approval behavior must be
+implemented and verified only after its separate prerequisites.
 
 ---
 
