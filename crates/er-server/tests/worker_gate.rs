@@ -86,7 +86,7 @@ async fn upload_chunk(
     .await
     .expect("insert the chunk row");
 
-    audio
+    let uploaded = audio
         .s3
         .put_object()
         .bucket(&audio.config.bucket)
@@ -97,7 +97,7 @@ async fn upload_chunk(
         .await
         .expect("put the chunk's audio");
 
-    repo.mark_chunk_uploaded(chunk_id)
+    repo.complete_bound_chunk(chunk_id, uploaded.e_tag().unwrap(), uploaded.version_id())
         .await
         .expect("mark uploaded")
         .expect("the chunk exists");
@@ -403,8 +403,11 @@ async fn final_summary_deadline_retains_transcript_and_goes_to_dlq_without_secon
     let captured = mock.captured_transcripts();
     let mut ctx = echo_worker(pool.clone(), &audio);
     ctx.summarizer = AppSummarizer::Mock(mock);
-    ctx.limits.job_timeout = Duration::from_millis(800);
-    ctx.limits.terminal_timeout = Duration::from_millis(400);
+    // Real S3/DB setup now includes tenant transactions and a binding read.
+    // Under parallel CI load the held summary lock, not setup latency, should
+    // consume the work budget. Keep terminal bookkeeping independently bounded.
+    ctx.limits.job_timeout = Duration::from_secs(4);
+    ctx.limits.terminal_timeout = Duration::from_secs(2);
     let mut held = pool.begin().await.unwrap();
     sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
         .bind(format!("summary:{encounter_id}"))
@@ -969,4 +972,128 @@ async fn a_job_for_an_unknown_chunk_does_not_stop_the_worker(pool: PgPool) {
 
     assert_eq!(chunk(&pool, only).await.status, "done");
     assert_eq!(transcript_events(&pool, patient_id).await.len(), 1);
+}
+
+#[sqlx::test]
+async fn bound_audio_rejects_overwrite_and_outbox_recovers_without_client(pool: PgPool) {
+    seed_org_and_clinician(&pool, ORG_A, "binding-doc").await;
+    let audio = ensure_test_audio_infra().await;
+    let patient = seed_registered_patient(&pool, ORG_A).await;
+    let encounter = Uuid::now_v7();
+    let id = upload_chunk(&pool, &audio, patient, encounter, 0, true, b"original").await;
+    let repo = PostgresRepository::for_org(pool.clone(), ORG_A);
+    let binding = repo.audio_binding(id).await.unwrap().unwrap();
+    let row = repo.chunk_row(id).await.unwrap().unwrap();
+    audio
+        .s3
+        .put_object()
+        .bucket(&audio.config.bucket)
+        .key(&row.s3_key)
+        .content_type("audio/wav")
+        .body(tiny_wav(b"replacement").into())
+        .send()
+        .await
+        .unwrap();
+    repo.complete_bound_chunk(id, "replacement-etag", None)
+        .await
+        .unwrap();
+    assert_eq!(repo.audio_binding(id).await.unwrap().unwrap(), binding);
+    let ctx = echo_worker(pool.clone(), &audio);
+    assert!(worker::handle_transcribe_chunk(&ctx, id).await.is_err());
+    assert!(
+        repo.chunk_row(id)
+            .await
+            .unwrap()
+            .unwrap()
+            .transcript
+            .is_none()
+    );
+    // No API retry or successful initial enqueue: dispatch only the durable row.
+    sqlx::query("UPDATE dispatch_outbox SET available_at = now() - interval '1 second'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(er_server::outbox::dispatch_once(&ctx).await.unwrap(), 1);
+    assert_eq!(audio.drain_jobs().await.len(), 1);
+    assert_eq!(er_server::outbox::dispatch_once(&ctx).await.unwrap(), 0);
+}
+
+#[sqlx::test]
+async fn version_binding_reads_original_after_url_replay(pool: PgPool) {
+    seed_org_and_clinician(&pool, ORG_A, "version-doc").await;
+    let audio = ensure_test_audio_infra().await;
+    audio
+        .s3
+        .put_bucket_versioning()
+        .bucket(&audio.config.bucket)
+        .versioning_configuration(
+            aws_sdk_s3::types::VersioningConfiguration::builder()
+                .status(aws_sdk_s3::types::BucketVersioningStatus::Enabled)
+                .build(),
+        )
+        .send()
+        .await
+        .unwrap();
+    let patient = seed_registered_patient(&pool, ORG_A).await;
+    let id = upload_chunk(&pool, &audio, patient, Uuid::now_v7(), 0, true, b"original").await;
+    let repo = PostgresRepository::for_org(pool.clone(), ORG_A);
+    let (etag, version) = repo.audio_binding(id).await.unwrap().unwrap();
+    assert!(version.is_some());
+    let row = repo.chunk_row(id).await.unwrap().unwrap();
+    audio
+        .s3
+        .put_object()
+        .bucket(&audio.config.bucket)
+        .key(&row.s3_key)
+        .content_type("audio/wav")
+        .body(tiny_wav(b"replacement").into())
+        .send()
+        .await
+        .unwrap();
+    let bytes = er_server::audio::download_bound(
+        &audio.s3,
+        &audio.config.bucket,
+        &row.s3_key,
+        "audio/wav",
+        &Default::default(),
+        Some((&etag, version.as_deref())),
+    )
+    .await
+    .unwrap();
+    assert_eq!(bytes, tiny_wav(b"original"));
+    // Expiry only touches old pending intents, never this completed upload.
+    let abandoned = Uuid::now_v7();
+    repo.insert_chunk(NewChunk {
+        id: abandoned,
+        patient_id: patient,
+        encounter_id: Uuid::now_v7(),
+        chunk_index: 0,
+        is_final: false,
+        content_type: "audio/wav",
+        s3_key: "abandoned",
+    })
+    .await
+    .unwrap();
+    sqlx::query("UPDATE audio_chunks SET created_at = now() - interval '25 hours'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let expired: i64 = sqlx::query_scalar("SELECT public.expire_pending_chunks()")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(expired, 1);
+    assert_eq!(
+        repo.chunk_row(abandoned)
+            .await
+            .unwrap()
+            .unwrap()
+            .error
+            .as_deref(),
+        Some("upload_expired")
+    );
+    assert_eq!(
+        repo.chunk_row(id).await.unwrap().unwrap().status,
+        "uploaded"
+    );
 }

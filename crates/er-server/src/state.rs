@@ -21,6 +21,9 @@ const API_TABLES: &[&str] = &[
     "public.shift_patients",
     "public.audio_chunks",
     "public.jobs",
+    "public.request_quotas",
+    "public.audio_bindings",
+    "public.dispatch_outbox",
 ];
 
 /// Resolved audio resource locations. `Config` contains deploy-time names;
@@ -120,7 +123,7 @@ impl AppState {
                 .fetch_one(&mut *conn)
                 .await?;
             sqlx::query_scalar::<_, bool>(
-                "SELECT bool_and(CASE WHEN to_regclass(t) IS NULL THEN false \
+                "SELECT has_table_privilege('public.access_audit', 'INSERT') AND bool_and(CASE WHEN to_regclass(t) IS NULL THEN false \
                  ELSE has_any_column_privilege(to_regclass(t), 'SELECT') END) \
                  FROM unnest($1::text[]) AS t",
             )

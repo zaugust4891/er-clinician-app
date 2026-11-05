@@ -61,7 +61,9 @@ mod tests {
     const KID: &str = "dev-key-1"; // must match dev/keys/jwks.json
 
     fn dev_dir() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../dev/keys")
+        // Cargo runs tests from the crate directory. Do not bake an ephemeral
+        // CI checkout path into binaries reused through CARGO_TARGET_DIR.
+        Path::new("../../dev/keys").to_path_buf()
     }
 
     fn dev_keyset() -> KeySet {

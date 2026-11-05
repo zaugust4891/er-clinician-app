@@ -9,6 +9,20 @@ use er_domain::{NoteEvent, PatientId, PatientNote};
 use er_store::repository::{Repository, StoredEvent};
 use er_store::{StoreError, StoreResult, snapshot_checksum};
 
+// Single-query transactions have the same tenant boundary as multi-query writes.
+// On error/cancellation SQLx rolls back before returning the connection to the pool.
+macro_rules! tenant_query {
+    ($repo:expr, $tx:ident, $query:expr) => {{
+        async {
+            let mut $tx = $repo.begin_tenant().await?;
+            let value = $query?;
+            $tx.commit().await?;
+            Ok::<_, sqlx::Error>(value)
+        }
+        .await
+    }};
+}
+
 pub struct PostgresRepository {
     pool: sqlx::PgPool,
     org_id: Uuid,
@@ -154,13 +168,22 @@ impl PostgresRepository {
         Self { pool, org_id }
     }
 
+    pub async fn begin_tenant(&self) -> Result<sqlx::Transaction<'_, sqlx::Postgres>, sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SELECT set_config('app.org_id', $1, true)")
+            .bind(self.org_id.to_string())
+            .execute(&mut *tx)
+            .await?;
+        Ok(tx)
+    }
+
     async fn sequence_for(&self, patient_id: PatientId, event_id: Uuid) -> StoreResult<u64> {
-        let seq = sqlx::query_scalar!(
+        let seq = tenant_query!(self, tx, sqlx::query_scalar!(
             "SELECT sequence_id FROM events WHERE event_id = $1 AND org_id = $2 AND patient_id = $3",
             event_id, self.org_id, patient_id,
         )
-        .fetch_optional(&self.pool)
-        .await
+        .fetch_optional(&mut *tx)
+        .await)
         .map_err(StoreError::backend)?;
 
         match seq {
@@ -187,13 +210,17 @@ impl PostgresRepository {
     }
 
     pub async fn patient_registered(&self, patient_id: Uuid) -> StoreResult<bool> {
-        let db_hit = sqlx::query_scalar!(
-            "SELECT 1 AS one FROM patients WHERE id = $1 AND org_id = $2",
-            patient_id,
-            self.org_id,
+        let db_hit = tenant_query!(
+            self,
+            tx,
+            sqlx::query_scalar!(
+                "SELECT 1 AS one FROM patients WHERE id = $1 AND org_id = $2",
+                patient_id,
+                self.org_id,
+            )
+            .fetch_optional(&mut *tx)
+            .await
         )
-        .fetch_optional(&self.pool)
-        .await
         .map_err(StoreError::backend)?;
         Ok(db_hit.is_some())
     }
@@ -205,14 +232,18 @@ impl PostgresRepository {
     /// Returns `None` rather than erroring on a missing row so the caller keeps
     /// the same 404-means-absent vocabulary as every other per-patient route.
     pub async fn patient_row(&self, patient_id: Uuid) -> StoreResult<Option<PatientRow>> {
-        let row = sqlx::query!(
-            "SELECT chief_complaint, display_label, created_at
+        let row = tenant_query!(
+            self,
+            tx,
+            sqlx::query!(
+                "SELECT chief_complaint, display_label, created_at
                FROM patients WHERE id = $1 AND org_id = $2",
-            patient_id,
-            self.org_id,
+                patient_id,
+                self.org_id,
+            )
+            .fetch_optional(&mut *tx)
+            .await
         )
-        .fetch_optional(&self.pool)
-        .await
         .map_err(StoreError::backend)?;
 
         Ok(row.map(|r| PatientRow {
@@ -228,16 +259,20 @@ impl PostgresRepository {
     /// active — the partial unique index refereed it, and "you're already in a
     /// shift" is an answer, not a failure. Every other database error propagates.
     pub async fn create_shift(&self, clinician_id: Uuid) -> StoreResult<Option<ShiftRow>> {
-        let result = sqlx::query!(
-            r#"INSERT INTO shifts (id, org_id, clinician_id, status)
+        let result = tenant_query!(
+            self,
+            tx,
+            sqlx::query!(
+                r#"INSERT INTO shifts (id, org_id, clinician_id, status)
                VALUES ($1, $2, $3, 'active')
                RETURNING id, started_at, ended_at, status"#,
-            Uuid::now_v7(),
-            self.org_id,
-            clinician_id,
-        )
-        .fetch_one(&self.pool)
-        .await;
+                Uuid::now_v7(),
+                self.org_id,
+                clinician_id,
+            )
+            .fetch_one(&mut *tx)
+            .await
+        );
 
         match result {
             Ok(r) => Ok(Some(ShiftRow {
@@ -252,14 +287,18 @@ impl PostgresRepository {
     }
 
     pub async fn get_shift(&self, shift_id: Uuid) -> StoreResult<Option<ShiftRow>> {
-        let row = sqlx::query!(
-            "SELECT id, started_at, ended_at, status
+        let row = tenant_query!(
+            self,
+            tx,
+            sqlx::query!(
+                "SELECT id, started_at, ended_at, status
                FROM shifts WHERE id = $1 AND org_id = $2",
-            shift_id,
-            self.org_id,
+                shift_id,
+                self.org_id,
+            )
+            .fetch_optional(&mut *tx)
+            .await
         )
-        .fetch_optional(&self.pool)
-        .await
         .map_err(StoreError::backend)?;
 
         Ok(row.map(|r| ShiftRow {
@@ -273,15 +312,19 @@ impl PostgresRepository {
     /// "What am I in the middle of?" — scoped to the caller's own clinician_id,
     /// which comes from the token and is never a parameter (§C6).
     pub async fn active_shift(&self, clinician_id: Uuid) -> StoreResult<Option<ShiftRow>> {
-        let row = sqlx::query!(
-            "SELECT id, started_at, ended_at, status
+        let row = tenant_query!(
+            self,
+            tx,
+            sqlx::query!(
+                "SELECT id, started_at, ended_at, status
                FROM shifts
               WHERE clinician_id = $1 AND org_id = $2 AND status = 'active'",
-            clinician_id,
-            self.org_id,
+                clinician_id,
+                self.org_id,
+            )
+            .fetch_optional(&mut *tx)
+            .await
         )
-        .fetch_optional(&self.pool)
-        .await
         .map_err(StoreError::backend)?;
 
         Ok(row.map(|r| ShiftRow {
@@ -299,15 +342,19 @@ impl PostgresRepository {
     ///
     /// `Ok(None)` means missing or another org's — the caller turns that into 404.
     pub async fn end_shift(&self, shift_id: Uuid) -> StoreResult<Option<ShiftRow>> {
-        let updated = sqlx::query!(
-            r#"UPDATE shifts SET ended_at = now(), status = 'ended'
+        let updated = tenant_query!(
+            self,
+            tx,
+            sqlx::query!(
+                r#"UPDATE shifts SET ended_at = now(), status = 'ended'
                 WHERE id = $1 AND org_id = $2 AND status = 'active'
             RETURNING id, started_at, ended_at, status"#,
-            shift_id,
-            self.org_id,
+                shift_id,
+                self.org_id,
+            )
+            .fetch_optional(&mut *tx)
+            .await
         )
-        .fetch_optional(&self.pool)
-        .await
         .map_err(StoreError::backend)?;
 
         if let Some(r) = updated {
@@ -326,17 +373,21 @@ impl PostgresRepository {
     /// The shift's patients in `position` order — ShiftManager's stable-list
     /// invariant, now enforced by the database rather than by in-memory ordering.
     pub async fn shift_roster(&self, shift_id: Uuid) -> StoreResult<Vec<RosterEntry>> {
-        let rows = sqlx::query!(
-            "SELECT p.id, p.chief_complaint, p.display_label, p.created_at
+        let rows = tenant_query!(
+            self,
+            tx,
+            sqlx::query!(
+                "SELECT p.id, p.chief_complaint, p.display_label, p.created_at
                FROM shift_patients sp
                JOIN patients p ON p.id = sp.patient_id
               WHERE sp.shift_id = $1 AND p.org_id = $2
               ORDER BY sp.position ASC",
-            shift_id,
-            self.org_id,
+                shift_id,
+                self.org_id,
+            )
+            .fetch_all(&mut *tx)
+            .await
         )
-        .fetch_all(&self.pool)
-        .await
         .map_err(StoreError::backend)?;
 
         Ok(rows
@@ -360,7 +411,7 @@ impl PostgresRepository {
         chief_complaint: &str,
         display_label: Option<&str>,
     ) -> StoreResult<()> {
-        let mut tx = self.pool.begin().await.map_err(StoreError::backend)?;
+        let mut tx = self.begin_tenant().await.map_err(StoreError::backend)?;
 
         sqlx::query!(
             r#"INSERT INTO patients (id, org_id, created_by, chief_complaint, display_label)
@@ -398,9 +449,12 @@ impl PostgresRepository {
     }
 
     pub async fn insert_chunk(&self, chunk: NewChunk<'_>) -> StoreResult<InsertChunkOutcome> {
-        let result = sqlx::query_as!(
-            ChunkRow,
-            r#"
+        let result = tenant_query!(
+            self,
+            tx,
+            sqlx::query_as!(
+                ChunkRow,
+                r#"
             INSERT INTO audio_chunks (
                 id,
                 org_id,
@@ -427,17 +481,18 @@ impl PostgresRepository {
                 duration_ms,
                 created_at
             "#,
-            chunk.id,
-            self.org_id,
-            chunk.patient_id,
-            chunk.encounter_id,
-            chunk.chunk_index,
-            chunk.is_final,
-            chunk.content_type,
-            chunk.s3_key,
-        )
-        .fetch_one(&self.pool)
-        .await;
+                chunk.id,
+                self.org_id,
+                chunk.patient_id,
+                chunk.encounter_id,
+                chunk.chunk_index,
+                chunk.is_final,
+                chunk.content_type,
+                chunk.s3_key,
+            )
+            .fetch_one(&mut *tx)
+            .await
+        );
 
         match result {
             Ok(row) => Ok(InsertChunkOutcome::Created(row)),
@@ -477,8 +532,11 @@ impl PostgresRepository {
     }
 
     pub async fn chunk_row(&self, chunk_id: Uuid) -> StoreResult<Option<ChunkRow>> {
-        let row = sqlx::query_as::<_, ChunkRow>(
-            r#"
+        let row = tenant_query!(
+            self,
+            tx,
+            sqlx::query_as::<_, ChunkRow>(
+                r#"
             SELECT
                 id,
                 org_id,
@@ -495,11 +553,12 @@ impl PostgresRepository {
                 created_at
             FROM audio_chunks
             WHERE id = $1 AND org_id = $2"#,
+            )
+            .bind(chunk_id)
+            .bind(self.org_id)
+            .fetch_optional(&mut *tx)
+            .await
         )
-        .bind(chunk_id)
-        .bind(self.org_id)
-        .fetch_optional(&self.pool)
-        .await
         .map_err(StoreError::backend)?;
 
         Ok(row)
@@ -519,32 +578,15 @@ impl PostgresRepository {
         pool: &PgPool,
         chunk_id: Uuid,
     ) -> StoreResult<Option<ChunkRow>> {
-        let row = sqlx::query_as::<_, ChunkRow>(
-            r#"
-            SELECT
-                id,
-                org_id,
-                patient_id,
-                encounter_id,
-                chunk_index,
-                is_final,
-                content_type,
-                s3_key,
-                status,
-                transcript,
-                error,
-                duration_ms,
-                created_at
-            FROM audio_chunks
-            WHERE id = $1
-            "#,
-        )
-        .bind(chunk_id)
-        .fetch_optional(pool)
-        .await
-        .map_err(StoreError::backend)?;
-
-        Ok(row)
+        let org: Option<Uuid> = sqlx::query_scalar("SELECT public.worker_chunk_org($1)")
+            .bind(chunk_id)
+            .fetch_one(pool)
+            .await
+            .map_err(StoreError::backend)?;
+        match org {
+            Some(org) => Self::for_org(pool.clone(), org).chunk_row(chunk_id).await,
+            None => Ok(None),
+        }
     }
 
     /// Return one organization's chunks for an encounter in transcript order.
@@ -553,8 +595,11 @@ impl PostgresRepository {
     /// keeping this query scoped prevents malformed data from another org from
     /// being mixed into the assembled transcript.
     pub async fn encounter_chunks(&self, encounter_id: Uuid) -> StoreResult<Vec<ChunkRow>> {
-        let rows = sqlx::query_as::<_, ChunkRow>(
-            r#"
+        let rows = tenant_query!(
+            self,
+            tx,
+            sqlx::query_as::<_, ChunkRow>(
+                r#"
             SELECT
                 id,
                 org_id,
@@ -574,11 +619,12 @@ impl PostgresRepository {
               AND encounter_id = $2
             ORDER BY chunk_index ASC
             "#,
+            )
+            .bind(self.org_id)
+            .bind(encounter_id)
+            .fetch_all(&mut *tx)
+            .await
         )
-        .bind(self.org_id)
-        .bind(encounter_id)
-        .fetch_all(&self.pool)
-        .await
         .map_err(StoreError::backend)?;
 
         Ok(rows)
@@ -589,9 +635,76 @@ impl PostgresRepository {
     /// Only `pending` moves to `uploaded`. A repeated completion request returns
     /// the current row without moving `transcribing`, `done`, or `failed`
     /// backward. `None` means the chunk is missing or belongs to another org.
+    /// The first verified completion fixes object identity and status together.
+    /// Concurrent completion calls cannot replace the winning binding.
+    pub async fn complete_bound_chunk(
+        &self,
+        id: Uuid,
+        etag: &str,
+        version: Option<&str>,
+    ) -> StoreResult<Option<ChunkRow>> {
+        let mut tx = self.begin_tenant().await.map_err(StoreError::backend)?;
+        sqlx::query(
+            "INSERT INTO audio_bindings (chunk_id, org_id, etag, version_id)
+                     SELECT id, org_id, $2, $3 FROM audio_chunks
+                     WHERE id = $1 AND status = 'pending'
+                     ON CONFLICT (chunk_id) DO NOTHING",
+        )
+        .bind(id)
+        .bind(etag)
+        .bind(version)
+        .execute(&mut *tx)
+        .await
+        .map_err(StoreError::backend)?;
+        sqlx::query(
+            "UPDATE audio_chunks SET status = 'uploaded'
+                     WHERE id = $1 AND status = 'pending'
+                     AND EXISTS (SELECT 1 FROM audio_bindings WHERE chunk_id = $1)",
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .map_err(StoreError::backend)?;
+        tx.commit().await.map_err(StoreError::backend)?;
+        self.chunk_row(id).await
+    }
+
+    pub async fn ack_dispatch(&self, kind: &str, id: Uuid) -> StoreResult<()> {
+        tenant_query!(
+            self,
+            tx,
+            sqlx::query("DELETE FROM dispatch_outbox WHERE kind = $1 AND id = $2 AND org_id = $3")
+                .bind(kind)
+                .bind(id)
+                .bind(self.org_id)
+                .execute(&mut *tx)
+                .await
+        )
+        .map_err(StoreError::backend)?;
+        Ok(())
+    }
+
+    pub async fn audio_binding(&self, id: Uuid) -> StoreResult<Option<(String, Option<String>)>> {
+        tenant_query!(
+            self,
+            tx,
+            sqlx::query_as(
+                "SELECT etag, version_id FROM audio_bindings WHERE chunk_id = $1 AND org_id = $2"
+            )
+            .bind(id)
+            .bind(self.org_id)
+            .fetch_optional(&mut *tx)
+            .await
+        )
+        .map_err(StoreError::backend)
+    }
+
     pub async fn mark_chunk_uploaded(&self, chunk_id: Uuid) -> StoreResult<Option<ChunkRow>> {
-        let updated = sqlx::query_as::<_, ChunkRow>(
-            r#"
+        let updated = tenant_query!(
+            self,
+            tx,
+            sqlx::query_as::<_, ChunkRow>(
+                r#"
             UPDATE audio_chunks
                SET status = 'uploaded'
              WHERE id = $1
@@ -612,11 +725,12 @@ impl PostgresRepository {
                 duration_ms,
                 created_at
             "#,
+            )
+            .bind(chunk_id)
+            .bind(self.org_id)
+            .fetch_optional(&mut *tx)
+            .await
         )
-        .bind(chunk_id)
-        .bind(self.org_id)
-        .fetch_optional(&self.pool)
-        .await
         .map_err(StoreError::backend)?;
 
         match updated {
@@ -631,8 +745,11 @@ impl PostgresRepository {
     /// retry. Other states are returned unchanged so terminal chunks cannot be
     /// reopened accidentally.
     pub async fn mark_chunk_transcribing(&self, chunk_id: Uuid) -> StoreResult<Option<ChunkRow>> {
-        let updated = sqlx::query_as::<_, ChunkRow>(
-            r#"
+        let updated = tenant_query!(
+            self,
+            tx,
+            sqlx::query_as::<_, ChunkRow>(
+                r#"
             UPDATE audio_chunks
                SET status = 'transcribing'
              WHERE id = $1
@@ -653,11 +770,12 @@ impl PostgresRepository {
                 duration_ms,
                 created_at
             "#,
+            )
+            .bind(chunk_id)
+            .bind(self.org_id)
+            .fetch_optional(&mut *tx)
+            .await
         )
-        .bind(chunk_id)
-        .bind(self.org_id)
-        .fetch_optional(&self.pool)
-        .await
         .map_err(StoreError::backend)?;
 
         match updated {
@@ -676,8 +794,11 @@ impl PostgresRepository {
         transcript: &str,
         duration_ms: i32,
     ) -> StoreResult<Option<ChunkRow>> {
-        let updated = sqlx::query_as::<_, ChunkRow>(
-            r#"
+        let updated = tenant_query!(
+            self,
+            tx,
+            sqlx::query_as::<_, ChunkRow>(
+                r#"
             UPDATE audio_chunks
                SET status = 'done',
                    transcript = $3,
@@ -701,13 +822,14 @@ impl PostgresRepository {
                 duration_ms,
                 created_at
             "#,
+            )
+            .bind(chunk_id)
+            .bind(self.org_id)
+            .bind(transcript)
+            .bind(duration_ms)
+            .fetch_optional(&mut *tx)
+            .await
         )
-        .bind(chunk_id)
-        .bind(self.org_id)
-        .bind(transcript)
-        .bind(duration_ms)
-        .fetch_optional(&self.pool)
-        .await
         .map_err(StoreError::backend)?;
 
         match updated {
@@ -725,8 +847,11 @@ impl PostgresRepository {
         chunk_id: Uuid,
         error: &str,
     ) -> StoreResult<Option<ChunkRow>> {
-        let updated = sqlx::query_as::<_, ChunkRow>(
-            r#"
+        let updated = tenant_query!(
+            self,
+            tx,
+            sqlx::query_as::<_, ChunkRow>(
+                r#"
             UPDATE audio_chunks
                SET status = 'failed',
                    error = $3
@@ -748,12 +873,13 @@ impl PostgresRepository {
                 duration_ms,
                 created_at
             "#,
+            )
+            .bind(chunk_id)
+            .bind(self.org_id)
+            .bind(error)
+            .fetch_optional(&mut *tx)
+            .await
         )
-        .bind(chunk_id)
-        .bind(self.org_id)
-        .bind(error)
-        .fetch_optional(&self.pool)
-        .await
         .map_err(StoreError::backend)?;
 
         match updated {
@@ -771,20 +897,24 @@ impl PostgresRepository {
         clinician_id: Uuid,
         kind: &str,
     ) -> StoreResult<InsertJobOutcome> {
-        let inserted = sqlx::query_as::<_, JobRow>(
-            r#"INSERT INTO jobs (id, org_id, clinician_id, patient_id, kind)
+        let inserted = tenant_query!(
+            self,
+            tx,
+            sqlx::query_as::<_, JobRow>(
+                r#"INSERT INTO jobs (id, org_id, clinician_id, patient_id, kind)
                VALUES ($1, $2, $3, $4, $5)
                ON CONFLICT (id) DO NOTHING
                RETURNING id, org_id, clinician_id, patient_id, kind, status,
                          error, enqueued_at, created_at, updated_at"#,
+            )
+            .bind(id)
+            .bind(self.org_id)
+            .bind(clinician_id)
+            .bind(patient_id)
+            .bind(kind)
+            .fetch_optional(&mut *tx)
+            .await
         )
-        .bind(id)
-        .bind(self.org_id)
-        .bind(clinician_id)
-        .bind(patient_id)
-        .bind(kind)
-        .fetch_optional(&self.pool)
-        .await
         .map_err(StoreError::backend)?;
 
         if let Some(row) = inserted {
@@ -808,60 +938,71 @@ impl PostgresRepository {
     }
 
     pub async fn job_row(&self, id: Uuid) -> StoreResult<Option<JobRow>> {
-        sqlx::query_as::<_, JobRow>(
-            r#"SELECT id, org_id, clinician_id, patient_id, kind, status,
+        tenant_query!(
+            self,
+            tx,
+            sqlx::query_as::<_, JobRow>(
+                r#"SELECT id, org_id, clinician_id, patient_id, kind, status,
                       error, enqueued_at, created_at, updated_at
                  FROM jobs
                 WHERE id = $1 AND org_id = $2"#,
+            )
+            .bind(id)
+            .bind(self.org_id)
+            .fetch_optional(&mut *tx)
+            .await
         )
-        .bind(id)
-        .bind(self.org_id)
-        .fetch_optional(&self.pool)
-        .await
         .map_err(StoreError::backend)
     }
 
     /// Worker bootstrap lookup. The row discovers tenancy; all later work uses
     /// an organization-scoped repository.
     pub(crate) async fn job_row_any_org(pool: &PgPool, id: Uuid) -> StoreResult<Option<JobRow>> {
-        sqlx::query_as::<_, JobRow>(
-            r#"SELECT id, org_id, clinician_id, patient_id, kind, status,
-                      error, enqueued_at, created_at, updated_at
-                 FROM jobs
-                WHERE id = $1"#,
-        )
-        .bind(id)
-        .fetch_optional(pool)
-        .await
-        .map_err(StoreError::backend)
+        let org: Option<Uuid> = sqlx::query_scalar("SELECT public.worker_job_org($1)")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .map_err(StoreError::backend)?;
+        match org {
+            Some(org) => Self::for_org(pool.clone(), org).job_row(id).await,
+            None => Ok(None),
+        }
     }
 
     pub async fn mark_job_enqueued(&self, id: Uuid) -> StoreResult<()> {
-        sqlx::query(
-            r#"UPDATE jobs
+        tenant_query!(
+            self,
+            tx,
+            sqlx::query(
+                r#"UPDATE jobs
                   SET enqueued_at = COALESCE(enqueued_at, now()), updated_at = now()
                 WHERE id = $1 AND org_id = $2 AND status = 'queued'"#,
+            )
+            .bind(id)
+            .bind(self.org_id)
+            .execute(&mut *tx)
+            .await
         )
-        .bind(id)
-        .bind(self.org_id)
-        .execute(&self.pool)
-        .await
         .map_err(StoreError::backend)?;
         Ok(())
     }
 
     pub async fn mark_job_running(&self, id: Uuid) -> StoreResult<Option<JobRow>> {
-        sqlx::query_as::<_, JobRow>(
-            r#"UPDATE jobs
+        tenant_query!(
+            self,
+            tx,
+            sqlx::query_as::<_, JobRow>(
+                r#"UPDATE jobs
                   SET status = 'running', error = NULL, updated_at = now()
                 WHERE id = $1 AND org_id = $2 AND status IN ('queued', 'running')
             RETURNING id, org_id, clinician_id, patient_id, kind, status,
                       error, enqueued_at, created_at, updated_at"#,
+            )
+            .bind(id)
+            .bind(self.org_id)
+            .fetch_optional(&mut *tx)
+            .await
         )
-        .bind(id)
-        .bind(self.org_id)
-        .fetch_optional(&self.pool)
-        .await
         .map_err(StoreError::backend)
     }
 
@@ -875,17 +1016,21 @@ impl PostgresRepository {
     }
 
     async fn finish_job(&self, id: Uuid, status: &str, error: Option<&str>) -> StoreResult<()> {
-        sqlx::query(
-            r#"UPDATE jobs
+        tenant_query!(
+            self,
+            tx,
+            sqlx::query(
+                r#"UPDATE jobs
                   SET status = $3, error = $4, updated_at = now()
                 WHERE id = $1 AND org_id = $2 AND status IN ('queued', 'running')"#,
+            )
+            .bind(id)
+            .bind(self.org_id)
+            .bind(status)
+            .bind(error)
+            .execute(&mut *tx)
+            .await
         )
-        .bind(id)
-        .bind(self.org_id)
-        .bind(status)
-        .bind(error)
-        .execute(&self.pool)
-        .await
         .map_err(StoreError::backend)?;
         Ok(())
     }
@@ -895,28 +1040,32 @@ impl PostgresRepository {
     pub async fn record_usage(&self, entry: NewUsage<'_>) -> StoreResult<()> {
         let to_i64 = |value: u64| i64::try_from(value).unwrap_or(i64::MAX);
         let cost = cost_micros(entry.model, entry.usage);
-        sqlx::query(
-            r#"INSERT INTO usage_log (
+        tenant_query!(
+            self,
+            tx,
+            sqlx::query(
+                r#"INSERT INTO usage_log (
                    id, org_id, clinician_id, patient_id, job_id, kind, model,
                    input_tokens, output_tokens, cache_read_tokens,
                    cache_write_tokens, cost_micros
                )
                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)"#,
+            )
+            .bind(Uuid::now_v7())
+            .bind(self.org_id)
+            .bind(entry.clinician_id)
+            .bind(entry.patient_id)
+            .bind(entry.job_id)
+            .bind(entry.kind)
+            .bind(entry.model)
+            .bind(to_i64(entry.usage.input_tokens))
+            .bind(to_i64(entry.usage.output_tokens))
+            .bind(to_i64(entry.usage.cache_read_input_tokens))
+            .bind(to_i64(entry.usage.cache_creation_input_tokens))
+            .bind(cost)
+            .execute(&mut *tx)
+            .await
         )
-        .bind(Uuid::now_v7())
-        .bind(self.org_id)
-        .bind(entry.clinician_id)
-        .bind(entry.patient_id)
-        .bind(entry.job_id)
-        .bind(entry.kind)
-        .bind(entry.model)
-        .bind(to_i64(entry.usage.input_tokens))
-        .bind(to_i64(entry.usage.output_tokens))
-        .bind(to_i64(entry.usage.cache_read_input_tokens))
-        .bind(to_i64(entry.usage.cache_creation_input_tokens))
-        .bind(cost)
-        .execute(&self.pool)
-        .await
         .map_err(|error| {
             crate::telemetry::usage_write_failed();
             StoreError::backend(error)
@@ -935,7 +1084,7 @@ impl Repository for PostgresRepository {
     ) -> StoreResult<u64> {
         let payload = serde_json::to_value(&event)?;
         let occurred = event.clinical_occurred_at();
-        let mut tx = self.pool.begin().await.map_err(StoreError::backend)?;
+        let mut tx = self.begin_tenant().await.map_err(StoreError::backend)?;
 
         sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
             .bind(patient_id.to_string())
@@ -969,8 +1118,11 @@ impl Repository for PostgresRepository {
     }
 
     async fn get_events(&self, patient_id: PatientId) -> StoreResult<Vec<StoredEvent>> {
-        let rows = sqlx::query!(
-            r#"
+        let rows = tenant_query!(
+            self,
+            tx,
+            sqlx::query!(
+                r#"
             SELECT
                 sequence_id,
                 event_id,
@@ -980,11 +1132,12 @@ impl Repository for PostgresRepository {
             WHERE org_id = $1 AND patient_id = $2 
             ORDER BY sequence_id ASC
             "#,
-            self.org_id,
-            patient_id,
+                self.org_id,
+                patient_id,
+            )
+            .fetch_all(&mut *tx)
+            .await
         )
-        .fetch_all(&self.pool)
-        .await
         .map_err(StoreError::backend)?;
 
         rows.into_iter()
@@ -1004,8 +1157,11 @@ impl Repository for PostgresRepository {
         patient_id: PatientId,
         sequence_id: u64,
     ) -> StoreResult<Vec<StoredEvent>> {
-        let rows = sqlx::query!(
-            r#"
+        let rows = tenant_query!(
+            self,
+            tx,
+            sqlx::query!(
+                r#"
             SELECT
                 sequence_id,
                 event_id,
@@ -1015,12 +1171,13 @@ impl Repository for PostgresRepository {
             WHERE org_id = $1 AND patient_id = $2 AND sequence_id > $3
             ORDER BY sequence_id ASC
             "#,
-            self.org_id,
-            patient_id,
-            sequence_id as i64,
+                self.org_id,
+                patient_id,
+                sequence_id as i64,
+            )
+            .fetch_all(&mut *tx)
+            .await
         )
-        .fetch_all(&self.pool)
-        .await
         .map_err(StoreError::backend)?;
 
         rows.into_iter()
@@ -1044,8 +1201,11 @@ impl Repository for PostgresRepository {
         let snapshot_json = serde_json::to_string(snapshot)?;
         let checksum = snapshot_checksum(&snapshot_json);
 
-        sqlx::query!(
-            r#"
+        tenant_query!(
+            self,
+            tx,
+            sqlx::query!(
+                r#"
             INSERT INTO snapshots (patient_id, org_id, sequence_id, snapshot, checksum, created_at)
             VALUES ($1, $2, $3, $4, $5, now())
             ON CONFLICT(patient_id) DO UPDATE
@@ -1055,14 +1215,15 @@ impl Repository for PostgresRepository {
                     checksum = EXCLUDED.checksum,
                     created_at = EXCLUDED.created_at
             "#,
-            patient_id,
-            self.org_id,
-            sequence_id as i64,
-            snapshot_json,
-            checksum,
+                patient_id,
+                self.org_id,
+                sequence_id as i64,
+                snapshot_json,
+                checksum,
+            )
+            .execute(&mut *tx)
+            .await
         )
-        .execute(&self.pool)
-        .await
         .map_err(StoreError::backend)?;
 
         Ok(())
@@ -1072,15 +1233,19 @@ impl Repository for PostgresRepository {
         &self,
         patient_id: PatientId,
     ) -> StoreResult<Option<(u64, PatientNote)>> {
-        let rec = sqlx::query!(
-            r#"SELECT sequence_id, snapshot, checksum
+        let rec = tenant_query!(
+            self,
+            tx,
+            sqlx::query!(
+                r#"SELECT sequence_id, snapshot, checksum
                FROM snapshots
                WHERE org_id = $1 AND patient_id = $2"#,
-            self.org_id,
-            patient_id,
+                self.org_id,
+                patient_id,
+            )
+            .fetch_optional(&mut *tx)
+            .await
         )
-        .fetch_optional(&self.pool)
-        .await
         .map_err(StoreError::backend)?;
 
         let Some(r) = rec else {
@@ -1108,23 +1273,31 @@ impl Repository for PostgresRepository {
     }
 
     async fn event_count(&self) -> StoreResult<usize> {
-        let n = sqlx::query_scalar!(
-            r#"SELECT COUNT(*) AS "count!" FROM events WHERE org_id = $1"#,
-            self.org_id,
+        let n = tenant_query!(
+            self,
+            tx,
+            sqlx::query_scalar!(
+                r#"SELECT COUNT(*) AS "count!" FROM events WHERE org_id = $1"#,
+                self.org_id,
+            )
+            .fetch_one(&mut *tx)
+            .await
         )
-        .fetch_one(&self.pool)
-        .await
         .map_err(StoreError::backend)?;
         Ok(n as usize)
     }
 
     async fn snapshot_count(&self) -> StoreResult<usize> {
-        let n = sqlx::query_scalar!(
-            r#"SELECT COUNT(*) AS "count!" FROM snapshots WHERE org_id = $1"#,
-            self.org_id,
+        let n = tenant_query!(
+            self,
+            tx,
+            sqlx::query_scalar!(
+                r#"SELECT COUNT(*) AS "count!" FROM snapshots WHERE org_id = $1"#,
+                self.org_id,
+            )
+            .fetch_one(&mut *tx)
+            .await
         )
-        .fetch_one(&self.pool)
-        .await
         .map_err(StoreError::backend)?;
         Ok(n as usize)
     }

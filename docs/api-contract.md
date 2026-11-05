@@ -1,7 +1,7 @@
 # Application API contract
 
 This document describes the APIs implemented and consumed by this repository as
-of 2026-10-21. It covers the client-facing `er-server` HTTP API, the direct audio
+of 2026-11-04. It covers the client-facing `er-server` HTTP API, the direct audio
 upload boundary, and the provider/queue contracts used by the worker. It describes
 current implementation behavior, including limitations; planning documents may
 describe functionality that is not implemented yet.
@@ -54,8 +54,20 @@ comes from the database, not a token org claim or request parameter.
 
 The current header parser expects the literal prefix `Bearer `, including case
 and space. Any authentication failure returns `401` with an empty body, including
-an unknown clinician or failure to resolve membership. Successful membership
-lookups are cached for up to 300 seconds.
+an unknown clinician or failure to resolve membership. Each request requires an
+active `physician` membership row (`disabled_at IS NULL`); membership is read on
+every request, so revocation takes effect without an API restart. Already admitted
+requests and accepted jobs may finish.
+
+Authenticated quotas are shared across API replicas: 60 requests per clinician per
+UTC minute, plus 5/min for MDM and 30/min for audio intents. Expensive requests also
+consume the general quota; retries count. A denial returns `429` with
+`Retry-After: 60`. Fixed-window boundary bursts are possible. Health/readiness are
+exempt. Quota storage failure returns `503 {"error":"unavailable"}`.
+
+GET access attempts except `/v1/me` are recorded before releasing data. Audit
+storage failure returns the same 503 and prevents the read. Evidence stores the
+route template and resource UUID, never raw paths, tokens, query strings or bodies.
 
 Patient, chunk, job, snapshot, and shift lookups are organization-scoped. Missing
 and other-organization resources normally return the same `404`. The active
@@ -86,8 +98,9 @@ Handler errors use this JSON shape:
 | `413` | JSON body exceeds the application limit; framework rejection. |
 | `415` | Missing or unsupported JSON content type on an endpoint that extracts JSON; framework rejection. |
 | `422` | Syntactically valid JSON cannot deserialize into the required body, for example a missing required field or negative `chunk_index`; framework rejection. |
+| `429` | Clinician quota exhausted: `{"error":"rate_limited"}` and `Retry-After: 60`. |
 | `500` | Handler/storage/provider infrastructure failure: `{"error":"internal"}`. Internal details are not returned. |
-| `503` | Readiness failure on `/readyz`: `{"status":"unavailable"}`. |
+| `503` | Readiness failure on `/readyz`: `{"status":"unavailable"}`. Authenticated quota/audit storage failure: `{"error":"unavailable"}`. |
 
 Branch primarily on HTTP status. The static error strings below describe current
 diagnostics, not a separate versioned error-code API. Clients must tolerate empty,
@@ -476,7 +489,12 @@ Keep a chunk's bytes immutable after successful completion.
 ### Confirm and poll
 
 `POST /v1/audio/{chunk_id}/complete` takes no body. The server checks the object
-with S3 `HeadObject`, marks `pending` as `uploaded`, and enqueues transcription.
+with S3 `HeadObject` while the row is pending, binds the first verified ETag and
+version ID atomically with `uploaded` status, and enqueues transcription. Cloud
+requires bucket versioning. The worker reads the bound version with If-Match;
+unversioned development storage uses the ETag condition. Replayed uploads cannot
+silently change the bytes later transcribed. A durable outbox recovers a failed
+queue send even if the client never retries.
 It returns `200 ChunkView`; it does not wait for transcription.
 
 ```json
@@ -504,12 +522,16 @@ text. Per-chunk transcripts and storage keys are not returned.
 | `409 chunk_too_large` | Length exceeds the configured audio limit. |
 | `409 chunk_length_missing` | Object metadata does not include a length. |
 | `409 chunk_content_type_mismatch` | Object content type is absent or differs from the declared supported type. |
+| `409 chunk_etag_missing` | Completion metadata has no ETag. |
+| `409 chunk_version_missing` | Cloud completion metadata has no non-null version ID. |
 | `500 internal` | Object-storage/queue/database failure; the chunk may already be marked uploaded. |
 
 Repeat completion after an uncertain response: a nonterminal chunk can be
 enqueued again, and the worker handles duplicate delivery. Repeating completion
 does not regress its status. Already `done`/`failed` chunks are not requeued,
-although the object is still verified before returning their current state.
+and the original binding is retained without verifying a newer object version.
+Pending intents older than 24 hours expire to `failed` with `upload_expired`;
+re-record with a new chunk ID rather than reusing an expired intent.
 
 `GET /v1/audio/{chunk_id}` returns the same `ChunkView` without object-storage or
 queue work. Current statuses progress through `pending`, `uploaded`, and
@@ -740,7 +762,9 @@ replaces the body with `object_storage_rejected_upload` for its own caller.
 ### SQS background queue
 
 Both job kinds use the configured `STT_QUEUE`. The API uses `SendMessage`; the
-worker uses `ReceiveMessage`, `ChangeMessageVisibility`, and `DeleteMessage`.
+worker uses `ReceiveMessage`, `ChangeMessageVisibility`, and `DeleteMessage`,
+plus `SendMessage` for durable outbox recovery. The recovery loop leases at most
+ten IDs per pass and acknowledges only after SQS accepts a send.
 Bodies are JSON with an **internal** `kind` tag, unlike the external tag on
 `NoteEvent`:
 

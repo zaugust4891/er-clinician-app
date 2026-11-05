@@ -74,13 +74,13 @@ locals {
       {
         Sid      = "ReadUploadedAudio"
         Effect   = "Allow"
-        Action   = "s3:GetObject"
+        Action   = ["s3:GetObject", "s3:GetObjectVersion"]
         Resource = "${var.audio_bucket_arn}/*"
       },
       {
         Sid      = "ConsumeJobs"
         Effect   = "Allow"
-        Action   = ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:ChangeMessageVisibility"]
+        Action   = ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:ChangeMessageVisibility", "sqs:SendMessage"]
         Resource = var.stt_queue_arn
       },
       local.queue_lookup,
@@ -97,7 +97,7 @@ locals {
       {
         Sid      = "DecryptJobs"
         Effect   = "Allow"
-        Action   = "kms:Decrypt"
+        Action   = ["kms:Decrypt", "kms:GenerateDataKey"]
         Resource = var.kms_key_arn
         Condition = {
           StringEquals = {
@@ -144,7 +144,7 @@ locals {
 
   task_denied = {
     api        = ["bedrock:*", "cognito-idp:*", "sqs:ChangeMessageVisibility", "sqs:DeleteMessage", "sqs:ReceiveMessage"]
-    worker     = ["cognito-idp:*", "s3:DeleteObject", "s3:PutObject", "sqs:SendMessage"]
+    worker     = ["cognito-idp:*", "s3:DeleteObject", "s3:PutObject"]
     migration  = ["bedrock:*", "cognito-idp:*", "s3:*", "sqs:*"]
     onboarding = ["bedrock:*", "s3:*", "sqs:*"]
   }

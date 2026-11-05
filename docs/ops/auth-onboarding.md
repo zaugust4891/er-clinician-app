@@ -194,7 +194,7 @@ disabling a Cognito user does not end an already-issued access token.
 |---|---|---|
 | Access token | 60 min (`access_token_minutes`) | Signature-valid until expiry even after the user is disabled |
 | Refresh token | 12 h, revocable | `admin-user-global-sign-out` revokes it; no new access tokens |
-| Membership cache | 300 s per API task (`resolver.rs`) | A revoked clinician can keep access on a task until the entry expires or the task is replaced |
+| Membership lookup | Every request (`resolver.rs`, Step 9) | Revoked, disabled or non-physician rows are denied at the next authentication check on every task |
 | JWKS | Refreshed only on unknown `kid`, at most once per 30 s | Unrelated to user revocation |
 
 Staging emergency sequence for a synthetic clinician:
@@ -203,15 +203,13 @@ Staging emergency sequence for a synthetic clinician:
    `admin-user-global-sign-out` for the user.
 2. **Remove membership:** run `er-onboard` with `ONBOARDING_ACTION=revoke` and
    `[{"org_id": "<org>", "cognito_sub": "<sub>"}]`; expect `revoked`.
-3. **Clear caches:** force a new deployment of the API service so every task starts
-   with an empty membership cache.
-4. **Verify denial:** the clinician's still-unexpired access token gets 401 from
-   `/v1/me`.
+3. **Verify denial:** the clinician's still-unexpired access token gets 401 from
+   `/v1/me` on the running API tasks; no restart is needed.
 
-Without step 3, denial can lag by up to the membership cache lifetime; without
-step 2, a disabled user's token keeps working until it expires. Step 9 must settle
-the clinical revocation SLA and its implementation before any real clinician uses
-the system.
+Without step 2, Cognito disablement alone does not revoke an issued access token.
+Step 9 removes the membership cache. Requests already admitted may finish within
+the HTTP timeout and accepted jobs continue; patient assignment, MFA and the
+clinical revocation policy still require review. See [the runbook](runbook.md).
 
 ## S11/S12 smoke-client handoff (2026-10-31)
 

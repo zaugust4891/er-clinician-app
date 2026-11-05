@@ -39,7 +39,7 @@ run "runtime_roles_follow_the_code_paths" {
   assert {
     condition = (sort(distinct(flatten([
       for statement in jsondecode(aws_iam_role_policy.task["worker"].policy).Statement : statement.Action if statement.Effect == "Allow"
-      ]))) == sort(["bedrock:InvokeModel", "kms:Decrypt", "s3:GetObject", "sqs:ChangeMessageVisibility", "sqs:DeleteMessage", "sqs:GetQueueUrl", "sqs:ReceiveMessage"]) &&
+      ]))) == sort(["bedrock:InvokeModel", "kms:Decrypt", "kms:GenerateDataKey", "s3:GetObject", "s3:GetObjectVersion", "sqs:ChangeMessageVisibility", "sqs:DeleteMessage", "sqs:GetQueueUrl", "sqs:ReceiveMessage", "sqs:SendMessage"]) &&
       one([for statement in jsondecode(aws_iam_role_policy.task["worker"].policy).Statement : statement if statement.Sid == "ConsumeJobs"]).Resource == var.stt_queue_arn &&
     sort(one([for statement in jsondecode(aws_iam_role_policy.task["worker"].policy).Statement : statement if statement.Sid == "ResolveQueues"]).Resource) == sort([var.stt_queue_arn, var.stt_dlq_arn]))
     error_message = "The worker reads audio, consumes only the main queue and looks up both queues."

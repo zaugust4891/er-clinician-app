@@ -67,3 +67,21 @@ variable "db_connection_threshold" {
     error_message = "Reserve at least the 25 connections possible during normal service rollout; review against the live RDS limit."
   }
 }
+
+variable "db_allocated_storage_gib" {
+  type    = number
+  default = 20
+  validation {
+    condition     = var.db_allocated_storage_gib > 0
+    error_message = "Storage alarm needs a positive allocated capacity. Review after RDS autoscaling."
+  }
+}
+variable "ecs_services" {
+  description = "Desired counts, keyed by service name. Requires Container Insights on the named cluster."
+  type        = map(number)
+  default     = {}
+  validation {
+    condition     = alltrue([for count in values(var.ecs_services) : count >= 1 && floor(count) == count])
+    error_message = "Running services require a positive whole desired count."
+  }
+}

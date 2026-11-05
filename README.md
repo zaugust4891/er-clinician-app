@@ -34,6 +34,15 @@ keys and starts disposable services without reading `.env` or changing the dev s
 gates, smoke and rollback. Start with the [final AWS live-test checklist](docs/ops/step8-final-aws-live-checklist.md).
 Cloud acceptance is pending; production remains disabled.
 
+## Phase 4 Step 9 hardening
+
+Tenant RLS, shared clinician quotas, immediate membership revocation, read audit,
+version-bound audio, dispatch recovery and operations monitoring are implemented.
+See the [implementation and file inventory](docs/planning/phase4-step9-implementation.md),
+[operations runbook](docs/ops/runbook.md), and [verification checklist](docs/ops/step9-security-checklist.md).
+Live recovery/rotation/alarm drills and pre-PHI review remain open.
+
+
 ## Technology stack
 
 - **Language:** Rust

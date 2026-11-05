@@ -28,6 +28,7 @@ pricing-strategy.md
 infrastructure-cost-model.md
 docs/planning/*
 !docs/planning/phase4-step8-implementation-steps.md
+!docs/planning/phase4-step9-implementation.md
 
 # LibreOffice lock files
 .~lock.*

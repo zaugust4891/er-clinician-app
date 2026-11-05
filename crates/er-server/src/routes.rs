@@ -210,6 +210,7 @@ async fn request_mdm(
         .await
         .map_err(ApiError::Internal)?;
         repo.mark_job_enqueued(inserted.row.id).await?;
+        repo.ack_dispatch("mdm", inserted.row.id).await?;
     }
 
     if crate::telemetry::admit(concat!(file!(), ":", line!())).is_some() {
@@ -378,7 +379,10 @@ fn chunk_view(row: &ChunkRow) -> Result<er_api::ChunkView, ApiError> {
 /// without uploading (bug), or crash mid-`PUT` and leave a zero-byte object.
 /// Rejecting at the door beats letting the worker discover it three SQS
 /// deliveries deep.
-async fn verify_chunk_object(state: &AppState, row: &ChunkRow) -> Result<(), ApiError> {
+async fn verify_chunk_object(
+    state: &AppState,
+    row: &ChunkRow,
+) -> Result<(String, Option<String>), ApiError> {
     let head = state
         .s3
         .head_object()
@@ -413,7 +417,19 @@ async fn verify_chunk_object(state: &AppState, row: &ChunkRow) -> Result<(), Api
     )
     .map_err(|error| ApiError::Conflict(error.0))?;
 
-    Ok(())
+    let etag = head
+        .e_tag()
+        .filter(|v| !v.is_empty())
+        .ok_or(ApiError::Conflict("chunk_etag_missing"))?
+        .to_owned();
+    let version = head
+        .version_id()
+        .filter(|v| !v.is_empty() && *v != "null")
+        .map(str::to_owned);
+    if state.config.runtime.app_env != crate::config::AppEnv::Dev && version.is_none() {
+        return Err(ApiError::Conflict("chunk_version_missing"));
+    }
+    Ok((etag, version))
 }
 
 /// The device reports that the bytes are up; the server verifies, records, and
@@ -439,15 +455,14 @@ async fn audio_complete(
     // ownership when it wrote this row.
     let row = repo.chunk_row(chunk_id).await?.ok_or(ApiError::NotFound)?;
 
-    verify_chunk_object(&state, &row).await?;
-
-    // Forward-only: `pending → uploaded`, and any later state is returned
-    // unchanged, so a late duplicate completion cannot reopen a chunk the
-    // worker has already finished.
-    let row = repo
-        .mark_chunk_uploaded(chunk_id)
-        .await?
-        .ok_or(ApiError::NotFound)?;
+    let row = if row.status == er_api::chunk_status::PENDING {
+        let (etag, version) = verify_chunk_object(&state, &row).await?;
+        repo.complete_bound_chunk(chunk_id, &etag, version.as_deref())
+            .await?
+            .ok_or(ApiError::NotFound)?
+    } else {
+        row
+    };
 
     // Re-completing a chunk whose work is already done or failed would enqueue a
     // job the worker can only no-op on, and every wasted delivery is noise in
@@ -472,6 +487,8 @@ async fn audio_complete(
     )
     .await
     .map_err(ApiError::Internal)?;
+
+    repo.ack_dispatch("audio", chunk_id).await?;
 
     // Identifiers and state only — never the key, never the presigned URL, and
     // never a byte of what was said (§C5).

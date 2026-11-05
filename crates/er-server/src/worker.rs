@@ -274,6 +274,7 @@ async fn handle_message(ctx: &WorkerCtx, message: &Message) {
     let delivery = delivery_count(message);
     let body = message.body().unwrap_or_default();
 
+    let job_started = Instant::now();
     let job = match serde_json::from_str::<Job>(body) {
         Ok(job) => job,
         Err(_error) => {
@@ -380,8 +381,11 @@ async fn handle_message(ctx: &WorkerCtx, message: &Message) {
                 Box::pin(handle_generate_mdm(ctx, patient_id, job_id)),
             )
             .await
-            .inspect_err(|_| telemetry::job_finished("mdm", true))
-            {
+            .inspect(|_| telemetry::mdm_duration(job_started))
+            .inspect_err(|_| {
+                telemetry::job_finished("mdm", true);
+                telemetry::mdm_duration(job_started);
+            }) {
                 Ok(()) => {
                     delete_message(ctx, message, job_id).await;
                 }
@@ -428,6 +432,13 @@ async fn handle_message(ctx: &WorkerCtx, message: &Message) {
 /// function relies on is enforced somewhere else — the status machine is in SQL,
 /// the tenancy is on the row, the vendor is behind a trait.
 pub async fn handle_transcribe_chunk(ctx: &WorkerCtx, chunk_id: Uuid) -> anyhow::Result<()> {
+    // Concurrent queue/outbox deliveries serialize before checking terminal state.
+    // The transaction only holds an advisory lock; clinical queries use the tenant repo.
+    let mut claim = ctx.pool.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(format!("chunk:{chunk_id}"))
+        .execute(&mut *claim)
+        .await?;
     let row = PostgresRepository::chunk_row_any_org(&ctx.pool, chunk_id)
         .await
         .context("look up the chunk row")?
@@ -458,12 +469,17 @@ pub async fn handle_transcribe_chunk(ctx: &WorkerCtx, chunk_id: Uuid) -> anyhow:
         .context("mark the chunk transcribing")?
         .ok_or_else(|| anyhow!("chunk {chunk_id} vanished while claiming it"))?;
 
-    let bytes = crate::audio::download(
+    let binding = repo
+        .audio_binding(chunk_id)
+        .await?
+        .ok_or(crate::audio::AudioError("chunk_binding_missing"))?;
+    let bytes = crate::audio::download_bound(
         &ctx.s3,
         &ctx.bucket,
         &row.s3_key,
         &row.content_type,
         &ctx.limits,
+        Some((&binding.0, binding.1.as_deref())),
     )
     .await?;
 
@@ -477,6 +493,7 @@ pub async fn handle_transcribe_chunk(ctx: &WorkerCtx, chunk_id: Uuid) -> anyhow:
     let result = result.with_context(|| format!("transcribe chunk {chunk_id}"))?;
 
     let duration_ms = duration_to_millis(result.audio_duration_secs);
+    telemetry::stt_duration(duration_ms);
 
     repo.store_chunk_transcript(chunk_id, &result.text, duration_ms)
         .await

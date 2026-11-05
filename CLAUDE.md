@@ -8,6 +8,18 @@ Key differentiator: **multi-encounter merging** — captures every interaction a
 
 ## Current Branch: `master`
 
+## Phase 4 Step 9 update (2026-11-03)
+
+RLS now covers tenant clinical/operational tables through transaction-local context.
+Auth resolves active physician membership each request; PostgreSQL enforces shared
+60/min general, 5/min MDM and 30/min audio-intent quotas. Restricted access-attempt
+audit precedes reads. Audio completion binds an S3 version/ETag; worker dispatch
+outbox recovery and expired-intent bookkeeping no longer require a returning client.
+CloudWatch dashboard/capacity alarms and a read-only restore verifier are authored.
+See [implementation and changed files](docs/planning/phase4-step9-implementation.md)
+and [operations runbook](docs/ops/runbook.md) for rollout compatibility and outstanding
+live/pre-PHI gates. This update supersedes historical Step 8 deferrals below.
+
 ## What's Working
 
 - Domain model with PatientNote aggregate root, state machine (6 phases), event types
@@ -59,8 +71,7 @@ Key differentiator: **multi-encounter merging** — captures every interaction a
   implemented with local checks; live delivery/canary acceptance remains pending.
   CI/CD (S10–S11) remains. Services/ingress default off; production stays disabled
 - The server listens on plain HTTP at `BIND_ADDR` only in dev; outside dev it serves TLS with a per-task in-memory self-signed certificate (`API_TLS`, S8). S8 activation and live checks are in `docs/ops/compute-edge-verification.md`
-- The presigned-upload overwrite race is open: a URL can be replayed within its 15 minutes. Bucket versioning makes the
-  original recoverable, not immutable; binding a chunk to a version ID or checksum at completion is Step 9
+- Step 9 binds completed audio to an S3 version/ETag. Pre-existing unbound accepted chunks need reviewed remediation before worker rollout.
 
 ## Completed: Phase 2 Audio Pipeline Wiring
 

@@ -16,8 +16,8 @@ resource "aws_sns_topic_subscription" "email" {
   protocol  = "email"
   endpoint  = each.value
 }
-# Two low-cardinality custom metrics only. Rich counters/timing/token fields stay
-# queryable in bounded aggregate log lines, avoiding dozens of billable series.
+# Progress and metering counters. Step 9 duration/recovery metrics live in
+# dashboard.tf; all metrics remain free of clinical or tenant dimensions.
 resource "aws_cloudwatch_log_metric_filter" "worker" {
   for_each       = toset(["worker_progress", "usage_write_failed"])
   name           = each.value
@@ -37,12 +37,13 @@ locals {
     usage_write_failed = { namespace = local.namespace, metric = "usage_write_failed", dimensions = {}, statistic = "Sum", threshold = 0, comparison = "GreaterThanThreshold", periods = 1, points = 1, missing = "notBreaching" },
     queue_age          = { namespace = "AWS/SQS", metric = "ApproximateAgeOfOldestMessage", dimensions = { QueueName = var.queue_name }, statistic = "Maximum", threshold = 600, comparison = "GreaterThanThreshold", periods = 3, points = 3, missing = "notBreaching" },
     dlq_visible        = { namespace = "AWS/SQS", metric = "ApproximateNumberOfMessagesVisible", dimensions = { QueueName = var.dlq_name }, statistic = "Maximum", threshold = 0, comparison = "GreaterThanThreshold", periods = 1, points = 1, missing = "notBreaching" },
-    db_storage         = { namespace = "AWS/RDS", metric = "FreeStorageSpace", dimensions = { DBInstanceIdentifier = var.db_identifier }, statistic = "Minimum", threshold = 5368709120, comparison = "LessThanThreshold", periods = 3, points = 3, missing = "breaching" },
+    db_storage         = { namespace = "AWS/RDS", metric = "FreeStorageSpace", dimensions = { DBInstanceIdentifier = var.db_identifier }, statistic = "Minimum", threshold = var.db_allocated_storage_gib * 1073741824 * 0.20, comparison = "LessThanThreshold", periods = 3, points = 3, missing = "breaching" },
+    db_cpu             = { namespace = "AWS/RDS", metric = "CPUUtilization", dimensions = { DBInstanceIdentifier = var.db_identifier }, statistic = "Average", threshold = 80, comparison = "GreaterThanThreshold", periods = 15, points = 15, missing = "breaching" },
     db_connections     = { namespace = "AWS/RDS", metric = "DatabaseConnections", dimensions = { DBInstanceIdentifier = var.db_identifier }, statistic = "Maximum", threshold = var.db_connection_threshold, comparison = "GreaterThanOrEqualToThreshold", periods = 3, points = 3, missing = "breaching" }
     }, var.edge == null ? {} : {
     api_healthy = { namespace = "AWS/ApplicationELB", metric = "HealthyHostCount", dimensions = { LoadBalancer = var.edge.alb, TargetGroup = var.edge.target_group }, statistic = "Minimum", threshold = 1, comparison = "LessThanThreshold", periods = 3, points = 3, missing = "breaching" },
-    api_5xx     = { namespace = "AWS/ApplicationELB", metric = "HTTPCode_Target_5XX_Count", dimensions = { LoadBalancer = var.edge.alb }, statistic = "Sum", threshold = 5, comparison = "GreaterThanOrEqualToThreshold", periods = 5, points = 3, missing = "notBreaching" },
-    alb_5xx     = { namespace = "AWS/ApplicationELB", metric = "HTTPCode_ELB_5XX_Count", dimensions = { LoadBalancer = var.edge.alb }, statistic = "Sum", threshold = 5, comparison = "GreaterThanOrEqualToThreshold", periods = 5, points = 3, missing = "notBreaching" }
+    api_5xx     = { namespace = "AWS/ApplicationELB", metric = "HTTPCode_Target_5XX_Count", dimensions = { LoadBalancer = var.edge.alb }, statistic = "Sum", threshold = 5, comparison = "GreaterThanOrEqualToThreshold", periods = 1, points = 1, missing = "notBreaching" },
+    alb_5xx     = { namespace = "AWS/ApplicationELB", metric = "HTTPCode_ELB_5XX_Count", dimensions = { LoadBalancer = var.edge.alb }, statistic = "Sum", threshold = 5, comparison = "GreaterThanOrEqualToThreshold", periods = 1, points = 1, missing = "notBreaching" }
   })
 }
 resource "aws_cloudwatch_metric_alarm" "runtime" {
@@ -55,7 +56,7 @@ resource "aws_cloudwatch_metric_alarm" "runtime" {
   statistic           = each.value.statistic
   threshold           = each.value.threshold
   comparison_operator = each.value.comparison
-  period              = 60
+  period              = contains(["api_5xx", "alb_5xx"], each.key) ? 300 : 60
   evaluation_periods  = each.value.periods
   datapoints_to_alarm = each.value.points
   treat_missing_data  = each.value.missing

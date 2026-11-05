@@ -1,0 +1,12 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//ER Note//Operations//EN
+BEGIN:VEVENT
+UID:ernote-deepgram-quarterly-rotation
+DTSTAMP:20261103T000000Z
+DTSTART;VALUE=DATE:20270203
+RRULE:FREQ=MONTHLY;INTERVAL=3
+SUMMARY:Review and rotate ER Note Deepgram key
+DESCRIPTION:Follow docs/ops/runbook.md. Assign an operator and record evidence.
+END:VEVENT
+END:VCALENDAR

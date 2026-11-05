@@ -368,7 +368,7 @@ async fn cognito_cross_org_writes_and_audio_preserve_owner_data(pool: PgPool) {
 }
 
 #[sqlx::test]
-async fn offboarding_denies_unexpired_token_after_api_replacement(pool: PgPool) {
+async fn offboarding_denies_unexpired_token_without_api_replacement(pool: PgPool) {
     let sub = Uuid::new_v4().to_string();
     seed_org_and_clinician(&pool, ORG_A, &sub).await;
     let app = cognito_router(pool.clone()).await;
@@ -384,8 +384,8 @@ async fn offboarding_denies_unexpired_token_after_api_replacement(pool: PgPool) 
     .await
     .unwrap();
 
-    // This is the documented limitation: a running task retains its cached grant.
-    assert_eq!(get(&app, "/v1/me", Some(&token)).await, 200);
+    // The next request resolves current membership on this same API task.
+    assert_eq!(get(&app, "/v1/me", Some(&token)).await, 401);
     let replacement = cognito_router(pool).await;
     assert_eq!(get(&replacement, "/v1/me", Some(&token)).await, 401);
 }

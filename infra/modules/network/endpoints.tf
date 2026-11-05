@@ -42,7 +42,7 @@ resource "aws_vpc_endpoint" "s3" {
         Sid       = "ApplicationObjects"
         Effect    = "Allow"
         Principal = "*"
-        Action    = ["s3:GetObject", "s3:PutObject"]
+        Action    = ["s3:GetObject", "s3:GetObjectVersion", "s3:PutObject"]
         Resource  = [for arn in sort(tolist(var.s3_bucket_arns)) : "${arn}/*"]
       },
       {

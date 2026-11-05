@@ -66,11 +66,11 @@ run "alarm_windows_and_delivery" {
     operator_principal_arns = ["arn:aws:iam::000000000000:role/Operator"]
   }
   assert {
-    condition     = length(aws_cloudwatch_metric_alarm.runtime) == 9 && alltrue([for a in aws_cloudwatch_metric_alarm.runtime : a.actions_enabled && a.period == 60 && a.alarm_actions == toset([aws_sns_topic.alarms.arn])])
-    error_message = "Nine runtime alarms must reach the configured encrypted SNS topic."
+    condition     = length(aws_cloudwatch_metric_alarm.runtime) == 10 && alltrue([for a in aws_cloudwatch_metric_alarm.runtime : a.actions_enabled && contains([60, 300], a.period) && a.alarm_actions == toset([aws_sns_topic.alarms.arn])])
+    error_message = "Ten runtime alarms must reach the configured encrypted SNS topic."
   }
   assert {
-    condition     = aws_cloudwatch_metric_alarm.runtime["worker_progress"].treat_missing_data == "breaching" && aws_cloudwatch_metric_alarm.runtime["worker_progress"].evaluation_periods == 6 && aws_cloudwatch_metric_alarm.runtime["api_healthy"].treat_missing_data == "breaching" && aws_cloudwatch_metric_alarm.runtime["queue_age"].treat_missing_data == "notBreaching" && aws_cloudwatch_metric_alarm.runtime["dlq_visible"].threshold == 0 && aws_cloudwatch_metric_alarm.runtime["api_5xx"].datapoints_to_alarm == 3
+    condition     = aws_cloudwatch_metric_alarm.runtime["worker_progress"].treat_missing_data == "breaching" && aws_cloudwatch_metric_alarm.runtime["worker_progress"].evaluation_periods == 6 && aws_cloudwatch_metric_alarm.runtime["api_healthy"].treat_missing_data == "breaching" && aws_cloudwatch_metric_alarm.runtime["queue_age"].treat_missing_data == "notBreaching" && aws_cloudwatch_metric_alarm.runtime["dlq_visible"].threshold == 0 && aws_cloudwatch_metric_alarm.runtime["api_5xx"].period == 300
     error_message = "Missing worker/API signals must alarm; idle queues must not."
   }
   assert {
@@ -96,4 +96,20 @@ run "reject_account_wide_operator_trust" {
   command = plan
   variables { operator_principal_arns = ["arn:aws:iam::000000000000:root"] }
   expect_failures = [var.operator_principal_arns]
+}
+
+run "step9_dashboard_and_capacity" {
+  command = apply
+  variables {
+    edge         = { alb = "app/synthetic/123", target_group = "targetgroup/synthetic/123" }
+    ecs_services = { "ernote-staging-api" = 2, "ernote-staging-worker" = 1 }
+  }
+  assert {
+    condition     = aws_cloudwatch_metric_alarm.runtime["db_cpu"].evaluation_periods == 15 && aws_cloudwatch_metric_alarm.runtime["db_storage"].threshold == 4294967296 && aws_cloudwatch_metric_alarm.latency[0].extended_statistic == "p95" && aws_cloudwatch_metric_alarm.latency[0].threshold == 0.5
+    error_message = "Step 9 capacity and latency thresholds must match the operating contract."
+  }
+  assert {
+    condition     = aws_cloudwatch_metric_alarm.tasks["ernote-staging-api"].threshold == 2 && aws_cloudwatch_metric_alarm.tasks["ernote-staging-worker"].treat_missing_data == "breaching" && length(jsondecode(aws_cloudwatch_dashboard.operations.dashboard_body).widgets) == 8
+    error_message = "Both services and all operating panels must be monitored."
+  }
 }

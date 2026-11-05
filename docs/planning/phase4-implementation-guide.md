@@ -658,6 +658,11 @@ Run `sqlx migrate run` as a one-shot ECS task (same image, command override `er-
 
 ## Step 9 — Hardening, Observability, Drills
 
+Repository implementation (2026-11-03), design decisions, files changed and pending
+live acceptance: [Step 9 implementation](phase4-step9-implementation.md).
+The sub-steps below are the original requirements; the implementation document
+records refinements to quotas, budget thresholds, rotation and Step 8 handoffs.
+
 **Objective:** the controls a hospital security review and a 2 a.m. incident both need.
 
 ### 9.1 Sub-steps

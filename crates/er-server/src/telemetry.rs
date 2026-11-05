@@ -509,6 +509,20 @@ fn metric_flush(metrics: &mut Metrics, now: Instant) {
     }
 }
 
+/// Fixed-field metrics; no tenant/patient dimensions or provider response text.
+pub fn mdm_duration(started: Instant) {
+    tracing::info!(
+        mdm_duration_ms = started.elapsed().as_millis() as u64,
+        "MDM job duration"
+    );
+}
+pub fn stt_duration(duration_ms: i32) {
+    tracing::info!(
+        stt_seconds = f64::from(duration_ms.max(0)) / 1000.0,
+        "STT audio duration"
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

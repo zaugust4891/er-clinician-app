@@ -60,11 +60,24 @@ pub async fn download(
     declared_type: &str,
     limits: &crate::config::WorkerLimits,
 ) -> Result<Vec<u8>, AudioError> {
+    download_bound(client, bucket, key, declared_type, limits, None).await
+}
+
+pub async fn download_bound(
+    client: &aws_sdk_s3::Client,
+    bucket: &str,
+    key: &str,
+    declared_type: &str,
+    limits: &crate::config::WorkerLimits,
+    binding: Option<(&str, Option<&str>)>,
+) -> Result<Vec<u8>, AudioError> {
     tokio::time::timeout(limits.download_timeout, async {
         let object = client
             .get_object()
             .bucket(bucket)
             .key(key)
+            .set_if_match(binding.map(|(etag, _)| etag.to_owned()))
+            .set_version_id(binding.and_then(|(_, version)| version.map(str::to_owned)))
             .send()
             .await
             .map_err(|_| AudioError("audio_download_failed"))?;

@@ -285,7 +285,9 @@ mod tests {
     }
 
     fn dev_dir() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../dev/keys")
+        // Cargo runs tests from the crate directory. Do not bake an ephemeral
+        // CI checkout path into binaries reused through CARGO_TARGET_DIR.
+        Path::new("../../dev/keys").to_path_buf()
     }
 
     /// The dev public key published under `kid`.

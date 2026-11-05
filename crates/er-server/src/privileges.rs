@@ -6,7 +6,7 @@
 //! database bootstrap creates three NOLOGIN group roles and makes each runtime
 //! login a member of one, so rotating a credential never touches a table grant.
 //! A relation missing from `GRANTS` gets no runtime access, and a test fails
-//! until it is classified. Public-schema routines have no runtime EXECUTE grants.
+//! until it is classified. Only the listed worker routing/recovery routines have runtime EXECUTE grants.
 use sqlx::PgPool;
 
 pub const API_ROLE: &str = "er_api_runtime";
@@ -51,9 +51,9 @@ pub const GRANTS: &[Grant] = &[
     },
     Grant {
         object: "TABLE clinicians",
-        api: "SELECT (id, org_id, cognito_sub)",
+        api: "SELECT (id, org_id, cognito_sub, role, disabled_at)",
         worker: "",
-        onboarding: "SELECT, INSERT, UPDATE (org_id, cognito_sub, display_name)",
+        onboarding: "SELECT, INSERT, UPDATE (org_id, cognito_sub, display_name, role, disabled_at)",
     },
     Grant {
         object: "TABLE patients",
@@ -90,6 +90,60 @@ pub const GRANTS: &[Grant] = &[
         object: "TABLE usage_log",
         api: "",
         worker: "INSERT",
+        onboarding: "",
+    },
+    Grant {
+        object: "TABLE request_quotas",
+        api: "SELECT, INSERT, UPDATE",
+        worker: "",
+        onboarding: "",
+    },
+    Grant {
+        object: "TABLE access_audit",
+        api: "INSERT",
+        worker: "",
+        onboarding: "",
+    },
+    Grant {
+        object: "FUNCTION worker_chunk_org(uuid)",
+        api: "",
+        worker: "EXECUTE",
+        onboarding: "",
+    },
+    Grant {
+        object: "FUNCTION worker_job_org(uuid)",
+        api: "",
+        worker: "EXECUTE",
+        onboarding: "",
+    },
+    Grant {
+        object: "TABLE audio_bindings",
+        api: "SELECT, INSERT",
+        worker: "SELECT",
+        onboarding: "",
+    },
+    Grant {
+        object: "TABLE dispatch_outbox",
+        api: "SELECT, DELETE",
+        worker: "",
+        onboarding: "",
+    },
+    Grant {
+        object: "FUNCTION claim_dispatch()",
+        api: "",
+        worker: "EXECUTE",
+        onboarding: "",
+    },
+    Grant {
+        object: "FUNCTION ack_dispatch(uuid)",
+        api: "",
+        worker: "EXECUTE",
+        onboarding: "",
+    },
+    Grant {
+        object: "FUNCTION expire_pending_chunks()",
+        api: "",
+        worker: "EXECUTE",
         onboarding: "",
     },
     // Migration bookkeeping is the owner's alone.
@@ -317,7 +371,11 @@ mod tests {
         .fetch_all(&pool)
         .await
         .unwrap();
-        let mut decided: Vec<&str> = GRANTS.iter().map(|grant| grant.object).collect();
+        let mut decided: Vec<&str> = GRANTS
+            .iter()
+            .filter(|grant| !grant.object.starts_with("FUNCTION "))
+            .map(|grant| grant.object)
+            .collect();
         found.sort();
         decided.sort();
         assert_eq!(found, decided, "classify every new relation in GRANTS");
@@ -415,6 +473,28 @@ mod tests {
         // Worker: discover the tenant, transcribe and fail chunks, replay the note
         // under the summary lock, append, run the MDM job and meter it.
         let worker = pool_as(&pool, WORKER_ROLE).await;
+        let expired: i64 = sqlx::query_scalar("SELECT public.expire_pending_chunks()")
+            .fetch_one(&worker)
+            .await
+            .unwrap();
+        assert_eq!(expired, 0);
+        sqlx::query("UPDATE dispatch_outbox SET available_at = now() - interval '1 second'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let leases: Vec<Uuid> = sqlx::query_scalar("SELECT lease FROM public.claim_dispatch()")
+            .fetch_all(&worker)
+            .await
+            .unwrap();
+        assert_eq!(leases.len(), 3);
+        for lease in leases {
+            sqlx::query("SELECT public.ack_dispatch($1)")
+                .bind(lease)
+                .execute(&worker)
+                .await
+                .unwrap();
+        }
+        assert_denied(&worker, WORKER_ROLE, "SELECT * FROM dispatch_outbox").await;
         let row = PostgresRepository::chunk_row_any_org(&worker, first)
             .await
             .unwrap()
@@ -613,5 +693,136 @@ mod tests {
         }
         check_login(&api, "migration").await.unwrap();
         api.close().await;
+    }
+    #[sqlx::test(migrations = "./migrations")]
+    async fn rls_denies_unfiltered_reads_writes_and_pool_context_leaks(pool: PgPool) {
+        ensure_roles(&pool).await;
+        converge(&pool, true).await.unwrap();
+        let (a, b) = (Uuid::now_v7(), Uuid::now_v7());
+        sqlx::query("INSERT INTO orgs (id, name) VALUES ($1, 'A'), ($2, 'B')")
+            .bind(a)
+            .bind(b)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (pa, pb) = (Uuid::now_v7(), Uuid::now_v7());
+        for (org, patient) in [(a, pa), (b, pb)] {
+            let repo = PostgresRepository::for_org(pool.clone(), org);
+            repo.append_event(
+                patient,
+                Uuid::now_v7(),
+                NoteEvent::audio_started(patient, Uuid::now_v7(), CaptureMode::Ambient),
+            )
+            .await
+            .unwrap();
+        }
+        let api = pool_as(&pool, API_ROLE).await;
+        let repo = PostgresRepository::for_org(api.clone(), a);
+        let mut tx = repo.begin_tenant().await.unwrap();
+        let visible: Vec<Uuid> = sqlx::query_scalar("SELECT org_id FROM events")
+            .fetch_all(&mut *tx)
+            .await
+            .unwrap();
+        assert_eq!(visible, vec![a]); // Deliberately no application org filter.
+        tx.commit().await.unwrap();
+        let mut tx = repo.begin_tenant().await.unwrap();
+        let error = sqlx::query("INSERT INTO events (event_id, org_id, patient_id, event_type, payload, clinical_occurred_at) VALUES ($1,$2,$3,'synthetic','{}',now())")
+            .bind(Uuid::now_v7()).bind(b).bind(pb).execute(&mut *tx).await.unwrap_err();
+        assert_eq!(
+            error.as_database_error().unwrap().code().as_deref(),
+            Some("42501")
+        );
+        tx.rollback().await.unwrap();
+        // Exercise both connections after successful commit and failed rollback.
+        let mut c1 = api.acquire().await.unwrap();
+        let mut c2 = api.acquire().await.unwrap();
+        for connection in [&mut *c1, &mut *c2] {
+            let count: i64 = sqlx::query_scalar("SELECT count(*) FROM events")
+                .fetch_one(connection)
+                .await
+                .unwrap();
+            assert_eq!(count, 0);
+        }
+        drop((c1, c2));
+        assert_eq!(repo.get_events(pa).await.unwrap().len(), 1);
+        assert!(repo.get_events(pb).await.unwrap().is_empty());
+        assert_denied(
+            &api,
+            API_ROLE,
+            "SELECT public.worker_chunk_org('00000000-0000-0000-0000-000000000000')",
+        )
+        .await;
+        let active: i64 = sqlx::query_scalar("SELECT count(*) FROM pg_class WHERE relnamespace = 'public'::regnamespace AND relrowsecurity")
+            .fetch_one(&pool).await.unwrap();
+        assert_eq!(active, 12); // Clinical tables, join table, quotas and audit.
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn quotas_are_shared_atomic_and_audit_is_append_only(pool: PgPool) {
+        ensure_roles(&pool).await;
+        converge(&pool, true).await.unwrap();
+        let (org, clinician) = (Uuid::now_v7(), Uuid::now_v7());
+        sqlx::query("INSERT INTO orgs (id, name) VALUES ($1, 'synthetic')")
+            .bind(org)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO clinicians (id, org_id, cognito_sub, display_name) VALUES ($1,$2,$1::text,'synthetic')")
+            .bind(clinician).bind(org).execute(&pool).await.unwrap();
+        let api = pool_as(&pool, API_ROLE).await;
+        let mut tasks = tokio::task::JoinSet::new();
+        for _ in 0..20 {
+            let repo = PostgresRepository::for_org(api.clone(), org);
+            tasks.spawn(async move {
+                crate::hardening::admit(&repo, clinician, "mdm", 5)
+                    .await
+                    .unwrap()
+            });
+        }
+        let mut admitted = 0;
+        while let Some(result) = tasks.join_next().await {
+            admitted += usize::from(result.unwrap());
+        }
+        assert_eq!(admitted, 5);
+        sqlx::query("UPDATE request_quotas SET window_start = now() - interval '2 minutes'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let repo = PostgresRepository::for_org(api.clone(), org);
+        assert!(
+            crate::hardening::admit(&repo, clinician, "mdm", 5)
+                .await
+                .unwrap()
+        );
+        crate::hardening::record_read(&repo, clinician, "/v1/patients/{id}/note/export", None)
+            .await
+            .unwrap();
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM access_audit")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 1);
+        for sql in [
+            "SELECT * FROM access_audit",
+            "UPDATE access_audit SET route = 'changed'",
+            "DELETE FROM access_audit",
+            "TRUNCATE access_audit",
+        ] {
+            assert_denied(&api, API_ROLE, sql).await;
+        }
+        let resolver = crate::auth::resolver::ClinicianResolver::new(api);
+        assert!(resolver.resolve(&clinician.to_string()).await.is_ok());
+        sqlx::query("UPDATE clinicians SET disabled_at = now() WHERE id = $1")
+            .bind(clinician)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(resolver.resolve(&clinician.to_string()).await.is_err());
+        sqlx::query("UPDATE clinicians SET disabled_at = NULL, role = 'observer' WHERE id = $1")
+            .bind(clinician)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(resolver.resolve(&clinician.to_string()).await.is_err());
     }
 }

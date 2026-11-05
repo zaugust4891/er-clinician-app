@@ -34,6 +34,27 @@ pub async fn require_auth(
 ) -> axum::response::Response {
     match authenticate(&state, req.headers()).await {
         Ok(authed) => {
+            let route = req
+                .extensions()
+                .get::<axum::extract::MatchedPath>()
+                .map(|p| p.as_str().to_owned())
+                .unwrap_or_else(|| "unmatched".into());
+            let resource = req
+                .uri()
+                .path()
+                .split('/')
+                .find_map(|p| uuid::Uuid::parse_str(p).ok());
+            if let Err(response) = crate::hardening::guard(
+                &state.repo_for(&authed),
+                &authed,
+                req.method().clone(),
+                route,
+                resource,
+            )
+            .await
+            {
+                return response;
+            }
             req.extensions_mut().insert(authed);
             next.run(req).await
         }

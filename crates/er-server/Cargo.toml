@@ -14,7 +14,7 @@ dotenvy.workspace = true
 er-app = { version = "0.1.0", path = "../er-app" }
 er-api.workspace = true
 hmac = "0.12"
-jsonwebtoken = { version = "10.4.0", features = ["rust_crypto"] }
+jsonwebtoken = { version = "10.4.0", features = ["aws_lc_rs"] }
 moka = {version = "0.12", features = ["future"] }
 rsa = "0.9"
 reqwest.workspace = true
@@ -76,3 +76,8 @@ path = "src/bin/onboard.rs"
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 er-api = { workspace = true, features = ["client"] }
+
+# Operator-only synthetic restore verifier, run locally from the reviewed source.
+[[bin]]
+name = "er-restore-verify"
+path = "src/bin/restore_verify.rs"

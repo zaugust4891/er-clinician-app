@@ -96,7 +96,10 @@ async fn run() -> Result<(), StartupFailure> {
         "transcription worker ready"
     );
 
-    worker::run(&ctx, Box::pin(shutdown_signal())).await;
+    tokio::select! {
+        _ = worker::run(&ctx, Box::pin(shutdown_signal())) => {},
+        _ = er_server::outbox::run(&ctx) => {},
+    }
     Ok(())
 }
 
