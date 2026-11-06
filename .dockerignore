@@ -9,6 +9,9 @@
 !crates/*/src/**
 !crates/er-server/migrations/*.sql
 !crates/er-ai/prompts/*.md
+!crates/er-api/examples/*.rs
+!docs/api/openapi.json
+!docs/api/swagger.html
 
 # Belt-and-suspenders denies even when a future file lands under src/.
 **/.env*

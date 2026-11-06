@@ -686,6 +686,11 @@ records refinements to quotas, budget thresholds, rotation and Step 8 handoffs.
 
 ## Step 10 — Load Test, Cost Validation, Docs, Handoff to Phase 5
 
+Repository implementation, validation and live acceptance status (2026-11-05):
+[Step 10 implementation](phase4-step10-implementation.md). The original requirements
+below are preserved; the record explains mock isolation, existing tag names and
+polling/quota deviations.
+
 ### 10.1 k6 load profile (`load/shift.js`)
 
 Model the pilot's worst hour: **10 virtual clinicians**, each: register 18 patients, per patient 8 encounter cycles (start → upload 1–2 chunks → stop), labs/meds/dx interleaved, 1 MDM per patient, constant `?since=` polling every 10s per active patient. Use MockStt/MockSummarizer mode via a staging env flag for the *load* run (you're testing your system, not Deepgram's), then a second small run (1 clinician, 3 patients) fully real for end-to-end latency numbers.

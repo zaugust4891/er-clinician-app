@@ -35,6 +35,8 @@ use crate::{
 /// using '.route_layer' scopes the gate to '/v1' routes and leaves the health probe open (no token) for load balancer
 pub fn router(state: AppState) -> Router {
     let v1 = Router::new()
+        .route("/api-docs/openapi.json", get(crate::api_docs::spec))
+        .route("/api-docs", get(crate::api_docs::ui))
         .route("/v1/me", get(me))
         .route("/v1/patients", post(register_patient))
         .route("/v1/patients/{id}/note", get(patient_note))

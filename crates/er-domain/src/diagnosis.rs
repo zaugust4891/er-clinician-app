@@ -3,6 +3,7 @@ use uuid::Uuid;
 
 use crate::PatientId;
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Diagnosis {
     pub id: Uuid,

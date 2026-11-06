@@ -8,6 +8,25 @@ Key differentiator: **multi-encounter merging** — captures every interaction a
 
 ## Current Branch: `master`
 
+## Phase 4 Step 10 update (2026-11-05)
+
+The optional `schema` feature on er-domain/er-api derives JSON Schema from serde
+wire types. Regenerate `docs/api/openapi.json` with `cargo run -p er-api --example
+openapi --features schema`; CI checks byte-for-byte freshness. The API serves
+that snapshot and pinned Swagger UI at authenticated `/api-docs` routes. Docker
+includes their embedded files. STT success now writes duration and frozen reviewed
+cost to `usage_log`; mock/unpriced receipts are explicit. Load/profile instructions,
+COGS SQL, reconciliation, architecture and the device handoff are linked from
+[Step 10](docs/planning/phase4-step10-implementation.md). Cloud remains fail-closed
+with real providers. The full eighteen-patient ten-second polling profile exceeds
+the 60/minute general quota; the live acceptance checklist remains open.
+
+Server commands: `cargo run -p er-server --bin er-server` (API), `--bin er-worker`
+(worker), `--bin er-migrate` (schema/grants), `--bin er-db-bootstrap` (role bootstrap),
+`--bin er-onboard` (membership), `--bin er-restore-verify` (isolated restore evidence).
+Use `scripts/ci-services.sh` for fresh isolated services/keys; set `K6_BIN` to also
+execute the actual one-patient k6 smoke. No accepted staging hostname is fabricated.
+
 ## Phase 4 Step 9 update (2026-11-03)
 
 RLS now covers tenant clinical/operational tables through transaction-local context.

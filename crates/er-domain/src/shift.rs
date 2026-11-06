@@ -8,6 +8,7 @@ pub type ShiftId = Uuid;
 
 /// Top-level container for a clinical shift.
 /// All patients and notes belong to a shift. Data retention timers start at shift end.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Shift {
     pub id: ShiftId,

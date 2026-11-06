@@ -2,7 +2,6 @@
 
 db_steps.txt
 next_steps.md
-ARCHITECTURE.md 
 state_pattern.md
 # PAI hook writes a literal `$HOME/` dir (unexpanded shell var); ignore it anywhere
 **/$HOME/
@@ -29,6 +28,8 @@ infrastructure-cost-model.md
 docs/planning/*
 !docs/planning/phase4-step8-implementation-steps.md
 !docs/planning/phase4-step9-implementation.md
+!docs/planning/phase4-step10-implementation.md
+!docs/planning/phase5-handoff.md
 
 # LibreOffice lock files
 .~lock.*
@@ -80,3 +81,8 @@ crash.*.log
 **/override.tf.json
 .terraformrc
 terraform.rc
+
+# Local load evidence and credentials
+/load-summary.json
+/load/credentials*.json
+/load/results/

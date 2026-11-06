@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 use crate::PatientId;
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Medication {
     pub id: Uuid,
@@ -37,6 +38,7 @@ impl Medication {
     }
 }
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum MedicationKind {
     Home,

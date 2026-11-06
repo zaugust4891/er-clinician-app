@@ -38,6 +38,7 @@ use crate::state::{self, NoteState, Registered};
 ///                                          ▼
 ///                                        Signed
 /// ```
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
 pub enum NotePhase {
     /// Chart open, no audio yet.
@@ -68,6 +69,7 @@ impl std::fmt::Debug for NotePhase {
 }
 
 /// The sections that compose an ED note.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct NoteSections {
     pub hpi: Option<String>,
@@ -78,6 +80,7 @@ pub struct NoteSections {
 }
 
 /// A versioned note section snapshot — retained for audit trail.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NoteSectionVersion {
     pub section: String, // "hpi", "exam", "mdm", etc.
@@ -109,6 +112,7 @@ impl NoteSectionVersion {
 ///
 /// Holds both a `NotePhase` enum (for serialization) and a `Box<dyn NoteState>`
 /// trait object (for behavior). They are kept in sync by the `handle_*` methods.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Serialize, Deserialize)]
 pub struct PatientNote {
     pub id: Uuid,

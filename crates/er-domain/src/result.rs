@@ -7,6 +7,7 @@ use super::patient::PatientId;
 pub type ResultId = Uuid;
 
 /// How a result entered the system.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ResultSource {
     /// Clinician manually entered the value.
@@ -19,6 +20,7 @@ pub enum ResultSource {
 
 /// A clinical result — lab, imaging, or vital sign.
 /// Field shapes mirror FHIR R4 Observation so future integration is a mapping layer.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClinicalResult {
     pub id: ResultId,
@@ -28,6 +30,7 @@ pub struct ClinicalResult {
     pub result_type: ResultType,
 }
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ResultType {
     Lab(LabResult),
@@ -36,6 +39,7 @@ pub enum ResultType {
 }
 
 /// A lab result with FHIR-ready fields.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LabResult {
     /// FHIR resource ID, if pulled from EMR. None = manually entered.
@@ -50,6 +54,7 @@ pub struct LabResult {
 }
 
 /// Free-text imaging result (radiology report excerpt).
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImagingResult {
     pub modality: String, // "XR", "CT", "US", "MRI"
@@ -59,6 +64,7 @@ pub struct ImagingResult {
 }
 
 /// A vital sign measurement.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VitalSign {
     pub vital_type: VitalType,
@@ -66,6 +72,7 @@ pub struct VitalSign {
     pub unit: String,
 }
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum VitalType {
     HeartRate,

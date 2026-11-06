@@ -44,6 +44,8 @@ jobs:
           rustup show active-toolchain
           rustup component add rustfmt clippy
           cargo install sqlx-cli --version 0.8.6 --locked --no-default-features --features rustls,postgres
+      - name: Reconciliation and OpenAPI reference checks
+        run: PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_step10.py
       - name: Full application and online SQLx metadata gates
         run: scripts/ci-services.sh
 

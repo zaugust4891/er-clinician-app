@@ -31,3 +31,13 @@ variable "db_connection_budget" {
     error_message = "Reserve at least 35 connections: four rolling API tasks * 5, one worker * 5, and 10 for operators/one-shots."
   }
 }
+
+variable "deepgram_micros_per_minute" {
+  description = "Reviewed contracted STT rate in microdollars/minute; zero leaves receipts explicitly unpriced."
+  type        = number
+  default     = 0
+  validation {
+    condition     = var.deepgram_micros_per_minute >= 0 && var.deepgram_micros_per_minute <= 1000000000 && floor(var.deepgram_micros_per_minute) == var.deepgram_micros_per_minute
+    error_message = "Supply a bounded nonnegative whole microdollar rate."
+  }
+}

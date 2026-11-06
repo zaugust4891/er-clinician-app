@@ -27,6 +27,7 @@ if [[ "${1:-}" != --isolated ]]; then
   exec env -i PATH="$PATH" HOME="$HOME" \
     CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}" \
     CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$repo/target}" \
+    K6_BIN="${K6_BIN:-}" \
     CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}" \
     CARGO_PROFILE_DEV_DEBUG="${CARGO_PROFILE_DEV_DEBUG:-0}" \
     CARGO_PROFILE_TEST_DEBUG="${CARGO_PROFILE_TEST_DEBUG:-0}" CARGO_INCREMENTAL=0 \
@@ -42,7 +43,7 @@ mkdir -p "$work/source"
 # Copy current source (including local edits), not .git, .env, data or key fixtures.
 # Tests and SQLx preparation share these fresh keys for the entire run.
 (cd "$repo" && tar --exclude=target --exclude='.env*' --exclude='*.pem' --exclude='*.db*' --exclude='*.sqlite*' --exclude='*.wav' --exclude='*.mp3' --exclude='*.m4a' \
-  -cf - Cargo.toml Cargo.lock rust-toolchain.toml crates .sqlx) | tar -xf - -C "$work/source"
+  -cf - Cargo.toml Cargo.lock rust-toolchain.toml crates .sqlx docs/api load) | tar -xf - -C "$work/source"
 cd "$work/source"
 # Stop dotenv from searching parent directories outside this disposable source tree.
 : > .env
@@ -76,6 +77,9 @@ wait_for_services 90
 echo 'CI services ready; running offline compilation and full workspace tests'
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo run --quiet --locked -p er-api --example openapi --features schema > "$work/openapi.json"
+cmp docs/api/openapi.json "$work/openapi.json"
+cargo clippy -p er-api --example openapi --features schema --locked -- -D warnings
 cargo run --quiet --locked -p er-server --bin mint_dev_token -- jwks > dev/keys/jwks.json
 test_gate() {
   local status=0
@@ -88,6 +92,9 @@ test_gate() {
   fi
 }
 test_gate cargo test --workspace --locked
+if [[ -n "${K6_BIN:-}" ]]; then
+  test_gate cargo test -p er-server --test load_gate --locked -- --ignored
+fi
 test_gate cargo test -p er-ai --locked
 cargo tree -p er-ai --locked -e normal > "$work/ai-tree.txt"
 cat "$work/ai-tree.txt"

@@ -1,7 +1,7 @@
 # Application API contract
 
 This document describes the APIs implemented and consumed by this repository as
-of 2026-11-04. It covers the client-facing `er-server` HTTP API, the direct audio
+of 2026-11-05. It covers the client-facing `er-server` HTTP API, the direct audio
 upload boundary, and the provider/queue contracts used by the worker. It describes
 current implementation behavior, including limitations; planning documents may
 describe functionality that is not implemented yet.
@@ -13,6 +13,13 @@ The source of truth is [routes.rs](../crates/er-server/src/routes.rs), the
 the wire are specified below. Deployment configuration is covered separately in
 the [server README](../crates/er-server/README.md) and
 [deployment contract](ops/deployment-contract.md).
+
+The [OpenAPI 3.1 snapshot](api/openapi.json) is generated from Rust serde schemas.
+Both `/api-docs/openapi.json` and Swagger UI at `/api-docs` require the same current
+Bearer membership as `/v1`, consume quotas, and emit no-store headers. Swagger
+assets are version/SRI pinned; browser navigation needs authenticated header
+injection or a development proxy. Client tokens remain in memory. See the
+[Phase 5 handoff](planning/phase5-handoff.md) and [load guide](../load/README.md).
 
 ## 1. Transport and common conventions
 

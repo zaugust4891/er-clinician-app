@@ -7,6 +7,7 @@ use super::patient::PatientId;
 pub type EncounterId = Uuid;
 
 /// How the audio was captured — affects summarization strategy.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum CaptureMode {
     /// In the room with the patient — may include patient speech, ambient noise.
@@ -16,6 +17,7 @@ pub enum CaptureMode {
 }
 
 /// A single encounter snippet — one recording session for one patient.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Encounter {
     pub id: EncounterId,

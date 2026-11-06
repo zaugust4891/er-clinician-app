@@ -113,3 +113,10 @@ run "step9_dashboard_and_capacity" {
     error_message = "Both services and all operating panels must be monitored."
   }
 }
+run "step10_cost_visibility" {
+  command = apply
+  assert {
+    condition     = jsondecode(aws_cloudwatch_dashboard.cost.dashboard_body).widgets[0].properties.region == "us-east-1" && jsondecode(aws_cloudwatch_dashboard.cost.dashboard_body).widgets[0].properties.metrics[0][1] == "EstimatedCharges"
+    error_message = "Billing estimates must use the billing metric region and remain separate from receipt-based COGS."
+  }
+}

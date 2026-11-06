@@ -1037,6 +1037,37 @@ impl PostgresRepository {
 
     /// Best-effort callers deliberately handle an error from this insert after
     /// preserving the clinical event. Usage is operational metadata.
+    /// Successful STT receipt, deduplicated by chunk identity. Unknown contract
+    /// pricing is explicit; cost reports must exclude unpriced/mock rows.
+    pub async fn record_stt_usage(
+        &self,
+        chunk_id: Uuid,
+        patient_id: Uuid,
+        duration_ms: i32,
+        model: &str,
+        micros_per_minute: Option<u64>,
+    ) -> StoreResult<()> {
+        let ms = u64::try_from(duration_ms).unwrap_or(0);
+        let cost = micros_per_minute
+            .map(|rate| u128::from(ms) * u128::from(rate) / 60_000)
+            .unwrap_or(0)
+            .min(i64::MAX as u128) as i64;
+        let model = if micros_per_minute.is_none() {
+            format!("{model}-unpriced")
+        } else {
+            model.to_owned()
+        };
+        tenant_query!(self, tx, sqlx::query(
+            "INSERT INTO usage_log (id, org_id, patient_id, kind, model, stt_seconds, cost_micros)
+             VALUES ($1,$2,$3,'stt',$4,$5,$6) ON CONFLICT (id) DO NOTHING")
+            .bind(Uuid::new_v5(&Uuid::NAMESPACE_OID, format!("stt:{chunk_id}").as_bytes()))
+            .bind(self.org_id).bind(patient_id).bind(model)
+            .bind(ms.div_ceil(1000).min(i32::MAX as u64) as i32).bind(cost)
+            .execute(&mut *tx).await)
+        .map_err(StoreError::backend)?;
+        Ok(())
+    }
+
     pub async fn record_usage(&self, entry: NewUsage<'_>) -> StoreResult<()> {
         let to_i64 = |value: u64| i64::try_from(value).unwrap_or(i64::MAX);
         let cost = cost_micros(entry.model, entry.usage);

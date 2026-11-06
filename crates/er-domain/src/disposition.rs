@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 /// ED disposition — the most important single field in an ED note.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Disposition {
     Discharge {

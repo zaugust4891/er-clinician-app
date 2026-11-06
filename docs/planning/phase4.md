@@ -4,6 +4,19 @@
 
 ---
 
+## Implementation status (2026-11-05)
+
+Steps 1–7 have local implementation and contract/lifecycle tests. Step 8 deployment
+infrastructure/CI and Step 9 hardening are authored with their documented live
+gates still pending. Step 10 now supplies generated OpenAPI, authenticated docs,
+k6 workload, STT receipts, COGS/reconciliation, cost dashboard and Phase 5 handoff.
+See [the Step 10 record](phase4-step10-implementation.md) for the literal twelve-item
+acceptance checklist and deviations. Phase 4 is **not fully accepted**: the full
+polling workload conflicts with current quotas, and provider invoices, cloud
+latencies, rollout, alarms and restore evidence have not been validated here.
+The original plan below remains the requirements record; synthetic tests do not
+constitute live or clinical acceptance.
+
 ## 0. Roadmap Re-Numbering (read first)
 
 The original roadmap (`roadmap-and-next-phase-040826.md` §2) put "iOS platform layer" at Phase 4 and assumed an on-device-only architecture where the Rust core lives entirely inside the iPhone. Three things have changed since that document was written:

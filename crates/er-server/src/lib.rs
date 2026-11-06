@@ -20,3 +20,5 @@ pub mod hardening;
 pub mod outbox;
 
 pub mod recovery;
+
+pub mod api_docs;

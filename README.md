@@ -6,6 +6,15 @@ Its core goal is to capture fragmented, non-linear encounters across a patientâ€
 
 > **Status:** This project is a work in progress.
 
+## Phase 4 Step 10
+
+The [load profile](load/README.md), [OpenAPI snapshot](docs/api/openapi.json),
+[architecture](ARCHITECTURE.md), [COGS query](docs/ops/cogs.sql) and
+[Phase 5 handoff](docs/planning/phase5-handoff.md) are implemented. Authenticated
+API documentation is served at `/api-docs` and `/api-docs/openapi.json`.
+See [Step 10 implementation and acceptance](docs/planning/phase4-step10-implementation.md)
+for local evidence, the polling/quota conflict and outstanding live gates.
+
 ## What the application does
 
 - Manages multi-patient ED shifts

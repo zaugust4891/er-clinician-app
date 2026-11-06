@@ -249,3 +249,17 @@ run "reject_services_without_notifications" {
   }
   expect_failures = [terraform_data.contract]
 }
+
+run "step10_reviewed_stt_pricing" {
+  command = plan
+  variables { deepgram_micros_per_minute = 9000 }
+  assert {
+    condition     = { for v in output.task_templates.worker.containerDefinitions[0].environment : v.name => v.value }["DEEPGRAM_MICROS_PER_MINUTE"] == "9000"
+    error_message = "The reviewed STT unit rate must reach the worker task template."
+  }
+}
+run "reject_invalid_stt_pricing" {
+  command = plan
+  variables { deepgram_micros_per_minute = -1 }
+  expect_failures = [var.deepgram_micros_per_minute]
+}

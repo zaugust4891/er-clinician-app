@@ -11,16 +11,17 @@ resource "terraform_data" "release_guard" {
   }
 }
 module "compute" {
-  source               = "../../../modules/compute"
-  count                = local.manifest_required && var.image_digest != null ? 1 : 0
-  name                 = "${var.project}-${local.environment}"
-  environment          = local.environment
-  aws_account_id       = var.aws_account_id
-  aws_region           = var.aws_region
-  resources            = local.manifest.resources
-  secret_refs          = local.manifest.secret_refs
-  image_digest         = var.image_digest
-  services_enabled     = var.services_enabled
-  db_connection_budget = var.db_connection_budget
-  depends_on           = [terraform_data.account_guard, terraform_data.manifest_guard, terraform_data.release_guard]
+  source                     = "../../../modules/compute"
+  count                      = local.manifest_required && var.image_digest != null ? 1 : 0
+  name                       = "${var.project}-${local.environment}"
+  environment                = local.environment
+  aws_account_id             = var.aws_account_id
+  aws_region                 = var.aws_region
+  resources                  = local.manifest.resources
+  secret_refs                = local.manifest.secret_refs
+  image_digest               = var.image_digest
+  services_enabled           = var.services_enabled
+  db_connection_budget       = var.db_connection_budget
+  deepgram_micros_per_minute = var.deepgram_micros_per_minute
+  depends_on                 = [terraform_data.account_guard, terraform_data.manifest_guard, terraform_data.release_guard]
 }

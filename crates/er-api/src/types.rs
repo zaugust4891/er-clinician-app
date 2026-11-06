@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 use er_domain::{ClinicalResult, Diagnosis, Disposition, Medication, NoteEvent, PatientNote};
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventUp {
     pub event_id: Uuid,
@@ -13,6 +14,7 @@ pub struct EventUp {
     // externally-tagged JSON, same as the payload column (§C1)
 }
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AppendEventsRequest {
     pub events: Vec<EventUp>,
@@ -20,18 +22,21 @@ pub struct AppendEventsRequest {
 
 /// Per-event acknowledgment: the server-assigned position in the stream.
 /// On a duplicate delivery this is the ORIGINAL sequence_id — same answer every time.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct EventAck {
     pub event_id: Uuid,
     pub sequence_id: u64,
 }
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AppendEventsResponse {
     pub results: Vec<EventAck>,
 }
 
 /// One event coming down — the wire twin of er_store's StoredEvent envelope.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct EventDown {
     pub sequence_id: u64,
@@ -42,6 +47,7 @@ pub struct EventDown {
 }
 
 /// A page of the stream. `has_more` tells the client to keep looping (§C3).
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct EventsPage {
     pub events: Vec<EventDown>,
@@ -50,12 +56,14 @@ pub struct EventsPage {
 
 // ---------- Snapshots (S6) ----------
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SnapshotUp {
     pub sequence_id: u64,
     pub snapshot: PatientNote,
 }
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SnapshotDown {
     pub sequence_id: u64,
@@ -66,6 +74,7 @@ pub struct SnapshotDown {
 
 /// PHI-minimal BY CONSTRUCTION (§C1): no name, no age, no MRN — no fields to put them in.
 /// `display_label` is "Room 4 – chest pain" territory, never an identity.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RegisterPatientRequest {
     pub patient_id: Uuid, // client-stamped, like event_id — see S3 for why
@@ -73,6 +82,7 @@ pub struct RegisterPatientRequest {
     pub display_label: Option<String>,
 }
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PatientView {
     pub patient_id: Uuid,
@@ -83,6 +93,7 @@ pub struct PatientView {
 
 // ---------- Shifts (S8) ----------
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ShiftView {
     pub shift_id: Uuid,
@@ -96,6 +107,7 @@ pub struct ShiftView {
 
 /// The read model for clients. A deliberate DTO (§C1): PatientNote can gain/rename
 /// fields freely; only NoteView::from must keep up, and the compiler enforces that.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct NoteView {
     pub patient_id: Uuid,
@@ -139,6 +151,7 @@ impl From<&PatientNote> for NoteView {
 
 // ---------- Ops (S7) ----------
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct StatsView {
     pub event_count: u64,
@@ -194,6 +207,7 @@ pub mod chunk_status {
 ///
 /// PHI-minimal by construction (§C5): there is no field for a filename, a label,
 /// or any human text — four scalars, two of them opaque ids.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AudioUploadRequest {
     pub chunk_id: Uuid,
@@ -215,6 +229,7 @@ pub struct AudioUploadRequest {
 ///
 /// Nothing here reveals anything about the patient, but `upload_url` *is* a bearer
 /// credential for one `PUT` to one key: log the `chunk_id`, never the URL.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AudioUploadResponse {
     /// Echoed back so a client that pipelines several intents can match answers to
@@ -237,6 +252,7 @@ pub struct AudioUploadResponse {
 /// has no use for the key, and does not read transcripts here at all — it reads
 /// them the way it reads everything else, as a worker-authored `TranscriptReady`
 /// event off the S5 cursor, once the *whole* encounter has been assembled (§C4).
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChunkView {
     pub chunk_id: Uuid,
@@ -263,11 +279,13 @@ pub struct ChunkView {
 
 /// Request server-owned MDM generation. The client stamps the id so a timed-out
 /// POST can be retried without creating or billing a second job.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MdmRequest {
     pub job_id: Uuid,
 }
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MdmAccepted {
     pub job_id: Uuid,
@@ -276,6 +294,7 @@ pub struct MdmAccepted {
 
 /// PHI-free status projection for asynchronous work. Generated clinical content
 /// is delivered only through the event stream.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JobView {
     pub job_id: Uuid,

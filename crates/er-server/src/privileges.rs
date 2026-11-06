@@ -89,7 +89,7 @@ pub const GRANTS: &[Grant] = &[
     Grant {
         object: "TABLE usage_log",
         api: "",
-        worker: "INSERT",
+        worker: "INSERT, SELECT (id)",
         onboarding: "",
     },
     Grant {
@@ -543,6 +543,12 @@ mod tests {
             usage: &usage,
         };
         repo.record_usage(entry).await.unwrap();
+        repo.record_stt_usage(first, patient, 60_000, "reviewed-stt", Some(9_000))
+            .await
+            .unwrap();
+        repo.record_stt_usage(first, patient, 60_000, "reviewed-stt", Some(9_000))
+            .await
+            .unwrap();
 
         for (role, runtime, denied) in [
             (API_ROLE, &api, DENIED_TO_API),

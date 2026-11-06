@@ -10,6 +10,7 @@ version.workspace = true
 # Serde-only. The "client" feature (S9) adds the optional deps — nothing here yet.
 
 [dependencies]
+schemars = { workspace = true, optional = true }
 
 er-domain.workspace = true
 er-store = { workspace = true, optional = true }
@@ -23,6 +24,7 @@ uuid.workspace = true
 
 
 [features]
+schema = ["dep:schemars", "dep:serde_json", "er-domain/schema"]
 client = ["dep:er-store", "dep:reqwest", "dep:async-trait", "dep:serde_json"]
 
 # Tests pin the JSON field names of the wire contract, so they need a JSON codec
@@ -35,3 +37,7 @@ tokio.workspace = true
 [[example]]
 name = "remote_smoke"
 required-features = ["client"]
+
+[[example]]
+name = "openapi"
+required-features = ["schema"]

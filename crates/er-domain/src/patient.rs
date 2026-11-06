@@ -7,6 +7,7 @@ pub type PatientId = Uuid;
 
 /// Minimal patient record — enough for note attribution without full EMR data.
 /// In the no-integration MVP, all fields are manually entered by the clinician.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PatientRecord {
     pub id: PatientId,

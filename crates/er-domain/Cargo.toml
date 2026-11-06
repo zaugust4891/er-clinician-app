@@ -7,8 +7,12 @@ version.workspace = true
 # imports nothing from the other layers and performs no I/O — no rusqlite,
 # reqwest, tokio, dashmap, or regex (enforced now by the compiler).
 [dependencies]
+schemars = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 thiserror.workspace = true
+
+[features]
+schema = ["dep:schemars"]

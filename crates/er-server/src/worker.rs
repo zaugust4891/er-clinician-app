@@ -494,6 +494,18 @@ pub async fn handle_transcribe_chunk(ctx: &WorkerCtx, chunk_id: Uuid) -> anyhow:
 
     let duration_ms = duration_to_millis(result.audio_duration_secs);
     telemetry::stt_duration(duration_ms);
+    let (model, rate) = match &ctx.stt {
+        AppSpeechToText::Mock(_) => ("mock-stt", None),
+        AppSpeechToText::Deepgram(_) => (
+            "deepgram-nova-3-medical",
+            std::env::var("DEEPGRAM_MICROS_PER_MINUTE")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .filter(|v| *v > 0),
+        ),
+    };
+    repo.record_stt_usage(chunk_id, row.patient_id, duration_ms, model, rate)
+        .await?;
 
     repo.store_chunk_transcript(chunk_id, &result.text, duration_ms)
         .await

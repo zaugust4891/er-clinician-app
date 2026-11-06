@@ -560,7 +560,7 @@ async fn a_wav_uploaded_through_the_client_lands_on_the_replayed_note(pool: PgPo
     );
 
     let usage = sqlx::query_as::<_, (String, Option<String>, i64)>(
-        "SELECT kind, model, cost_micros FROM usage_log WHERE org_id = $1",
+        "SELECT kind, model, cost_micros FROM usage_log WHERE org_id = $1 AND kind = 'summarize'",
     )
     .bind(ORG_A)
     .fetch_all(&pool)

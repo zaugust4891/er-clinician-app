@@ -34,11 +34,12 @@ locals {
       API_TLS           = "self-signed"
     }
     worker = {
-      AUDIO_BUCKET  = local.resources.audio_bucket
-      STT_QUEUE     = local.resources.stt_queue_name
-      TRANSPORT     = "bedrock"
-      SUMMARY_MODEL = "sonnet"
-      MDM_MODEL     = "sonnet"
+      AUDIO_BUCKET               = local.resources.audio_bucket
+      STT_QUEUE                  = local.resources.stt_queue_name
+      DEEPGRAM_MICROS_PER_MINUTE = tostring(var.deepgram_micros_per_minute)
+      TRANSPORT                  = "bedrock"
+      SUMMARY_MODEL              = "sonnet"
+      MDM_MODEL                  = "sonnet"
       # Must agree with S6's exact profile/model IAM resources and S0 residency.
       BEDROCK_SUMMARY_MODEL_ID = "us.anthropic.claude-sonnet-4-6"
       BEDROCK_MDM_MODEL_ID     = "us.anthropic.claude-sonnet-4-6"

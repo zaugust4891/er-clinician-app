@@ -1,0 +1,2941 @@
+{
+  "components": {
+    "schemas": {
+      "AppendEventsRequest": {
+        "properties": {
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/EventUp"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "events"
+        ],
+        "title": "AppendEventsRequest",
+        "type": "object"
+      },
+      "AppendEventsResponse": {
+        "properties": {
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/EventAck"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "results"
+        ],
+        "title": "AppendEventsResponse",
+        "type": "object"
+      },
+      "AudioUploadRequest": {
+        "description": "Ask permission to upload one chunk of an encounter's audio.\n\nThe `chunk_id` is client-stamped (D5.3 doctrine, same as `event_id` and\n`patient_id`), so re-sending this request is a *re-send*, not a second chunk:\nthe server answers out of the ledger row the first attempt created.\n`chunk_index` + `is_final` are the §C3 ordering contract, and `content_type`\ngets signed into the returned URL — whatever you declare here is exactly what\nyour `PUT` must send, byte for byte, or S3 rejects the signature (§C1).\n\nPHI-minimal by construction (§C5): there is no field for a filename, a label,\nor any human text — four scalars, two of them opaque ids.",
+        "properties": {
+          "chunk_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "chunk_index": {
+            "description": "0-based and contiguous per encounter. `u32`, not the row's `i32`: this is\nthe one audio field a client *sends*, so serde refusing `-1` at the door is\nvalidation the handler then never has to write.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "content_type": {
+            "description": "From S3's allowlist: `audio/wav` | `audio/ogg` | `audio/mp4` | `audio/mpeg`.\nDeclared per chunk; nothing in the pipeline hardcodes a container (D6.15).",
+            "type": "string"
+          },
+          "is_final": {
+            "description": "Exactly one chunk per encounter carries `true` — the one cut when the\nclinician tapped stop, so its index is the highest. Finality is data on a\nchunk rather than a separate RPC, which is what lets it survive retries and\nout-of-order arrival like everything else (§C3).",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "chunk_id",
+          "chunk_index",
+          "is_final",
+          "content_type"
+        ],
+        "title": "AudioUploadRequest",
+        "type": "object"
+      },
+      "AudioUploadResponse": {
+        "description": "The valet key (§C1).\n\nNothing here reveals anything about the patient, but `upload_url` *is* a bearer\ncredential for one `PUT` to one key: log the `chunk_id`, never the URL.",
+        "properties": {
+          "chunk_id": {
+            "description": "Echoed back so a client that pipelines several intents can match answers to\nrequests without relying on ordering.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expires_in_secs": {
+            "description": "900 (15 minutes). A client that has sat on a URL should re-ask rather than\nhoard it: re-issuing an intent is idempotent and costs one round trip.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "upload_url": {
+            "description": "Presigned `PUT` straight to object storage — the API never handles a byte of\naudio, and the URL carries its own authorization.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "chunk_id",
+          "upload_url",
+          "expires_in_secs"
+        ],
+        "title": "AudioUploadResponse",
+        "type": "object"
+      },
+      "AuditAction": {
+        "oneOf": [
+          {
+            "enum": [
+              "PatientCreated",
+              "EncounterStarted",
+              "EncounterStopped",
+              "TranscriptGenerated",
+              "ResultIngested",
+              "NoteSectionUpdated",
+              "NoteSectionGenerated",
+              "NoteSectionVersion",
+              "MdmTriggered",
+              "MdmGenerated",
+              "DispositionSet",
+              "DiagnosisAssigned",
+              "DataReviewed",
+              "MedicationRecorded",
+              "NoteReviewed",
+              "NoteSigned",
+              "NoteExported"
+            ],
+            "type": "string"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "PhaseTransition": {
+                "properties": {
+                  "from": {
+                    "type": "string"
+                  },
+                  "to": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "from",
+                  "to"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "PhaseTransition"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "AuditEntry": {
+        "description": "Immutable audit log entry — append-only, never modified.",
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/AuditAction"
+          },
+          "details": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "timestamp": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "timestamp",
+          "action",
+          "details"
+        ],
+        "type": "object"
+      },
+      "CaptureMode": {
+        "description": "How the audio was captured — affects summarization strategy.",
+        "oneOf": [
+          {
+            "const": "Ambient",
+            "description": "In the room with the patient — may include patient speech, ambient noise.",
+            "type": "string"
+          },
+          {
+            "const": "Dictation",
+            "description": "Clinician dictating privately (hallway, workstation) — single-speaker, structured.",
+            "type": "string"
+          }
+        ]
+      },
+      "ChunkView": {
+        "description": "One chunk's ledger state. The completion ack and the status read (both S4,\ndriven by S8's poll loop) return this same shape, so a client has one thing to\nlearn and one thing to render.\n\nDeliberately *not* a mirror of the `audio_chunks` row: `org_id`, `s3_key`, and\nthe per-chunk `transcript` stay server-side. The device already knows its org,\nhas no use for the key, and does not read transcripts here at all — it reads\nthem the way it reads everything else, as a worker-authored `TranscriptReady`\nevent off the S5 cursor, once the *whole* encounter has been assembled (§C4).",
+        "properties": {
+          "chunk_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "chunk_index": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "duration_ms": {
+            "description": "Audio length in milliseconds, from the STT provider's metadata; `None` until\na worker finishes the chunk. Step 7's `usage_log` meters from this (D6.13).\n\nStays `i32` — the row's own type — while `chunk_index` widens to `u32`,\nbecause the two have different provenance. `chunk_index` came *from* a `u32`\nthis server accepted, so converting it back is provably safe; `duration_ms`\nis written by the worker under no such guarantee, and keeping it in the\nstorage type means the boundary needs no fallible cast for a value nobody\ndoes arithmetic on.",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "encounter_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "error": {
+            "description": "Terminal failure reason, `None` while healthy. Operator-facing text for the\n§C2 autopsy — never transcript content.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "is_final": {
+            "type": "boolean"
+          },
+          "status": {
+            "description": "One of [`chunk_status`]. Unrecognized values are possible against a newer\nserver and should be treated as \"still moving\", not as an error.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "chunk_id",
+          "encounter_id",
+          "chunk_index",
+          "is_final",
+          "status"
+        ],
+        "title": "ChunkView",
+        "type": "object"
+      },
+      "ClinicalResult": {
+        "description": "A clinical result — lab, imaging, or vital sign.\nField shapes mirror FHIR R4 Observation so future integration is a mapping layer.",
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "patient_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "result_type": {
+            "$ref": "#/components/schemas/ResultType"
+          },
+          "source": {
+            "$ref": "#/components/schemas/ResultSource"
+          },
+          "timestamp": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "patient_id",
+          "source",
+          "timestamp",
+          "result_type"
+        ],
+        "type": "object"
+      },
+      "Diagnosis": {
+        "properties": {
+          "icd10_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "is_primary": {
+            "type": "boolean"
+          },
+          "patient_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "patient_id",
+          "text",
+          "is_primary"
+        ],
+        "type": "object"
+      },
+      "Disposition": {
+        "description": "ED disposition — the most important single field in an ED note.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "Discharge": {
+                "properties": {
+                  "follow_up": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "instructions": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "instructions"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "Discharge"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "Admit": {
+                "properties": {
+                  "bed": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "service": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "service"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "Admit"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "Transfer": {
+                "properties": {
+                  "destination": {
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "destination"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "Transfer"
+            ],
+            "type": "object"
+          },
+          {
+            "const": "AMA",
+            "description": "Against medical advice",
+            "type": "string"
+          },
+          {
+            "const": "LWBS",
+            "description": "Left without being seen",
+            "type": "string"
+          }
+        ]
+      },
+      "Encounter": {
+        "description": "A single encounter snippet — one recording session for one patient.",
+        "properties": {
+          "capture_mode": {
+            "$ref": "#/components/schemas/CaptureMode"
+          },
+          "encounter_number": {
+            "description": "Encounter number for this patient (1st visit, 2nd visit, etc.)",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "ended_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "patient_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "transcript": {
+            "description": "Raw transcript text from STT.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "patient_id",
+          "capture_mode",
+          "started_at",
+          "encounter_number"
+        ],
+        "type": "object"
+      },
+      "EventAck": {
+        "description": "Per-event acknowledgment: the server-assigned position in the stream.\nOn a duplicate delivery this is the ORIGINAL sequence_id — same answer every time.",
+        "properties": {
+          "event_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "sequence_id": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "event_id",
+          "sequence_id"
+        ],
+        "type": "object"
+      },
+      "EventDown": {
+        "description": "One event coming down — the wire twin of er_store's StoredEvent envelope.",
+        "properties": {
+          "event": {
+            "$ref": "#/components/schemas/NoteEvent"
+          },
+          "event_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "sequence_id": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sequence_id",
+          "event_id",
+          "event",
+          "occurred_at"
+        ],
+        "type": "object"
+      },
+      "EventUp": {
+        "properties": {
+          "event": {
+            "$ref": "#/components/schemas/NoteEvent"
+          },
+          "event_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "event_id",
+          "event"
+        ],
+        "type": "object"
+      },
+      "EventsPage": {
+        "description": "A page of the stream. `has_more` tells the client to keep looping (§C3).",
+        "properties": {
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/EventDown"
+            },
+            "type": "array"
+          },
+          "has_more": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "events",
+          "has_more"
+        ],
+        "title": "EventsPage",
+        "type": "object"
+      },
+      "Health": {
+        "properties": {
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "ImagingResult": {
+        "description": "Free-text imaging result (radiology report excerpt).",
+        "properties": {
+          "body_part": {
+            "type": "string"
+          },
+          "impression": {
+            "type": "string"
+          },
+          "is_critical": {
+            "type": "boolean"
+          },
+          "modality": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "modality",
+          "body_part",
+          "impression",
+          "is_critical"
+        ],
+        "type": "object"
+      },
+      "JobView": {
+        "description": "PHI-free status projection for asynchronous work. Generated clinical content\nis delivered only through the event stream.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "job_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "kind",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "JobView",
+        "type": "object"
+      },
+      "LabResult": {
+        "description": "A lab result with FHIR-ready fields.",
+        "properties": {
+          "display_name": {
+            "type": "string"
+          },
+          "fhir_id": {
+            "description": "FHIR resource ID, if pulled from EMR. None = manually entered.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "is_abnormal": {
+            "type": "boolean"
+          },
+          "loinc_code": {
+            "description": "LOINC code for the lab test (e.g., \"2160-0\" for creatinine).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reference_range": {
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "format": "double",
+                "type": "number"
+              },
+              {
+                "format": "double",
+                "type": "number"
+              }
+            ],
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "unit": {
+            "type": "string"
+          },
+          "value": {
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "display_name",
+          "value",
+          "unit",
+          "is_abnormal"
+        ],
+        "type": "object"
+      },
+      "MdmAccepted": {
+        "properties": {
+          "job_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "status"
+        ],
+        "title": "MdmAccepted",
+        "type": "object"
+      },
+      "MdmRequest": {
+        "description": "Request server-owned MDM generation. The client stamps the id so a timed-out\nPOST can be retried without creating or billing a second job.",
+        "properties": {
+          "job_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id"
+        ],
+        "title": "MdmRequest",
+        "type": "object"
+      },
+      "Me": {
+        "properties": {
+          "clinician_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "org_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "clinician_id",
+          "org_id"
+        ],
+        "type": "object"
+      },
+      "Medication": {
+        "properties": {
+          "administered_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "dose": {
+            "type": "string"
+          },
+          "frequency": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/MedicationKind"
+          },
+          "name": {
+            "type": "string"
+          },
+          "patient_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "route": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "rxnorm_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "patient_id",
+          "name",
+          "dose",
+          "kind",
+          "administered_at",
+          "frequency"
+        ],
+        "type": "object"
+      },
+      "MedicationKind": {
+        "enum": [
+          "Home",
+          "AdministeredInEd"
+        ],
+        "type": "string"
+      },
+      "NoteEvent": {
+        "description": "Events that drive the note state machine and the processing pipeline.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "Clinician started recording for a patient.",
+            "properties": {
+              "AudioStarted": {
+                "properties": {
+                  "capture_mode": {
+                    "$ref": "#/components/schemas/CaptureMode"
+                  },
+                  "clinical_occurred_at": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "encounter_id": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "patient_id": {
+                    "format": "uuid",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "patient_id",
+                  "encounter_id",
+                  "capture_mode",
+                  "clinical_occurred_at"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "AudioStarted"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Clinician stopped recording.",
+            "properties": {
+              "AudioStopped": {
+                "properties": {
+                  "clinical_occurred_at": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "encounter_id": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "patient_id": {
+                    "format": "uuid",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "patient_id",
+                  "encounter_id",
+                  "clinical_occurred_at"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "AudioStopped"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "STT produced a transcript chunk.",
+            "properties": {
+              "TranscriptReady": {
+                "properties": {
+                  "clinical_occurred_at": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "encounter_id": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "patient_id": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "patient_id",
+                  "encounter_id",
+                  "text",
+                  "clinical_occurred_at"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "TranscriptReady"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "AI produced/updated note prose from an\nencounter transcript.",
+            "properties": {
+              "EncounterSummarized": {
+                "properties": {
+                  "clinical_occurred_at": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "encounter_id": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "patient_id": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "sections": {
+                    "$ref": "#/components/schemas/NoteSections"
+                  },
+                  "source_encounter_ids": {
+                    "items": {
+                      "format": "uuid",
+                      "type": "string"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "patient_id",
+                  "encounter_id",
+                  "sections",
+                  "source_encounter_ids",
+                  "clinical_occurred_at"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "EncounterSummarized"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "MedicationRecorded": {
+                "properties": {
+                  "clinical_occurred_at": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "medication": {
+                    "$ref": "#/components/schemas/Medication"
+                  },
+                  "patient_id": {
+                    "format": "uuid",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "patient_id",
+                  "medication",
+                  "clinical_occurred_at"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "MedicationRecorded"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "A clinical result was ingested (manual or FHIR).",
+            "properties": {
+              "ResultReceived": {
+                "properties": {
+                  "clinical_occurred_at": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "patient_id": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "result": {
+                    "$ref": "#/components/schemas/ClinicalResult"
+                  }
+                },
+                "required": [
+                  "patient_id",
+                  "result",
+                  "clinical_occurred_at"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "ResultReceived"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "DiagnosisAssigned": {
+                "properties": {
+                  "clinical_occurred_at": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "diagnosis": {
+                    "$ref": "#/components/schemas/Diagnosis"
+                  },
+                  "patient_id": {
+                    "format": "uuid",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "patient_id",
+                  "diagnosis",
+                  "clinical_occurred_at"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "DiagnosisAssigned"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "DataReviewed": {
+                "properties": {
+                  "clinical_occurred_at": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "patient_id": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "physician_review": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "patient_id",
+                  "physician_review",
+                  "clinical_occurred_at"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "DataReviewed"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Clinician triggered MDM generation.",
+            "properties": {
+              "TriggerMDM": {
+                "properties": {
+                  "clinical_occurred_at": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "patient_id": {
+                    "format": "uuid",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "patient_id",
+                  "clinical_occurred_at"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "TriggerMDM"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "AI produced the MDM from accumulated data.",
+            "properties": {
+              "MdmGenerated": {
+                "properties": {
+                  "clinical_occurred_at": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "mdm_text": {
+                    "type": "string"
+                  },
+                  "patient_id": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "source_encounter_ids": {
+                    "items": {
+                      "format": "uuid",
+                      "type": "string"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "patient_id",
+                  "mdm_text",
+                  "source_encounter_ids",
+                  "clinical_occurred_at"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "MdmGenerated"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "MDM draft is ready for review.",
+            "properties": {
+              "ReviewReady": {
+                "properties": {
+                  "clinical_occurred_at": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "patient_id": {
+                    "format": "uuid",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "patient_id",
+                  "clinical_occurred_at"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "ReviewReady"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Clinician set the disposition.",
+            "properties": {
+              "DispositionSet": {
+                "properties": {
+                  "clinical_occurred_at": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "disposition": {
+                    "$ref": "#/components/schemas/Disposition"
+                  },
+                  "patient_id": {
+                    "format": "uuid",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "patient_id",
+                  "disposition",
+                  "clinical_occurred_at"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "DispositionSet"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Clinician signed the note.",
+            "properties": {
+              "Sign": {
+                "properties": {
+                  "clinical_occurred_at": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "patient_id": {
+                    "format": "uuid",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "patient_id",
+                  "clinical_occurred_at"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "Sign"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "NotePhase": {
+        "description": "Patient note lifecycle — supports cycles (Idle ↔ Encountering).\n\nValid transition graph:\n```text\n  Registered ──AudioStart──▶ Encountering\n                                   │\n                               AudioStop\n                                   │\n                                   ▼\n                                 Idle ◀──────────────┐\n                                ╱    ╲               │\n                      AudioStart    TriggerMDM   AudioStop\n                              ╱          ╲           │\n                             ▼            ▼          │\n                      Encountering    Finalizing ──▶ │\n                                         │\n                                      ReviewReady\n                                         │\n                                         ▼\n                                   PendingSignOff\n                                         │\n                                       Sign\n                                         ▼\n                                       Signed\n```",
+        "oneOf": [
+          {
+            "const": "Registered",
+            "description": "Chart open, no audio yet.",
+            "type": "string"
+          },
+          {
+            "const": "Encountering",
+            "description": "Clinician in room or dictating — audio live.",
+            "type": "string"
+          },
+          {
+            "const": "Idle",
+            "description": "Between encounters — waiting on data or seeing other patients.",
+            "type": "string"
+          },
+          {
+            "const": "Finalizing",
+            "description": "Clinician triggered MDM/dispo — assembling final note.",
+            "type": "string"
+          },
+          {
+            "const": "PendingSignOff",
+            "description": "Draft complete — awaiting clinician review.",
+            "type": "string"
+          },
+          {
+            "const": "Signed",
+            "description": "Terminal state — immutable after this.",
+            "type": "string"
+          }
+        ]
+      },
+      "NoteSectionVersion": {
+        "description": "A versioned note section snapshot — retained for audit trail.",
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "generated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "section": {
+            "type": "string"
+          },
+          "source_encounter_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "version": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "section",
+          "content",
+          "version",
+          "generated_at",
+          "source_encounter_ids"
+        ],
+        "type": "object"
+      },
+      "NoteSections": {
+        "description": "The sections that compose an ED note.",
+        "properties": {
+          "disposition_text": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "exam": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "hpi": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mdm": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ros": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "NoteView": {
+        "description": "The read model for clients. A deliberate DTO (§C1): PatientNote can gain/rename\nfields freely; only NoteView::from must keep up, and the compiler enforces that.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "data_reviewed": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "diagnoses": {
+            "items": {
+              "$ref": "#/components/schemas/Diagnosis"
+            },
+            "type": "array"
+          },
+          "disposition": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Disposition"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "encounter_count": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "exam": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "hpi": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mdm": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "medications": {
+            "items": {
+              "$ref": "#/components/schemas/Medication"
+            },
+            "type": "array"
+          },
+          "patient_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "phase": {
+            "type": "string"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/ClinicalResult"
+            },
+            "type": "array"
+          },
+          "ros": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "version": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "patient_id",
+          "phase",
+          "medications",
+          "diagnoses",
+          "results",
+          "data_reviewed",
+          "encounter_count",
+          "version",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "NoteView",
+        "type": "object"
+      },
+      "PatientNote": {
+        "description": "The complete patient note — the central domain object.\n\nHolds both a `NotePhase` enum (for serialization) and a `Box<dyn NoteState>`\ntrait object (for behavior). They are kept in sync by the `handle_*` methods.",
+        "properties": {
+          "audit_log": {
+            "items": {
+              "$ref": "#/components/schemas/AuditEntry"
+            },
+            "type": "array"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "data_reviewed": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "diagnoses": {
+            "items": {
+              "$ref": "#/components/schemas/Diagnosis"
+            },
+            "type": "array"
+          },
+          "disposition": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Disposition"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "encounter_count": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "encounters": {
+            "items": {
+              "$ref": "#/components/schemas/Encounter"
+            },
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "medication": {
+            "items": {
+              "$ref": "#/components/schemas/Medication"
+            },
+            "type": "array"
+          },
+          "note_sections": {
+            "$ref": "#/components/schemas/NoteSections"
+          },
+          "patient_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "phase": {
+            "$ref": "#/components/schemas/NotePhase",
+            "description": "Serialization representation — serde reads/writes this."
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/ClinicalResult"
+            },
+            "type": "array"
+          },
+          "section_history": {
+            "items": {
+              "$ref": "#/components/schemas/NoteSectionVersion"
+            },
+            "type": "array"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "version": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "patient_id",
+          "phase",
+          "encounter_count",
+          "encounters",
+          "diagnoses",
+          "medication",
+          "data_reviewed",
+          "results",
+          "note_sections",
+          "section_history",
+          "version",
+          "audit_log",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "PatientView": {
+        "properties": {
+          "chief_complaint": {
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "display_label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "patient_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "patient_id",
+          "chief_complaint",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "RegisterPatientRequest": {
+        "description": "PHI-minimal BY CONSTRUCTION (§C1): no name, no age, no MRN — no fields to put them in.\n`display_label` is \"Room 4 – chest pain\" territory, never an identity.",
+        "properties": {
+          "chief_complaint": {
+            "type": "string"
+          },
+          "display_label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "patient_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "patient_id",
+          "chief_complaint"
+        ],
+        "title": "RegisterPatientRequest",
+        "type": "object"
+      },
+      "ResultSource": {
+        "description": "How a result entered the system.",
+        "oneOf": [
+          {
+            "const": "Manual",
+            "description": "Clinician manually entered the value.",
+            "type": "string"
+          },
+          {
+            "const": "FhirPull",
+            "description": "Pulled via FHIR API (future).",
+            "type": "string"
+          },
+          {
+            "const": "Hl7Feed",
+            "description": "Received via HL7 feed (future).",
+            "type": "string"
+          }
+        ]
+      },
+      "ResultType": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "Lab": {
+                "$ref": "#/components/schemas/LabResult"
+              }
+            },
+            "required": [
+              "Lab"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "Imaging": {
+                "$ref": "#/components/schemas/ImagingResult"
+              }
+            },
+            "required": [
+              "Imaging"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "Vital": {
+                "$ref": "#/components/schemas/VitalSign"
+              }
+            },
+            "required": [
+              "Vital"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ShiftView": {
+        "properties": {
+          "ended_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "patients": {
+            "items": {
+              "$ref": "#/components/schemas/PatientView"
+            },
+            "type": "array"
+          },
+          "shift_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "shift_id",
+          "started_at",
+          "status",
+          "patients"
+        ],
+        "title": "ShiftView",
+        "type": "object"
+      },
+      "SnapshotDown": {
+        "properties": {
+          "sequence_id": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "snapshot": {
+            "$ref": "#/components/schemas/PatientNote"
+          }
+        },
+        "required": [
+          "sequence_id",
+          "snapshot"
+        ],
+        "title": "SnapshotDown",
+        "type": "object"
+      },
+      "SnapshotUp": {
+        "properties": {
+          "sequence_id": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "snapshot": {
+            "$ref": "#/components/schemas/PatientNote"
+          }
+        },
+        "required": [
+          "sequence_id",
+          "snapshot"
+        ],
+        "title": "SnapshotUp",
+        "type": "object"
+      },
+      "StatsView": {
+        "properties": {
+          "event_count": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "snapshot_count": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "event_count",
+          "snapshot_count"
+        ],
+        "title": "StatsView",
+        "type": "object"
+      },
+      "VitalSign": {
+        "description": "A vital sign measurement.",
+        "properties": {
+          "unit": {
+            "type": "string"
+          },
+          "value": {
+            "format": "double",
+            "type": "number"
+          },
+          "vital_type": {
+            "$ref": "#/components/schemas/VitalType"
+          }
+        },
+        "required": [
+          "vital_type",
+          "value",
+          "unit"
+        ],
+        "type": "object"
+      },
+      "VitalType": {
+        "enum": [
+          "HeartRate",
+          "BloodPressureSystolic",
+          "BloodPressureDiastolic",
+          "RespiratoryRate",
+          "Temperature",
+          "SpO2",
+          "Pain"
+        ],
+        "type": "string"
+      }
+    },
+    "securitySchemes": {
+      "bearerAuth": {
+        "bearerFormat": "JWT",
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  },
+  "info": {
+    "description": "Synthetic staging contract. 60 requests/minute per clinician, plus 5 MDM and 30 audio intents/minute. Stable event/job/chunk IDs are required on retries. See docs/api-contract.md.",
+    "title": "ER Note API",
+    "version": "1.0.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api-docs": {
+      "get": {
+        "operationId": "operation_21",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Missing/invalid token or inactive/non-physician membership; empty body"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "408": {
+            "description": "Request timeout; empty body"
+          },
+          "409": {
+            "description": "State conflict"
+          },
+          "429": {
+            "description": "Clinician quota exhausted; Retry-After: 60"
+          },
+          "500": {
+            "description": "Internal failure; static error code only"
+          },
+          "503": {
+            "description": "Quota/audit storage unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api-docs/openapi.json": {
+      "get": {
+        "operationId": "operation_20",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "required": [
+                    "openapi",
+                    "info",
+                    "paths"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Missing/invalid token or inactive/non-physician membership; empty body"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "408": {
+            "description": "Request timeout; empty body"
+          },
+          "409": {
+            "description": "State conflict"
+          },
+          "429": {
+            "description": "Clinician quota exhausted; Retry-After: 60"
+          },
+          "500": {
+            "description": "Internal failure; static error code only"
+          },
+          "503": {
+            "description": "Quota/audit storage unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/healthz": {
+      "get": {
+        "operationId": "operation_0",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            },
+            "description": "Success"
+          }
+        }
+      }
+    },
+    "/readyz": {
+      "get": {
+        "operationId": "operation_1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            },
+            "description": "Readiness unavailable"
+          }
+        }
+      }
+    },
+    "/v1/audio/{chunk_id}": {
+      "get": {
+        "operationId": "operation_14",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "chunk_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChunkView"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Missing/invalid token or inactive/non-physician membership; empty body"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "408": {
+            "description": "Request timeout; empty body"
+          },
+          "409": {
+            "description": "State conflict"
+          },
+          "429": {
+            "description": "Clinician quota exhausted; Retry-After: 60"
+          },
+          "500": {
+            "description": "Internal failure; static error code only"
+          },
+          "503": {
+            "description": "Quota/audit storage unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/audio/{chunk_id}/complete": {
+      "post": {
+        "operationId": "operation_13",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "chunk_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChunkView"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Missing/invalid token or inactive/non-physician membership; empty body"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "408": {
+            "description": "Request timeout; empty body"
+          },
+          "409": {
+            "description": "State conflict"
+          },
+          "429": {
+            "description": "Clinician quota exhausted; Retry-After: 60"
+          },
+          "500": {
+            "description": "Internal failure; static error code only"
+          },
+          "503": {
+            "description": "Quota/audit storage unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/jobs/{job_id}": {
+      "get": {
+        "operationId": "operation_11",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobView"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Missing/invalid token or inactive/non-physician membership; empty body"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "408": {
+            "description": "Request timeout; empty body"
+          },
+          "409": {
+            "description": "State conflict"
+          },
+          "429": {
+            "description": "Clinician quota exhausted; Retry-After: 60"
+          },
+          "500": {
+            "description": "Internal failure; static error code only"
+          },
+          "503": {
+            "description": "Quota/audit storage unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/me": {
+      "get": {
+        "operationId": "operation_2",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Me"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Missing/invalid token or inactive/non-physician membership; empty body"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "408": {
+            "description": "Request timeout; empty body"
+          },
+          "409": {
+            "description": "State conflict"
+          },
+          "429": {
+            "description": "Clinician quota exhausted; Retry-After: 60"
+          },
+          "500": {
+            "description": "Internal failure; static error code only"
+          },
+          "503": {
+            "description": "Quota/audit storage unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/patients": {
+      "post": {
+        "operationId": "operation_3",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterPatientRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PatientView"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation, state, media or body rejection; see docs/api-contract.md"
+          },
+          "401": {
+            "description": "Missing/invalid token or inactive/non-physician membership; empty body"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "408": {
+            "description": "Request timeout; empty body"
+          },
+          "409": {
+            "description": "Validation, state, media or body rejection; see docs/api-contract.md"
+          },
+          "413": {
+            "description": "Validation, state, media or body rejection; see docs/api-contract.md"
+          },
+          "415": {
+            "description": "Validation, state, media or body rejection; see docs/api-contract.md"
+          },
+          "422": {
+            "description": "Validation, state, media or body rejection; see docs/api-contract.md"
+          },
+          "429": {
+            "description": "Clinician quota exhausted; Retry-After: 60"
+          },
+          "500": {
+            "description": "Internal failure; static error code only"
+          },
+          "503": {
+            "description": "Quota/audit storage unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/patients/{id}/encounters/{eid}/audio": {
+      "post": {
+        "operationId": "operation_12",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "eid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AudioUploadRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AudioUploadResponse"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation, state, media or body rejection; see docs/api-contract.md"
+          },
+          "401": {
+            "description": "Missing/invalid token or inactive/non-physician membership; empty body"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "408": {
+            "description": "Request timeout; empty body"
+          },
+          "409": {
+            "description": "Validation, state, media or body rejection; see docs/api-contract.md"
+          },
+          "413": {
+            "description": "Validation, state, media or body rejection; see docs/api-contract.md"
+          },
+          "415": {
+            "description": "Validation, state, media or body rejection; see docs/api-contract.md"
+          },
+          "422": {
+            "description": "Validation, state, media or body rejection; see docs/api-contract.md"
+          },
+          "429": {
+            "description": "Clinician quota exhausted; Retry-After: 60"
+          },
+          "500": {
+            "description": "Internal failure; static error code only"
+          },
+          "503": {
+            "description": "Quota/audit storage unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/patients/{id}/events": {
+      "get": {
+        "operationId": "operation_7",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "since",
+            "schema": {
+              "default": 0,
+              "maximum": 18446744073709551615,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 500,
+              "maximum": 1000,
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventsPage"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Missing/invalid token or inactive/non-physician membership; empty body"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "408": {
+            "description": "Request timeout; empty body"
+          },
+          "409": {
+            "description": "State conflict"
+          },
+          "429": {
+            "description": "Clinician quota exhausted; Retry-After: 60"
+          },
+          "500": {
+            "description": "Internal failure; static error code only"
+          },
+          "503": {
+            "description": "Quota/audit storage unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "post": {
+        "operationId": "operation_6",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppendEventsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppendEventsResponse"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation, state, media or body rejection; see docs/api-contract.md"
+          },
+          "401": {
+            "description": "Missing/invalid token or inactive/non-physician membership; empty body"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "408": {
+            "description": "Request timeout; empty body"
+          },
+          "409": {
+            "description": "Validation, state, media or body rejection; see docs/api-contract.md"
+          },
+          "413": {
+            "description": "Validation, state, media or body rejection; see docs/api-contract.md"
+          },
+          "415": {
+            "description": "Validation, state, media or body rejection; see docs/api-contract.md"
+          },
+          "422": {
+            "description": "Validation, state, media or body rejection; see docs/api-contract.md"
+          },
+          "429": {
+            "description": "Clinician quota exhausted; Retry-After: 60"
+          },
+          "500": {
+            "description": "Internal failure; static error code only"
+          },
+          "503": {
+            "description": "Quota/audit storage unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/patients/{id}/mdm": {
+      "post": {
+        "operationId": "operation_10",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MdmRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MdmAccepted"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation, state, media or body rejection; see docs/api-contract.md"
+          },
+          "401": {
+            "description": "Missing/invalid token or inactive/non-physician membership; empty body"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "408": {
+            "description": "Request timeout; empty body"
+          },
+          "409": {
+            "description": "Validation, state, media or body rejection; see docs/api-contract.md"
+          },
+          "413": {
+            "description": "Validation, state, media or body rejection; see docs/api-contract.md"
+          },
+          "415": {
+            "description": "Validation, state, media or body rejection; see docs/api-contract.md"
+          },
+          "422": {
+            "description": "Validation, state, media or body rejection; see docs/api-contract.md"
+          },
+          "429": {
+            "description": "Clinician quota exhausted; Retry-After: 60"
+          },
+          "500": {
+            "description": "Internal failure; static error code only"
+          },
+          "503": {
+            "description": "Quota/audit storage unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/patients/{id}/note": {
+      "get": {
+        "operationId": "operation_4",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteView"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Missing/invalid token or inactive/non-physician membership; empty body"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "408": {
+            "description": "Request timeout; empty body"
+          },
+          "409": {
+            "description": "State conflict"
+          },
+          "429": {
+            "description": "Clinician quota exhausted; Retry-After: 60"
+          },
+          "500": {
+            "description": "Internal failure; static error code only"
+          },
+          "503": {
+            "description": "Quota/audit storage unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/patients/{id}/note/export": {
+      "get": {
+        "operationId": "operation_5",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Missing/invalid token or inactive/non-physician membership; empty body"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "408": {
+            "description": "Request timeout; empty body"
+          },
+          "409": {
+            "description": "State conflict"
+          },
+          "429": {
+            "description": "Clinician quota exhausted; Retry-After: 60"
+          },
+          "500": {
+            "description": "Internal failure; static error code only"
+          },
+          "503": {
+            "description": "Quota/audit storage unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/patients/{id}/snapshot": {
+      "get": {
+        "operationId": "operation_9",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SnapshotDown"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Missing/invalid token or inactive/non-physician membership; empty body"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "408": {
+            "description": "Request timeout; empty body"
+          },
+          "409": {
+            "description": "State conflict"
+          },
+          "429": {
+            "description": "Clinician quota exhausted; Retry-After: 60"
+          },
+          "500": {
+            "description": "Internal failure; static error code only"
+          },
+          "503": {
+            "description": "Quota/audit storage unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "put": {
+        "operationId": "operation_8",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SnapshotUp"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation, state, media or body rejection; see docs/api-contract.md"
+          },
+          "401": {
+            "description": "Missing/invalid token or inactive/non-physician membership; empty body"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "408": {
+            "description": "Request timeout; empty body"
+          },
+          "409": {
+            "description": "Validation, state, media or body rejection; see docs/api-contract.md"
+          },
+          "413": {
+            "description": "Validation, state, media or body rejection; see docs/api-contract.md"
+          },
+          "415": {
+            "description": "Validation, state, media or body rejection; see docs/api-contract.md"
+          },
+          "422": {
+            "description": "Validation, state, media or body rejection; see docs/api-contract.md"
+          },
+          "429": {
+            "description": "Clinician quota exhausted; Retry-After: 60"
+          },
+          "500": {
+            "description": "Internal failure; static error code only"
+          },
+          "503": {
+            "description": "Quota/audit storage unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/shifts": {
+      "post": {
+        "operationId": "operation_15",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShiftView"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Missing/invalid token or inactive/non-physician membership; empty body"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "408": {
+            "description": "Request timeout; empty body"
+          },
+          "409": {
+            "description": "State conflict"
+          },
+          "429": {
+            "description": "Clinician quota exhausted; Retry-After: 60"
+          },
+          "500": {
+            "description": "Internal failure; static error code only"
+          },
+          "503": {
+            "description": "Quota/audit storage unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/shifts/active": {
+      "get": {
+        "operationId": "operation_16",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShiftView"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Missing/invalid token or inactive/non-physician membership; empty body"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "408": {
+            "description": "Request timeout; empty body"
+          },
+          "409": {
+            "description": "State conflict"
+          },
+          "429": {
+            "description": "Clinician quota exhausted; Retry-After: 60"
+          },
+          "500": {
+            "description": "Internal failure; static error code only"
+          },
+          "503": {
+            "description": "Quota/audit storage unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/shifts/{id}": {
+      "get": {
+        "operationId": "operation_17",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShiftView"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Missing/invalid token or inactive/non-physician membership; empty body"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "408": {
+            "description": "Request timeout; empty body"
+          },
+          "409": {
+            "description": "State conflict"
+          },
+          "429": {
+            "description": "Clinician quota exhausted; Retry-After: 60"
+          },
+          "500": {
+            "description": "Internal failure; static error code only"
+          },
+          "503": {
+            "description": "Quota/audit storage unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/shifts/{id}/end": {
+      "post": {
+        "operationId": "operation_18",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShiftView"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Missing/invalid token or inactive/non-physician membership; empty body"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "408": {
+            "description": "Request timeout; empty body"
+          },
+          "409": {
+            "description": "State conflict"
+          },
+          "429": {
+            "description": "Clinician quota exhausted; Retry-After: 60"
+          },
+          "500": {
+            "description": "Internal failure; static error code only"
+          },
+          "503": {
+            "description": "Quota/audit storage unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/stats": {
+      "get": {
+        "operationId": "operation_19",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatsView"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Missing/invalid token or inactive/non-physician membership; empty body"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "408": {
+            "description": "Request timeout; empty body"
+          },
+          "409": {
+            "description": "State conflict"
+          },
+          "429": {
+            "description": "Clinician quota exhausted; Retry-After: 60"
+          },
+          "500": {
+            "description": "Internal failure; static error code only"
+          },
+          "503": {
+            "description": "Quota/audit storage unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    }
+  },
+  "servers": [
+    {
+      "url": "/"
+    }
+  ]
+}
