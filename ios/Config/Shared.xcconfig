@@ -1,0 +1,13 @@
+// Development placeholders, not registered or reserved Apple identifiers.
+ER_NOTE_BUNDLE_ID = org.example.ernote
+ER_NOTE_APP_GROUP = group.$(ER_NOTE_BUNDLE_ID)
+DEVELOPMENT_TEAM =
+CODE_SIGN_STYLE = Automatic
+SWIFT_VERSION = 5.0
+IPHONEOS_DEPLOYMENT_TARGET = 17.0
+WATCHOS_DEPLOYMENT_TARGET = 10.0
+MARKETING_VERSION = 0.1.0
+CURRENT_PROJECT_VERSION = 1
+
+// Local overrides may contain team identifiers, never signing private keys.
+#include? "Local.xcconfig"

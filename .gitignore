@@ -86,3 +86,13 @@ terraform.rc
 /load-summary.json
 /load/credentials*.json
 /load/results/
+
+# Apple development artifacts and local signing configuration.
+/ios/**/.build/
+/ios/**/.swiftpm/
+/ios/**/xcuserdata/
+/ios/**/*.xcuserstate
+/ios/DerivedData/
+/ios/ErNoteKit/Artifacts/
+/ios/Config/Local.xcconfig
+/ios/**/*.mobileprovision
