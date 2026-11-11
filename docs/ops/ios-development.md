@@ -2,6 +2,11 @@
 
 ## Current status
 
+Step 1 bridge sources, generated bindings, packaging, and CI wiring are now
+implemented. See the [Step 1 implementation record](phase5-step1-implementation.md)
+for the API, build commands, verified Linux results, and outstanding Apple gates.
+Build the ignored XCFramework before opening the phone project from a clean checkout.
+
 Part 0 source preparation is underway on Linux. SwiftUI compilation,
 simulator execution, signing, and physical-device installation have not
 been verified. The Xcode project and shared schemes now wire the source
@@ -115,13 +120,16 @@ IOS_SIMULATOR_UDID. Then run:
 The script rejects unsupported hosts, mismatched Xcode versions, and
 missing Rust targets. It reads the existing Rust pin and iOS deployment
 floor, builds separate device and arm64 simulator static-library probes,
-tests the Swift package, builds Debug and Release simulator shells, and
-runs the app-hosted tests. Output goes to ignored target/apple-probe,
-SwiftPM build directories, and ios/DerivedData.
+builds the real Step 1 XCFramework, builds Debug and Release simulator shells,
+and runs app-hosted tests (including the fixture package tests). ErNoteKit now
+contains iOS-only binary slices, so host macOS `swift test` is unsupported.
+Output goes to ignored target/apple-probe, target/apple-bridge,
+ios/ErNoteKit/Artifacts, SwiftPM build directories, and ios/DerivedData.
 
 The Rust probe is not linked into the phone and proves no application
-dependency compatibility. Step 1 replaces that limited proof with real
-bridge linking and optimized simulator tests. Step 2 repeats the Apple
+dependency compatibility. The Step 1 bridge is linked into the phone;
+run `scripts/check-bridge-apple.sh` to additionally check production Release
+linking and the isolated optimized panic artifact. Step 2 repeats the Apple
 build with the full device graph and bundled SQLite.
 
 The Mac toolchain pin remains an external setup gate until actual values
@@ -137,9 +145,9 @@ required-reason API use. Re-audit the manifests when Rust dependencies,
 storage, capture, authentication, or telemetry are integrated. The final
 Apple build and privacy report remain verification gates.
 
-Linux whitespace checks do not establish Swift compilation or test success.
-On the Mac, run both the package tests and app-hosted simulator
-tests; a host-only Swift package test cannot validate an iOS XCFramework.
+Linux checks do not establish Swift compilation or test success.
+On the Mac, run the app-hosted simulator checks; these include the package
+fixture tests. A host-only Swift package test cannot validate an iOS XCFramework.
 
 Before selecting Xcode, verify compatibility with the installed macOS.
 Record the exact Xcode build and SDKs rather than silently selecting
@@ -149,9 +157,10 @@ No Rust watchOS target is required.
 
 Remaining Part 0 gates include running the Apple probe and simulator
 checks, recording the verified toolchain, confirming accounts/identifiers
-and hardware, and signed device installation. Step 1 adds the pinned UniFFI runtime and
-generator, sanitized errors, panic tests, generated bindings,
-XCFramework packaging, dependency checks, and Apple CI.
+and hardware, and signed device installation. Step 1 has added the pinned UniFFI
+runtime and generator, sanitized errors, panic tests, generated bindings,
+XCFramework packaging, dependency checks, and Apple CI source configuration.
+Actual Apple execution and signed-phone evidence remain outstanding.
 
 References:
 - [Apple backup exclusion](https://developer.apple.com/documentation/foundation/optimizing-your-app-s-data-for-icloud-backup)

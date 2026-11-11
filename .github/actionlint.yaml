@@ -1,0 +1,5 @@
+# actionlint 1.7.7 predates this GitHub-hosted image. Its custom-label setting
+# extends validation only; the workflow still uses a hosted macos-26 runner.
+self-hosted-runner:
+  labels:
+    - macos-26

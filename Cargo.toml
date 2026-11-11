@@ -28,6 +28,7 @@ dashmap = "6"
 regex = "1"
 dotenvy = "0.15"
 sha2 = "0.10"
+uniffi = { version = "=0.32.2", default-features = false }
 
 #aws deps
 aws-config = "1"
@@ -52,5 +53,11 @@ er-api = { path = "crates/er-api" }
 # Platform-specific (added behind feature flags when needed)
 # cpal = "0.15"        # Audio capture (iOS support experimental)
 # whisper-rs = "0.12"  # On-device STT
-# uniffi = "0.28"      # Swift/Kotlin FFI bridge
 # aes-gcm = "0.10"     # Encryption at rest
+
+# The shipped phone bridge must unwind into its typed error guard.
+[profile.ios-release]
+inherits = "release"
+panic = "unwind"
+debug = "line-tables-only"
+strip = "none"

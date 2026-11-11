@@ -1,0 +1,4 @@
+[bindings.swift]
+module_name = "RustBridge"
+ffi_module_name = "RustCoreFFI"
+generate_immutable_records = true

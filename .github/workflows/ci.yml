@@ -31,6 +31,54 @@ env:
   AWS_SHARED_CREDENTIALS_FILE: /dev/null
 
 jobs:
+  bridge-linux:
+    name: Bridge Linux
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust components
+        run: |
+          rustup show active-toolchain
+          rustup component add rustfmt clippy
+      - name: Bridge, binding drift, privacy and dependency gates
+        run: scripts/check-bridge-linux.sh
+
+  bridge-apple:
+    name: Bridge Apple
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      EXPECTED_XCODE_VERSION: '26.6'
+      EXPECTED_XCODE_BUILD: '17F113'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust Apple targets
+        run: |
+          rustup show active-toolchain
+          rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+      - name: Select an available iPhone simulator
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess
+          devices = json.loads(subprocess.check_output(
+              ['xcrun', 'simctl', 'list', 'devices', 'available', '--json']))['devices']
+          phones = [device for runtime, values in sorted(devices.items())
+                    if '.iOS-' in runtime for device in values
+                    if device['isAvailable'] and device['name'].startswith('iPhone')]
+          if not phones:
+              raise SystemExit('No iPhone simulator is installed')
+          with open(os.environ['GITHUB_ENV'], 'a') as output:
+              output.write('IOS_SIMULATOR_UDID=' + phones[-1]['udid'] + '\n')
+          PY
+      - name: Production and isolated optimized panic smoke tests
+        run: scripts/check-bridge-apple.sh
+
   application:
     name: Application
     runs-on: ubuntu-24.04
@@ -103,7 +151,7 @@ jobs:
   required:
     name: Required CI
     if: always()
-    needs: [application, security, infrastructure, image]
+    needs: [application, security, infrastructure, image, bridge-linux, bridge-apple]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -113,8 +161,12 @@ jobs:
           SECURITY: ${{ needs.security.result }}
           INFRASTRUCTURE: ${{ needs.infrastructure.result }}
           IMAGE: ${{ needs.image.result }}
+          BRIDGE_LINUX: ${{ needs.bridge-linux.result }}
+          BRIDGE_APPLE: ${{ needs.bridge-apple.result }}
         run: |
           test "$APPLICATION" = success
           test "$SECURITY" = success
           test "$INFRASTRUCTURE" = success
           test "$IMAGE" = success
+          test "$BRIDGE_LINUX" = success
+          test "$BRIDGE_APPLE" = success

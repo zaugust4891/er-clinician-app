@@ -1,5 +1,5 @@
 import XCTest
-@testable import ErNoteKit
+import ErNoteKit
 
 #if DEBUG
 final class FixtureDeviceServiceTests: XCTestCase {

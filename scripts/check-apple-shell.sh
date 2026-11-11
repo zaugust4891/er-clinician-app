@@ -54,8 +54,9 @@ for target in aarch64-apple-ios aarch64-apple-ios-sim; do
         ios/ToolchainProbe/lib.rs
 done
 
-xcrun swift test --package-path ios/ErNoteKit
-xcrun swift build --package-path ios/ErNoteKit --configuration release
+# ErNoteKit now contains an iOS-only XCFramework. Run its tests in the
+# app-hosted simulator target below, not with host macOS `swift test`.
+scripts/build-xcframework.sh --check
 
 project="$repo_root/ios/ErNote.xcodeproj"
 derived_data="$repo_root/ios/DerivedData"

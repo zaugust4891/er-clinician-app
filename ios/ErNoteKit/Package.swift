@@ -3,10 +3,11 @@ import PackageDescription
 
 let package = Package(
     name: "ErNoteKit",
-    platforms: [.iOS(.v17), .watchOS(.v10), .macOS(.v13)],
+    platforms: [.iOS(.v17)],
     products: [.library(name: "ErNoteKit", targets: ["ErNoteKit"])],
     targets: [
-        .target(name: "ErNoteKit"),
+        .binaryTarget(name: "RustCoreFFI", path: "Artifacts/RustCore.xcframework"),
+        .target(name: "ErNoteKit", dependencies: ["RustCoreFFI"]),
         .testTarget(name: "ErNoteKitTests", dependencies: ["ErNoteKit"])
     ]
 )

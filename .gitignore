@@ -94,5 +94,6 @@ terraform.rc
 /ios/**/*.xcuserstate
 /ios/DerivedData/
 /ios/ErNoteKit/Artifacts/
+/ios/ErNoteKit/Artifacts.previous/
 /ios/Config/Local.xcconfig
 /ios/**/*.mobileprovision

@@ -1,9 +1,9 @@
 import Foundation
 import XCTest
 import ErNoteKit
+#if DEBUG
 @testable import ErNote
 
-#if DEBUG
 final class WorkspaceModelTests: XCTestCase {
     @MainActor
     func testFailedEditsSurviveRefreshSwitchAndRetry() async throws {

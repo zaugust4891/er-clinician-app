@@ -63,11 +63,11 @@
 		00000000000000000000003C /* ErNoteWidget configs */ = { isa = "XCConfigurationList"; buildConfigurations = ("00000000000000000000003A", "00000000000000000000003B"); defaultConfigurationIsVisible = "0"; defaultConfigurationName = "Release"; };
 		00000000000000000000003E /* WorkspaceModelTests */ = { isa = "PBXFileReference"; lastKnownFileType = "sourcecode.swift"; path = "WorkspaceModelTests.swift"; sourceTree = "<group>"; };
 		00000000000000000000003F /* WorkspaceModelTests build */ = { isa = "PBXBuildFile"; fileRef = "00000000000000000000003E"; };
-		000000000000000000000040 /* ErNoteTests group */ = { isa = "PBXGroup"; children = ("00000000000000000000003E"); path = "ErNoteTests"; sourceTree = "<group>"; };
+		000000000000000000000040 /* ErNoteTests group */ = { isa = "PBXGroup"; children = ("00000000000000000000003E", "000000000000000000000055", "000000000000000000000057"); path = "ErNoteTests"; sourceTree = "<group>"; };
 		000000000000000000000041 /* ErNoteTests product */ = { isa = "PBXFileReference"; explicitFileType = "wrapper.cfbundle"; includeInIndex = "0"; path = "ErNoteTests.xctest"; sourceTree = "BUILT_PRODUCTS_DIR"; };
 		000000000000000000000042 /* ErNoteTests package */ = { isa = "XCSwiftPackageProductDependency"; package = "000000000000000000000006"; productName = "ErNoteKit"; };
 		000000000000000000000043 /* ErNoteTests package build */ = { isa = "PBXBuildFile"; productRef = "000000000000000000000042"; };
-		000000000000000000000044 /* ErNoteTests sources */ = { isa = "PBXSourcesBuildPhase"; buildActionMask = "2147483647"; files = ("00000000000000000000003F"); runOnlyForDeploymentPostprocessing = "0"; };
+		000000000000000000000044 /* ErNoteTests sources */ = { isa = "PBXSourcesBuildPhase"; buildActionMask = "2147483647"; files = ("00000000000000000000003F", "000000000000000000000056", "000000000000000000000058"); runOnlyForDeploymentPostprocessing = "0"; };
 		000000000000000000000045 /* ErNoteTests frameworks */ = { isa = "PBXFrameworksBuildPhase"; buildActionMask = "2147483647"; files = ("000000000000000000000043"); runOnlyForDeploymentPostprocessing = "0"; };
 		000000000000000000000046 /* ErNoteTests resources */ = { isa = "PBXResourcesBuildPhase"; buildActionMask = "2147483647"; files = (); runOnlyForDeploymentPostprocessing = "0"; };
 		000000000000000000000047 /* ErNoteTests ErNote proxy */ = { isa = "PBXContainerItemProxy"; containerPortal = "000000000000000000000001"; proxyType = "1"; remoteGlobalIDString = "000000000000000000000007"; remoteInfo = "ErNote"; };
@@ -88,6 +88,10 @@
 		000000000000000000000053 /* project configs */ = { isa = "XCConfigurationList"; buildConfigurations = ("000000000000000000000051", "000000000000000000000052"); defaultConfigurationIsVisible = "0"; defaultConfigurationName = "Release"; };
 		000000000000000000000001 /* project */ = { isa = "PBXProject"; attributes = { BuildIndependentTargetsInParallel = "YES"; TargetAttributes = { 00000000000000000000003D = { TestTargetID = "000000000000000000000007"; }; }; }; buildConfigurationList = "000000000000000000000053"; compatibilityVersion = "Xcode 15.0"; developmentRegion = "en"; hasScannedForEncodings = "0"; knownRegions = ("en", "Base"); mainGroup = "000000000000000000000002"; packageReferences = ("000000000000000000000006"); productRefGroup = "000000000000000000000003"; projectDirPath = ""; projectRoot = ""; targets = ("000000000000000000000007", "00000000000000000000001D", "000000000000000000000020", "00000000000000000000003D"); };
 		000000000000000000000054 /* ErNoteWidget source */ = { isa = "PBXFileReference"; lastKnownFileType = "sourcecode.swift"; path = "ErNoteWidget.swift"; sourceTree = "<group>"; };
+		000000000000000000000055 /* BridgeSmokeTests */ = { isa = "PBXFileReference"; lastKnownFileType = "sourcecode.swift"; path = "BridgeSmokeTests.swift"; sourceTree = "<group>"; };
+		000000000000000000000056 /* BridgeSmokeTests build */ = { isa = "PBXBuildFile"; fileRef = "000000000000000000000055"; };
+		000000000000000000000057 /* FixtureDeviceServiceTests */ = { isa = "PBXFileReference"; lastKnownFileType = "sourcecode.swift"; path = "../ErNoteKit/Tests/ErNoteKitTests/FixtureDeviceServiceTests.swift"; sourceTree = "<group>"; };
+		000000000000000000000058 /* FixtureDeviceServiceTests build */ = { isa = "PBXBuildFile"; fileRef = "000000000000000000000057"; };
 	};
 	rootObject = 000000000000000000000001;
 }
