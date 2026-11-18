@@ -1,6 +1,7 @@
 use super::*;
-use crate::sync::{Action, Answer, SyncView};
+use crate::sync::{Action, Answer, AudioJob, SyncView};
 use er_api::{CaptureAuditV1, CaptureAuditView, ConsentAudit, SegmentAudit};
+use er_store::audio::ChunkState;
 use er_store::sync::{RemoteEvent, SyncBinding, SyncLedger};
 
 impl DeviceCore {
@@ -22,6 +23,7 @@ impl DeviceCore {
                 if count.conflicts == 0
                     && (count.queued > 0
                         || count.awaiting_download > 0
+                        || self.repo.audio_work_pending(v.patient.id)?
                         || p.is_none_or(|p| {
                             !p.registered
                                 || !p.audit_loaded
@@ -127,6 +129,7 @@ impl DeviceCore {
                 awaiting += counts.awaiting_download;
                 conflicts += counts.conflicts;
                 let p = l.patients.get(&v.patient.id);
+                pending |= self.repo.audio_work_pending(v.patient.id)?;
                 pending |= p.is_none_or(|p| {
                     !p.registered
                         || !p.audit_loaded
@@ -247,6 +250,11 @@ impl DeviceCore {
                             audit: audit(v),
                         },
                     })
+                } else if let Some(action) = self.next_audio_action(id)? {
+                    // Reached only with this patient's event queue empty, so the
+                    // segment's AudioStarted/AudioStopped are already on the
+                    // server and its TranscriptReady can never precede them.
+                    Some(action)
                 } else {
                     p.push_next = false;
                     p.next_poll_ms = now
@@ -340,7 +348,7 @@ impl DeviceCore {
                 if page
                     .events
                     .iter()
-                    .any(|e| e.occurred_at != e.event.clinical_occurred_at())
+                    .any(|e| !same_server_instant(e.occurred_at, e.event.clinical_occurred_at()))
                 {
                     return Err(Error::Recovery);
                 }
@@ -356,7 +364,50 @@ impl DeviceCore {
                 self.repo
                     .receive_page(patient, cursor, &rows, page.has_more, l)?;
                 self.rebuild_synchronized_notes()?;
+                // A page may carry a segment's TranscriptReady.
+                self.release_transcribed_audio()?;
                 return Ok(());
+            }
+            Answer::AudioUploaded(chunk) => {
+                self.repo.set_audio_state(
+                    chunk,
+                    &[ChunkState::Queued],
+                    ChunkState::Uploaded,
+                    None,
+                )?;
+            }
+            Answer::AudioReupload(chunk) => {
+                self.repo.set_audio_state(
+                    chunk,
+                    &[ChunkState::Uploaded],
+                    ChunkState::Queued,
+                    Some("object_missing_on_server"),
+                )?;
+            }
+            Answer::AudioCompleted(job, view) => {
+                let agrees = view.chunk_id == job.chunk_id
+                    && view.encounter_id == job.segment
+                    && view.chunk_index == job.index
+                    && view.is_final == job.is_final;
+                let (to, reason) = if agrees {
+                    (ChunkState::Completed, None)
+                } else {
+                    (ChunkState::Rejected, Some("server_disagrees"))
+                };
+                self.repo
+                    .set_audio_state(job.chunk_id, &[ChunkState::Uploaded], to, reason)?;
+            }
+            Answer::AudioRetry(chunk, reason) => {
+                self.repo.note_audio_retry(chunk, reason)?;
+                return self.sync_failure("upload_retrying", 2_000);
+            }
+            Answer::AudioRejected(chunk, reason) => {
+                self.repo.set_audio_state(
+                    chunk,
+                    &[ChunkState::Queued, ChunkState::Uploaded],
+                    ChunkState::Rejected,
+                    Some(reason),
+                )?;
             }
             Answer::Acknowledged(patient, sent, response) => {
                 if response.results.is_empty() {
@@ -629,6 +680,30 @@ impl DeviceCore {
         }
         Ok(())
     }
+    /// One chunk's next network step, in index order within sealed segments.
+    fn next_audio_action(&self, patient: Uuid) -> Result<Option<Action>> {
+        let Some(chunk) = self.repo.next_audio_work(patient)? else {
+            return Ok(None);
+        };
+        let job = AudioJob {
+            chunk_id: chunk.chunk_id,
+            segment: chunk.segment_id,
+            index: chunk.chunk_index.ok_or(Error::Recovery)?,
+            is_final: chunk.is_final,
+            content_type: chunk.content_type,
+            path: self.audio_dir.join(&chunk.file_name),
+            byte_len: chunk.byte_len,
+            sha256: chunk.sha256,
+        };
+        Ok(Some(match chunk.state {
+            ChunkState::Queued => Action::UploadAudio {
+                patient,
+                chunk: job,
+            },
+            ChunkState::Uploaded => Action::CompleteAudio { chunk: job },
+            _ => return Err(Error::Recovery),
+        }))
+    }
     pub fn sync_conflicts(&self, patient: Uuid) -> Result<Vec<(String, String)>> {
         self.locate(patient)?;
         Ok(self.repo.sync_conflicts(patient)?)
@@ -673,6 +748,14 @@ fn audit(v: &Visit) -> CaptureAuditV1 {
             .collect(),
     }
 }
+/// The server's time column is Postgres `timestamptz`, which keeps microseconds
+/// (sqlx truncates when binding), while the event body keeps whatever precision
+/// its author used. Worker-authored events carry nanoseconds, so compare at the
+/// column's precision and no coarser.
+fn same_server_instant(column: DateTime<Utc>, event: DateTime<Utc>) -> bool {
+    use chrono::SubsecRound;
+    column == event || column == event.trunc_subsecs(6)
+}
 fn valid_pending(note: &PatientNote, event: &NoteEvent) -> bool {
     if note.phase == NotePhase::Signed {
         return false;
@@ -698,5 +781,23 @@ fn valid_pending(note: &PatientNote, event: &NoteEvent) -> bool {
         | NoteEvent::MdmGenerated { .. }
         | NoteEvent::TriggerMDM { .. } => false,
         _ => true,
+    }
+}
+
+#[cfg(test)]
+mod precision_tests {
+    use super::same_server_instant;
+    use chrono::{DateTime, Utc};
+
+    #[test]
+    fn server_time_matches_at_microsecond_precision_only() {
+        let event: DateTime<Utc> = "2026-11-18T21:35:50.596424934Z".parse().unwrap();
+        let column: DateTime<Utc> = "2026-11-18T21:35:50.596424Z".parse().unwrap();
+        assert!(same_server_instant(column, event));
+        assert!(same_server_instant(event, event));
+        let other: DateTime<Utc> = "2026-11-18T21:35:50.596425Z".parse().unwrap();
+        assert!(!same_server_instant(other, event));
+        let milli: DateTime<Utc> = "2026-11-18T21:35:50.596Z".parse().unwrap();
+        assert!(!same_server_instant(milli, event));
     }
 }

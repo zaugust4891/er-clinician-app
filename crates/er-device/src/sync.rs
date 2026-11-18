@@ -113,6 +113,28 @@ pub(crate) enum Action {
         local: Uuid,
         remote: Uuid,
     },
+    /// Mint (or re-mint) the upload intent and PUT the verified bytes. The
+    /// presigned URL lives only inside this action; it is never stored.
+    UploadAudio {
+        patient: Uuid,
+        chunk: AudioJob,
+    },
+    /// Ask the server to verify the object and queue transcription. Retried with
+    /// the same chunk ID until it answers.
+    CompleteAudio {
+        chunk: AudioJob,
+    },
+}
+#[derive(Clone)]
+pub(crate) struct AudioJob {
+    pub chunk_id: Uuid,
+    pub segment: Uuid,
+    pub index: u32,
+    pub is_final: bool,
+    pub content_type: String,
+    pub path: std::path::PathBuf,
+    pub byte_len: u64,
+    pub sha256: String,
 }
 pub(crate) enum Answer {
     Discovered(Option<Uuid>, Option<er_api::ShiftView>),
@@ -124,6 +146,57 @@ pub(crate) enum Answer {
     AuditRead(Uuid, CaptureAuditView),
     AuditSaved(Uuid, CaptureAuditV1, CaptureAuditView),
     Ended(Uuid, er_api::ShiftView),
+    AudioUploaded(Uuid),
+    AudioCompleted(AudioJob, ChunkView),
+    /// The server has no object (or no row) for an uploaded chunk: PUT again.
+    AudioReupload(Uuid),
+    /// A transient failure the next round retries, with the reason kept visible.
+    AudioRetry(Uuid, &'static str),
+    /// A permanent refusal for this chunk.
+    AudioRejected(Uuid, &'static str),
+}
+/// Server refusal codes are static; anything else is recorded generically.
+fn refusal_code(message: &str) -> &'static str {
+    const KNOWN: &[&str] = &[
+        "chunk_index_taken",
+        "final_chunk_already_set",
+        "chunk_id_mismatch",
+        "content_type_unsupported",
+        "chunk_index_too_large",
+        "chunk_content_type_mismatch",
+        "chunk_empty",
+        "chunk_too_large",
+        "chunk_length_missing",
+        "chunk_etag_missing",
+        "chunk_version_missing",
+    ];
+    KNOWN
+        .iter()
+        .find(|k| **k == message)
+        .copied()
+        .unwrap_or("server_refused")
+}
+/// 400/409-class answers belong to one chunk, not to the whole sync session.
+/// 401, 404, 429 and transport failures keep their usual session handling.
+fn audio_refusal(chunk: Uuid, e: StoreError) -> std::result::Result<Answer, StoreError> {
+    match e {
+        StoreError::Remote {
+            status: 400 | 409 | 413 | 422,
+            message,
+        } => Ok(Answer::AudioRejected(chunk, refusal_code(&message))),
+        other => Err(other),
+    }
+}
+/// Read the chunk and prove it is the file that was validated at hand-off.
+fn read_verified(job: &AudioJob) -> std::result::Result<Vec<u8>, &'static str> {
+    use sha2::Digest;
+    let bytes = std::fs::read(&job.path).map_err(|_| "file_missing")?;
+    if bytes.len() as u64 != job.byte_len
+        || format!("{:x}", sha2::Sha256::digest(&bytes)) != job.sha256
+    {
+        return Err("file_changed");
+    }
+    Ok(bytes)
 }
 impl Action {
     async fn perform(self, api: &ServerApi) -> std::result::Result<Answer, StoreError> {
@@ -164,6 +237,47 @@ impl Action {
                 Answer::AuditSaved(patient, sent, api.save_capture_audit(patient, &body).await?)
             }
             Self::End { local, remote } => Answer::Ended(local, api.end_shift(remote).await?),
+            Self::UploadAudio { patient, chunk } => {
+                let bytes = match read_verified(&chunk) {
+                    Ok(bytes) => bytes,
+                    Err(reason) => return Ok(Answer::AudioRejected(chunk.chunk_id, reason)),
+                };
+                let request = AudioUploadRequest {
+                    chunk_id: chunk.chunk_id,
+                    chunk_index: chunk.index,
+                    is_final: chunk.is_final,
+                    content_type: chunk.content_type.clone(),
+                };
+                let intent = match api
+                    .request_audio_upload(patient, chunk.segment, &request)
+                    .await
+                {
+                    Ok(intent) => intent,
+                    Err(e) => return audio_refusal(chunk.chunk_id, e),
+                };
+                if intent.chunk_id != chunk.chunk_id {
+                    return Ok(Answer::AudioRetry(chunk.chunk_id, "intent_mismatch"));
+                }
+                // `put_presigned` already strips the URL from its errors.
+                match api
+                    .put_presigned(&intent.upload_url, bytes, &chunk.content_type)
+                    .await
+                {
+                    Ok(()) => Answer::AudioUploaded(chunk.chunk_id),
+                    Err(_) => Answer::AudioRetry(chunk.chunk_id, "upload_failed"),
+                }
+            }
+            Self::CompleteAudio { chunk } => match api.complete_audio(chunk.chunk_id).await {
+                Ok(view) => Answer::AudioCompleted(chunk, view),
+                Err(StoreError::Remote { status: 404, .. }) => {
+                    Answer::AudioReupload(chunk.chunk_id)
+                }
+                Err(StoreError::Remote {
+                    status: 409,
+                    message,
+                }) if message == "chunk_not_uploaded" => Answer::AudioReupload(chunk.chunk_id),
+                Err(e) => return audio_refusal(chunk.chunk_id, e),
+            },
         })
     }
 }

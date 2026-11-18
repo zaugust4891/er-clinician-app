@@ -1,4 +1,5 @@
-//! Offline phone composition. Hardware, auth, transport and generation are later steps.
+//! Phone composition: offline core, sync, and the audio chunk hand-off. Generation is a later step.
+pub mod audio;
 pub mod core;
 pub mod handle;
 pub mod views;
@@ -6,6 +7,8 @@ pub use core::{CaptureAdapter, DeviceConfig, DeviceCore};
 pub use er_store::device::{ConsentStatus, ContextCategory, DefinitionKind, RecorderStatus};
 pub use handle::{DeviceHandle, DeviceListener};
 pub use views::*;
+#[cfg(test)]
+mod audio_tests;
 #[cfg(test)]
 mod tests;
 

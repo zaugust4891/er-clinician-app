@@ -1,3 +1,5 @@
+#[path = "audio_core.rs"]
+mod audio_core;
 #[path = "sync_core.rs"]
 mod sync_core;
 use crate::{DeviceError as Error, Result, views::*};
@@ -8,7 +10,7 @@ use er_store::{Repository, SqliteRepository, device::*};
 use std::{
     collections::{HashMap, HashSet},
     fs::{File, OpenOptions},
-    path::Path,
+    path::{Path, PathBuf},
     sync::Arc,
 };
 use tokio::runtime::Runtime;
@@ -20,11 +22,16 @@ pub struct DeviceConfig {
     pub account_scope: String,
 }
 
-/// Rust-only seam. The production bridge exports no recording commands in Step 2.
+/// The platform recorder. Rust-only until the Swift adapter is exported; the
+/// file hand-off contract is documented in [`crate::audio`].
 pub trait CaptureAdapter: Send {
     fn available(&self) -> bool;
-    fn start(&mut self, patient: Uuid, segment: Uuid, solo: bool) -> Result<()>;
-    /// Must release capture before returning, including on an error.
+    /// Begin a new segment. Write its chunk files into `directory`, named for
+    /// `segment`, and nowhere else.
+    fn start(&mut self, patient: Uuid, segment: Uuid, solo: bool, directory: &Path) -> Result<()>;
+    /// Must release capture before returning, including on an error, and must
+    /// first rename every finished chunk (including the trailing partial one)
+    /// into place: the core seals the segment right after this returns.
     fn stop(&mut self) -> Result<()>;
 }
 struct UnavailableCapture;
@@ -32,7 +39,7 @@ impl CaptureAdapter for UnavailableCapture {
     fn available(&self) -> bool {
         false
     }
-    fn start(&mut self, _: Uuid, _: Uuid, _: bool) -> Result<()> {
+    fn start(&mut self, _: Uuid, _: Uuid, _: bool, _: &Path) -> Result<()> {
         Err(Error::InvalidState)
     }
     fn stop(&mut self) -> Result<()> {
@@ -49,6 +56,7 @@ pub struct DeviceCore {
     runtime: Runtime,
     _ownership: File,
     capture: Box<dyn CaptureAdapter>,
+    audio_dir: PathBuf,
     // Hardware is stopped before a possibly failing write. Retain the SAME event
     // ID/body for retry. On process death the persisted unfinished segment wins.
     pending: Option<(Uuid, NoteEvent, DeviceState)>,
@@ -108,6 +116,7 @@ impl DeviceCore {
             .map_err(|_| Error::Storage)?;
         ownership.try_lock().map_err(|_| Error::Busy)?;
         let canonical = path.canonicalize().map_err(|_| Error::Storage)?;
+        let audio_dir = audio_core::audio_directory_for(&canonical)?;
         let repo = Arc::new(SqliteRepository::new(er_store::db::open_db(
             canonical.to_str().ok_or(Error::InvalidInput)?,
         )?));
@@ -127,11 +136,15 @@ impl DeviceCore {
             runtime,
             _ownership: ownership,
             capture,
+            audio_dir,
             pending: None,
             consent_stop_requested: HashSet::new(),
         };
         core.rebuild_synchronized_notes()?;
         core.validate_and_load()?;
+        // Chunks finished before a crash are picked up now. A file problem must
+        // not block access to the clinical record; the audio view reports it.
+        let _ = core.settle_audio();
         Ok(core)
     }
 
@@ -544,7 +557,8 @@ impl DeviceCore {
         let consent_revision = visit.consents.last().map_or(0, |c| c.revision);
         let mode = visit.mode.clone();
         let segment = Uuid::now_v7();
-        self.capture.start(patient, segment, solo)?;
+        self.capture
+            .start(patient, segment, solo, &self.audio_dir)?;
         let (_, v) = self.locate(patient)?;
         let mut staged = self.state.clone();
         staged.last_control_at_ms = at_ms;
@@ -605,15 +619,19 @@ impl DeviceCore {
         let (id, event, staged) = self.pending.clone().ok_or(Error::Recovery)?;
         self.commit(staged, Some((id, event)))?;
         self.pending = None;
+        // The stop is committed; sealing is retried on the next settle if this fails.
+        let _ = self.settle_audio();
         Ok(())
     }
-    /// Recovery requires an evidence-backed stop boundary, supplied by the Rust
-    /// test harness now and the hardware manifest policy in Step 4.
+    /// Recovery requires an evidence-backed stop boundary: it may not end before
+    /// the last chunk the recorder handed over. [`Self::recover_interrupted`]
+    /// derives that boundary from the chunk files.
     pub fn reconcile_interrupted(&mut self, patient: Uuid, at_ms: i64) -> Result<()> {
         timestamp(at_ms)?;
         if self.visit(patient)?.recorder != RecorderStatus::Interrupted {
             return Err(Error::InvalidState);
         }
+        self.check_interruption_boundary(patient, at_ms)?;
         let (s, v) = self.locate(patient)?;
         let mut staged = self.state.clone();
         let visit = &mut staged.shifts[s].visits[v];
@@ -636,7 +654,9 @@ impl DeviceCore {
                     clinical_occurred_at: timestamp(at_ms)?,
                 },
             )),
-        )
+        )?;
+        let _ = self.settle_audio();
+        Ok(())
     }
     fn stop_if_active(&mut self, at_ms: i64, reason: &str) -> Result<()> {
         if let Some(p) = self.active_patient() {

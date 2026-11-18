@@ -39,6 +39,16 @@ pub struct DeviceHandle {
 }
 impl DeviceHandle {
     pub fn open(config: DeviceConfig) -> Result<Self> {
+        Self::open_inner(move || DeviceCore::open(config))
+    }
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn open_with_capture(
+        config: DeviceConfig,
+        capture: Box<dyn crate::CaptureAdapter>,
+    ) -> Result<Self> {
+        Self::open_inner(move || DeviceCore::open_with_capture(config, capture))
+    }
+    fn open_inner(open: impl FnOnce() -> Result<DeviceCore> + Send + 'static) -> Result<Self> {
         let (tx, rx) = mpsc::sync_channel::<Command>(64);
         let (ready_tx, ready_rx) = mpsc::channel();
         let status = Arc::new(AtomicU8::new(OPEN));
@@ -46,7 +56,7 @@ impl DeviceHandle {
         let owner = thread::Builder::new()
             .name("er-device-commands".into())
             .spawn(move || {
-                let opened = catch_unwind(AssertUnwindSafe(|| DeviceCore::open(config)));
+                let opened = catch_unwind(AssertUnwindSafe(open));
                 let mut core = match opened {
                     Ok(Ok(core)) => {
                         let _ = ready_tx.send(Ok(()));

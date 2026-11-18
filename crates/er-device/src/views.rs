@@ -127,3 +127,28 @@ pub struct ObjectiveView {
     pub source: String,
     pub clinical_at_ms: Option<i64>,
 }
+
+/// Where the phone's audio chunks are. Counts only: no audio, file names or URLs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AudioView {
+    /// Directory the recorder writes chunk files into.
+    pub directory: String,
+    /// Recorded and owned by the core, waiting for the network.
+    pub awaiting_upload: u64,
+    /// Accepted by the server; the local file is kept until its transcript arrives.
+    pub awaiting_transcript: u64,
+    /// Transcribed by the server; local file deleted.
+    pub processed: u64,
+    /// Refused locally or by the server. Needs attention; never silently dropped.
+    pub rejected: u64,
+    /// Finished files waiting behind an earlier chunk that has not arrived yet.
+    pub not_yet_collected: u64,
+    /// Files in the directory that belong to no known segment. Left untouched.
+    pub unclaimed_files: u64,
+    /// Temporary files left by a recorder that stopped mid-chunk. Left untouched.
+    pub unfinished_files: u64,
+    /// Recorder positions that never arrived in a stopped segment.
+    pub missing_chunks: u64,
+    /// Stopped segments with no usable audio at all.
+    pub segments_without_audio: u64,
+}

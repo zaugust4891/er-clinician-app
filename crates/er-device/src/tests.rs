@@ -34,6 +34,7 @@ impl Drop for TestDb {
         for suffix in ["", "-wal", "-shm"] {
             let _ = std::fs::remove_file(format!("{}{}", self.0.display(), suffix));
         }
+        let _ = std::fs::remove_dir_all(format!("{}.audio", self.0.display()));
     }
 }
 struct Capture {
@@ -44,7 +45,7 @@ impl CaptureAdapter for Capture {
     fn available(&self) -> bool {
         true
     }
-    fn start(&mut self, _: Uuid, _: Uuid, _: bool) -> Result<()> {
+    fn start(&mut self, _: Uuid, _: Uuid, _: bool, _: &std::path::Path) -> Result<()> {
         self.starts.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }

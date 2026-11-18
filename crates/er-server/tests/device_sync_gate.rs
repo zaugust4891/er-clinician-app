@@ -37,6 +37,7 @@ impl Drop for Phone {
         for suffix in ["", "-wal", "-shm"] {
             let _ = std::fs::remove_file(format!("{}{}", self.path.display(), suffix));
         }
+        let _ = std::fs::remove_dir_all(format!("{}.audio", self.path.display()));
     }
 }
 async fn round(phone: &Phone, config: &SyncConfig, token: &str) -> er_device::SyncView {
@@ -474,7 +475,13 @@ async fn offline_capture_audit_follows_events_and_survives_second_phone_import(p
         fn available(&self) -> bool {
             true
         }
-        fn start(&mut self, _: Uuid, _: Uuid, _: bool) -> er_device::Result<()> {
+        fn start(
+            &mut self,
+            _: Uuid,
+            _: Uuid,
+            _: bool,
+            _: &std::path::Path,
+        ) -> er_device::Result<()> {
             Ok(())
         }
         fn stop(&mut self) -> er_device::Result<()> {

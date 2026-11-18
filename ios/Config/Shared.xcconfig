@@ -6,6 +6,9 @@ CODE_SIGN_STYLE = Automatic
 SWIFT_VERSION = 5.0
 IPHONEOS_DEPLOYMENT_TARGET = 17.0
 WATCHOS_DEPLOYMENT_TARGET = 10.0
+// The Rust XCFramework ships an arm64 simulator slice only (Apple silicon Macs).
+// Without this, Debug simulator builds also compile x86_64 and cannot import ErNoteKit.
+EXCLUDED_ARCHS[sdk=iphonesimulator*] = x86_64
 MARKETING_VERSION = 0.1.0
 CURRENT_PROJECT_VERSION = 1
 

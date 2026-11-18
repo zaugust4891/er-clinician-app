@@ -11,7 +11,7 @@ pub fn init_db(conn: &Connection) -> StoreResult<()> {
     conn.busy_timeout(std::time::Duration::from_millis(1500))?;
     conn.pragma_update(None, "synchronous", "FULL")?;
     let version: u32 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
-    if version > 2 {
+    if version > 3 {
         return Err(crate::StoreError::Schema);
     }
     if version == 0 {
@@ -56,6 +56,34 @@ pub fn init_db(conn: &Connection) -> StoreResult<()> {
         CREATE TRIGGER device_queue_event AFTER INSERT ON events WHEN EXISTS(SELECT 1 FROM device_scope) BEGIN INSERT INTO device_event_delivery(event_id) VALUES(NEW.event_id); END;
         PRAGMA user_version=2;")?;
         // Execute the migration before changing the recorded version.
+        tx.commit()?;
+    }
+    if version < 3 {
+        // Phone audio chunk ledger (Phase 5 Step 4). Rows carry identifiers, capture
+        // times and a digest, never audio bytes or a presigned upload URL.
+        let tx = conn.unchecked_transaction()?;
+        tx.execute_batch("CREATE TABLE IF NOT EXISTS device_audio_chunks(
+            chunk_id TEXT PRIMARY KEY,
+            patient_id TEXT NOT NULL,
+            segment_id TEXT NOT NULL,
+            position INTEGER NOT NULL CHECK(position>=0),
+            chunk_index INTEGER CHECK(chunk_index>=0),
+            file_name TEXT NOT NULL UNIQUE,
+            content_type TEXT NOT NULL,
+            byte_len INTEGER NOT NULL CHECK(byte_len>=0),
+            sha256 TEXT NOT NULL,
+            started_at_ms INTEGER NOT NULL,
+            ended_at_ms INTEGER NOT NULL CHECK(ended_at_ms>=started_at_ms),
+            is_final INTEGER NOT NULL DEFAULT 0 CHECK(is_final IN (0,1)),
+            state TEXT NOT NULL CHECK(state IN ('queued','uploaded','completed','processed','rejected')),
+            reason TEXT,
+            CHECK(state='rejected' OR chunk_index IS NOT NULL),
+            CHECK(is_final=0 OR chunk_index IS NOT NULL),
+            UNIQUE(segment_id,position),
+            UNIQUE(segment_id,chunk_index));
+        CREATE UNIQUE INDEX IF NOT EXISTS device_audio_one_final ON device_audio_chunks(segment_id) WHERE is_final=1;
+        CREATE INDEX IF NOT EXISTS device_audio_patient ON device_audio_chunks(patient_id,state);
+        PRAGMA user_version=3;")?;
         tx.commit()?;
     }
     Ok(())

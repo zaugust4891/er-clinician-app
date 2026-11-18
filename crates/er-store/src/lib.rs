@@ -13,3 +13,7 @@ mod device_tests;
 pub mod sync;
 #[cfg(test)]
 mod sync_tests;
+
+pub mod audio;
+#[cfg(test)]
+mod audio_tests;
