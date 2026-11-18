@@ -37,6 +37,7 @@ pub struct ServerApi {
     token: String,
     /// Built once and reused — the connection pool (§C8) is the entire point.
     http: reqwest::Client,
+    retry_after: std::sync::atomic::AtomicU64,
 }
 
 impl ServerApi {
@@ -45,8 +46,73 @@ impl ServerApi {
         Self {
             base,
             token: token.into(),
-            http: reqwest::Client::new(),
+            http: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(15))
+                .connect_timeout(std::time::Duration::from_secs(5))
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .expect("static HTTP configuration"),
+            retry_after: std::sync::atomic::AtomicU64::new(60),
         }
+    }
+
+    pub async fn capture_audit(&self, patient: Uuid) -> StoreResult<crate::CaptureAuditView> {
+        decode(
+            self.send(
+                self.http
+                    .get(self.url(&format!("/v1/patients/{patient}/capture-audit/v1"))),
+            )
+            .await?,
+        )
+        .await
+    }
+    pub async fn save_capture_audit(
+        &self,
+        patient: Uuid,
+        body: &crate::CaptureAuditWrite,
+    ) -> StoreResult<crate::CaptureAuditView> {
+        decode(
+            self.send(
+                self.http
+                    .put(self.url(&format!("/v1/patients/{patient}/capture-audit/v1")))
+                    .json(body),
+            )
+            .await?,
+        )
+        .await
+    }
+    pub fn retry_after_seconds(&self) -> u64 {
+        self.retry_after.load(std::sync::atomic::Ordering::Relaxed)
+    }
+    pub fn replace_access_token(&mut self, token: String) {
+        self.token = token;
+    }
+    pub async fn me(&self) -> StoreResult<crate::MeView> {
+        decode(self.send(self.http.get(self.url("/v1/me"))).await?).await
+    }
+    pub async fn append_batch(
+        &self,
+        patient: Uuid,
+        body: &crate::AppendEventsRequest,
+    ) -> StoreResult<crate::AppendEventsResponse> {
+        decode(
+            self.send(
+                self.http
+                    .post(self.url(&format!("/v1/patients/{patient}/events")))
+                    .json(body),
+            )
+            .await?,
+        )
+        .await
+    }
+    pub async fn events_page(&self, patient: Uuid, since: u64) -> StoreResult<crate::EventsPage> {
+        decode(
+            self.send(self.http.get(self.url(&format!(
+                "/v1/patients/{patient}/events?since={since}&limit=500"
+            ))))
+            .await?,
+        )
+        .await
     }
 
     fn url(&self, path: &str) -> String {
@@ -78,6 +144,17 @@ impl ServerApi {
         let status = resp.status();
         if status.is_success() {
             return Ok(resp);
+        }
+        if status.as_u16() == 429 {
+            let seconds = resp
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|h| h.to_str().ok())
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(60)
+                .clamp(60, 86400);
+            self.retry_after
+                .store(seconds, std::sync::atomic::Ordering::Relaxed);
         }
         // S2 renders every rejection as {"error": "<code>"}. A body that isn't
         // that shape (a proxy's HTML 502, say) degrades to an empty message

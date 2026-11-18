@@ -54,3 +54,6 @@ impl From<er_app::AppError> for DeviceError {
         }
     }
 }
+
+pub mod sync;
+pub use sync::{AccessTokenProvider, SyncConfig, SyncView};

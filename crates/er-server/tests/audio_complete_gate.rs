@@ -1,7 +1,7 @@
 //! Step 6 S4 — completion, enqueue, and the ledger read.
 //!
 //! Where `audio_upload_gate.rs` stops at the presigned URL, these tests cross the
-//! data plane: they `PUT` real bytes through that URL into MinIO, then prove what
+//! data plane: they `PUT` real bytes through that URL into RustFS, then prove what
 //! the completion endpoint owns — that the server believes object storage rather
 //! than the client, that exactly one job reaches the queue, and that the status
 //! read is a ledger projection that never carries clinical text.

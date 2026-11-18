@@ -2,6 +2,17 @@
 
 ## Current status
 
+Phase 5 Step 3 source now adds platform-token callbacks, manual and scheduled
+synchronization, separate background network execution, and interface version 3.
+See the [plain-language Step 3 explanation](phase5-step3-implementation.md).
+The local app still opens without networking. Actual authentication must supply
+`SyncConfigDto` and `AccessTokenSource` to `RustDeviceService.configureSync`;
+no staging address, credentials, or completed Cognito setup are bundled here.
+Rebuild matching interface-version-3 artifacts before Mac simulator/device tests.
+Production packaging requires HTTPS; `er-device/development-http` is limited to
+explicit local Rust test/development builds and rejected by production checks.
+
+
 Step 1/2 bridge sources, the durable local core, real Swift adapter, generated bindings, packaging, and CI wiring are implemented. See the [Step 2 implementation record](phase5-step2-implementation.md) for durable commands, decisions, Linux evidence, and the Step 3 handoff. See the [Step 1 implementation record](phase5-step1-implementation.md)
 for the API, build commands, verified Linux results, and outstanding Apple gates.
 Build the ignored XCFramework before opening the phone project from a clean checkout.

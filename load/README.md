@@ -37,7 +37,7 @@ never put them in the summary or commit them. `SHIFT_SECONDS`, `ENCOUNTERS`,
 not full acceptance runs. Export a summary with `SUMMARY_FILE`.
 
 The local integration gate runs the actual script against real disposable
-Postgres/MinIO/SQS, an API listener and a mock worker:
+Postgres/RustFS/SQS, an API listener and a mock worker:
 
 ```bash
 K6_BIN=/absolute/path/to/k6 scripts/ci-services.sh

@@ -277,7 +277,7 @@ Implemented per `docs/planning/phase4-step6-implementation-steps.md` and
 
 ```
 device ─ POST /v1/patients/{id}/encounters/{eid}/audio ─▶ audio_chunks row (pending) + 15-min presigned PUT
-device ═ PUT bytes ═══════════════════════════════════════▶ S3 (MinIO locally) — never through axum
+device ═ PUT bytes ═══════════════════════════════════════▶ S3 (RustFS locally) — never through axum
 device ─ POST /v1/audio/{chunk_id}/complete ─▶ HeadObject check ─▶ uploaded ─▶ SQS TranscribeChunk {chunk_id}
 er-worker ◀─ long-poll ─ SQS ─▶ GetObject ─▶ Deepgram ─▶ chunk transcript ─▶ (all chunks terminal?) ─▶ TranscriptReady
           ─▶ [de-identify] ─▶ summarize ─▶ EncounterSummarized + usage_log ─▶ DeleteMessage
@@ -430,7 +430,7 @@ crates/
     └── bin/       # mdm_standalone.rs spike_summarizer.rs
 dev/keys/          # dev RSA keypair + JWKS for offline auth
 docs/              # architecture / product / planning / ops documents
-docker-compose.yml # postgres:5433, minio, elasticmq
+docker-compose.yml # postgres:5433, s3 (RustFS; MinIO images were withdrawn 2026-09), elasticmq
 
 infra/             # Terraform (Phase 4 Step 8 S3–S5) — authored, not yet applied
 ├── bootstrap/         # state bucket + KMS key + artifact bucket + per-root IAM
@@ -552,6 +552,6 @@ explicit Multi-AZ and retention values. `scripts/tf-data-check.sh` runs the mock
 | `docs/ops/deployment-contract.md` | Step 8 S0 decision register + the S3 values to record |
 | `docs/ops/staging-deploy.md` | First-run runbook: bootstrap, state migration, guards, recovery |
 | `scripts/tf-manifest-guards.sh` | Offline negative tests for the manifest's secret-rejection rules |
-| `scripts/tf-lock-check.sh` | Proves two concurrent operations cannot share a state lock (MinIO) |
+| `scripts/tf-lock-check.sh` | Proves two concurrent operations cannot share a state lock (RustFS) |
 | `docs/product/doctor-feedback-responses.md` | Responses to ED doctor's questions |
 | `docs/product/product-summary.md` | Product pitch document |

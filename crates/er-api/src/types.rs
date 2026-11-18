@@ -432,3 +432,11 @@ mod job_wire_tests {
         );
     }
 }
+
+/// Authenticated membership resolved by the server, never supplied as tenancy.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MeView {
+    pub clinician_id: Uuid,
+    pub org_id: Uuid,
+}

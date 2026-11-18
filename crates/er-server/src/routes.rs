@@ -39,6 +39,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api-docs", get(crate::api_docs::ui))
         .route("/v1/me", get(me))
         .route("/v1/patients", post(register_patient))
+        .route(
+            "/v1/patients/{id}/capture-audit/v1",
+            get(crate::capture_audit::read).put(crate::capture_audit::write),
+        )
         .route("/v1/patients/{id}/note", get(patient_note))
         .route("/v1/patients/{id}/mdm", post(request_mdm))
         .route("/v1/jobs/{job_id}", get(job_status))

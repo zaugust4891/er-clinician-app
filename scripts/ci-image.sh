@@ -35,7 +35,7 @@ for binary in er-server er-worker er-migrate er-db-bootstrap er-onboard; do
   else
     code=$?
     [[ "$code" == 1 ]] || { echo "$binary failed outside the configuration guard" >&2; exit 1; }
-    rg -q 'configuration_invalid' "$work/start.log"
+    grep -qF 'configuration_invalid' "$work/start.log"
   fi
 done
 docker network create --internal "$name" >/dev/null
@@ -55,7 +55,7 @@ docker exec "$name-db" psql -U postgres -d ernote_ci -v ON_ERROR_STOP=1 -c \
 if "${migration[@]}" >"$work/migration.log" 2>&1; then
   echo 'Image migration accepted a changed checksum' >&2; exit 1
 fi
-rg -q checksum_mismatch "$work/migration.log"
+grep -qF checksum_mismatch "$work/migration.log"
 # Local daemon image ID binds the scan to the bytes just built and exercised.
 # No ignore-unfixed: every HIGH/CRITICAL finding blocks until explicitly resolved.
 trivy image --config /dev/null --ignorefile /dev/null --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --timeout 15m "$image"

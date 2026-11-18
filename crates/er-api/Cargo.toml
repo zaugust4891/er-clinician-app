@@ -7,7 +7,7 @@ edition.workspace = true
 
 version.workspace = true
 
-# Serde-only. The "client" feature (S9) adds the optional deps — nothing here yet.
+# Shared request/response types; "client" adds the optional Rust HTTP transport.
 
 [dependencies]
 schemars = { workspace = true, optional = true }

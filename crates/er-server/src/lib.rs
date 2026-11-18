@@ -22,3 +22,5 @@ pub mod outbox;
 pub mod recovery;
 
 pub mod api_docs;
+
+pub mod capture_audit;

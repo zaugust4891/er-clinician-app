@@ -6,9 +6,13 @@ publish = false
 
 [features]
 test-support = []
+development-http = []
 
 [dependencies]
 er-domain.workspace = true
+er-api = { workspace = true, features = ["client"] }
+serde.workspace = true
+reqwest.workspace = true
 er-store.workspace = true
 er-app = { workspace = true, default-features = false }
 chrono.workspace = true

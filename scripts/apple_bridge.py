@@ -96,12 +96,20 @@ def copy_generated(generated, package):
         shutil.copy2(generated / name, destination)
 
 
+def exported_symbols(library):
+    # Rust's std objects embed LLVM bitcode from a newer LLVM than Xcode's, so
+    # Apple's nm (llvm-nm) fails reading it ("Unknown attribute kind"). Read the
+    # Mach-O symbol table instead. GNU nm on Linux has neither the flag nor the need.
+    flags = ["--no-llvm-bc"] if platform.system() == "Darwin" else []
+    return run("nm", "-g", *flags, library, capture=True)
+
+
 def assert_production(generated, libraries):
     for path in generated.iterdir():
         if re.search(r"panic_?for_?test|ER_FFI_PRIVATE_SENTINEL", path.read_text(), re.I):
             raise SystemExit("Test declarations found in production bindings")
     for library in libraries:
-        symbols = run("nm", "-g", library, capture=True)
+        symbols = exported_symbols(library)
         if "panic_for_test" in symbols.lower():
             raise SystemExit("Test export found in production library")
         if b"ER_FFI_PRIVATE_SENTINEL" in library.read_bytes():
@@ -109,7 +117,7 @@ def assert_production(generated, libraries):
 
 
 def dependencies():
-    forbidden = {"er-server", "er-ai", "axum", "sqlx", "uniffi_bindgen", "clap", "reqwest"}
+    forbidden = {"er-server", "er-ai", "axum", "sqlx", "uniffi_bindgen", "clap", "openssl", "openssl-sys", "native-tls", "hyper-tls"}
     for target in TARGETS:
         graph = cargo("tree", "--locked", "-p", "er-ffi", "--no-default-features",
                       "--target", target, "-e", "normal", "--prefix", "none",
@@ -119,7 +127,7 @@ def dependencies():
             if name in forbidden or name.startswith(("aws-", "sqlx-")):
                 raise SystemExit(f"Forbidden device runtime dependency: {name}")
             features = line.split("features=[", 1)[1].split("]", 1)[0].split(",")
-            if (name == "er-device" and "test-support" in features) or (name == "er-app" and "local-generation" in features) or (name == "er-pipeline" and "cloud-stt" in features) or (
+            if (name == "er-device" and any(f in features for f in ("test-support", "development-http"))) or (name == "er-app" and "local-generation" in features) or (name == "er-pipeline" and "cloud-stt" in features) or (
                     name.startswith("uniffi") and "ffi-trace" in features):
                 raise SystemExit(f"Forbidden device feature in {name}")
         print(f"Device runtime graph passed: {target}")

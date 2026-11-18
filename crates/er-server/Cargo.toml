@@ -74,6 +74,8 @@ path = "src/bin/onboard.rs"
 # same Repository contract suite SQLite and Postgres pass, over HTTP. Only the test
 # build turns on `client`; the server binary still links DTOs only (§C9).
 [dev-dependencies]
+er-device = { workspace = true, features = ["development-http", "test-support"] }
+rusqlite.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 er-api = { workspace = true, features = ["client"] }
 

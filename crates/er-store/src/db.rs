@@ -11,7 +11,7 @@ pub fn init_db(conn: &Connection) -> StoreResult<()> {
     conn.busy_timeout(std::time::Duration::from_millis(1500))?;
     conn.pragma_update(None, "synchronous", "FULL")?;
     let version: u32 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
-    if version > 1 {
+    if version > 2 {
         return Err(crate::StoreError::Schema);
     }
     if version == 0 {
@@ -48,6 +48,16 @@ pub fn init_db(conn: &Connection) -> StoreResult<()> {
         validate_schema(conn)?;
     }
 
+    if version < 2 {
+        let tx = conn.unchecked_transaction()?;
+        tx.execute_batch("CREATE TABLE device_sync(singleton INTEGER PRIMARY KEY CHECK(singleton=1),payload TEXT NOT NULL);
+        CREATE TABLE device_event_delivery(event_id TEXT PRIMARY KEY REFERENCES events(event_id), server_sequence INTEGER UNIQUE CHECK(server_sequence>0),downloaded INTEGER NOT NULL DEFAULT 0,conflict TEXT);
+        INSERT INTO device_event_delivery(event_id) SELECT event_id FROM events WHERE EXISTS(SELECT 1 FROM device_scope);
+        CREATE TRIGGER device_queue_event AFTER INSERT ON events WHEN EXISTS(SELECT 1 FROM device_scope) BEGIN INSERT INTO device_event_delivery(event_id) VALUES(NEW.event_id); END;
+        PRAGMA user_version=2;")?;
+        // Execute the migration before changing the recorded version.
+        tx.commit()?;
+    }
     Ok(())
 }
 

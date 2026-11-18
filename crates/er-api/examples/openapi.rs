@@ -41,7 +41,9 @@ fn main() {
         ChunkView,
         MdmRequest,
         MdmAccepted,
-        JobView
+        JobView,
+        CaptureAuditView,
+        CaptureAuditWrite
     );
     schemas["Me"] = json!({"type":"object","required":["clinician_id","org_id"],"properties":{"clinician_id":{"type":"string","format":"uuid"},"org_id":{"type":"string","format":"uuid"}}});
     schemas["Health"] =
@@ -50,6 +52,20 @@ fn main() {
         ("/healthz", "get", "", "Health", 200),
         ("/readyz", "get", "", "Health", 200),
         ("/v1/me", "get", "", "Me", 200),
+        (
+            "/v1/patients/{id}/capture-audit/v1",
+            "get",
+            "",
+            "CaptureAuditView",
+            200,
+        ),
+        (
+            "/v1/patients/{id}/capture-audit/v1",
+            "put",
+            "CaptureAuditWrite",
+            "CaptureAuditView",
+            200,
+        ),
         (
             "/v1/patients",
             "post",

@@ -114,7 +114,31 @@ public struct SavedPreference: Identifiable, Equatable, Sendable {
     }
 }
 
+public struct SyncPresentation: Equatable, Sendable {
+    public var status: String
+    public var queued: UInt64
+    public var awaitingConfirmation: UInt64
+    public var conflicts: UInt64
+    public init(status: String = "not_connected", queued: UInt64 = 0, awaitingConfirmation: UInt64 = 0, conflicts: UInt64 = 0) {
+        self.status = status; self.queued = queued; self.awaitingConfirmation = awaitingConfirmation; self.conflicts = conflicts
+    }
+    public var message: String {
+        switch status {
+        case "up_to_date": return "Clinical records are up to date"
+        case "not_connected": return "Cloud connection not configured"
+        case "authentication": return "Sign in to continue synchronization"
+        case "conflict": return "A pending change needs review"
+        case "offline": return "Waiting for a connection"
+        case "budget_wait", "rate_limited": return "Waiting before the next connection attempt"
+        case "missing_on_server": return "A record could not be found on the server"
+        case "rejected": return "The server could not accept a pending change"
+        default: return "Changes are waiting for confirmation"
+        }
+    }
+}
+
 public struct DeviceSnapshot: Equatable, Sendable {
+    public var sync: SyncPresentation
     public var shiftID: UUID?
     public var selectedPatientID: UUID?
     public var patients: [PatientView]
@@ -122,9 +146,10 @@ public struct DeviceSnapshot: Equatable, Sendable {
     public var revision: UInt64
 
     public init(
-        shiftID: UUID? = nil, selectedPatientID: UUID? = nil,
+        sync: SyncPresentation = SyncPresentation(), shiftID: UUID? = nil, selectedPatientID: UUID? = nil,
         patients: [PatientView] = [], preferences: [SavedPreference] = [], revision: UInt64 = 0
     ) {
+        self.sync = sync
         self.shiftID = shiftID
         self.selectedPatientID = selectedPatientID
         self.patients = patients
@@ -144,6 +169,8 @@ public enum DeviceServiceError: Error, Equatable {
 public protocol DeviceService: AnyObject {
     var availability: ServiceAvailability { get }
     var supportsRecording: Bool { get }
+    var supportsSync: Bool { get }
+    func synchronize() async throws
     var supportsGeneration: Bool { get }
     var snapshot: DeviceSnapshot { get }
 
@@ -167,6 +194,8 @@ public protocol DeviceService: AnyObject {
 
 @MainActor
 public extension DeviceService {
+    var supportsSync: Bool { false }
+    func synchronize() async throws { throw DeviceServiceError.unavailable }
     var onChange: (() -> Void)? { get { nil } set {} }
     func load() async throws {}
     func close() async throws {}

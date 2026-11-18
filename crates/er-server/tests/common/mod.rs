@@ -145,7 +145,7 @@ pub async fn ensure_test_audio_infra() -> AudioFixture {
         er_server::aws::ensure_audio_infra(&clients.s3, &clients.sqs, &bucket, &queue, &dlq)
             .await
             .expect(
-                "audio tests need MinIO + ElasticMQ and the dev AWS_* variables: \
+                "audio tests need RustFS + ElasticMQ and the dev AWS_* variables: \
              `docker compose up -d` and `set -a && . ./.env && set +a`",
             );
 

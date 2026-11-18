@@ -1,6 +1,6 @@
 //! AWS client construction and the local audio-infrastructure bootstrap.
 //!
-//! MinIO and ElasticMQ implement the S3 and SQS wire protocols, so the rest of
+//! RustFS and ElasticMQ implement the S3 and SQS wire protocols, so the rest of
 //! the application uses the official AWS SDK in every environment. Endpoint
 //! overrides are the only switch: present locally, absent in ECS.
 
@@ -72,7 +72,7 @@ pub struct QueueUrls {
 
 /// Load the normal AWS region and credential-provider chain once, then derive
 /// service clients from it. In development the explicit endpoints redirect the
-/// signed requests to MinIO and ElasticMQ. In ECS, `None` leaves normal AWS
+/// signed requests to RustFS and ElasticMQ. In ECS, `None` leaves normal AWS
 /// endpoint and task-role resolution intact.
 pub async fn clients(s3_endpoint: Option<&str>, sqs_endpoint: Option<&str>) -> AwsClients {
     let shared = aws_config::defaults(BehaviorVersion::latest())
@@ -88,7 +88,7 @@ pub async fn clients(s3_endpoint: Option<&str>, sqs_endpoint: Option<&str>) -> A
 pub fn s3_client(shared: &SdkConfig, endpoint: Option<&str>) -> S3Client {
     let mut builder = aws_sdk_s3::config::Builder::from(shared);
     if let Some(endpoint) = endpoint {
-        // MinIO expects `host/bucket/key`; real S3 normally uses
+        // RustFS expects `host/bucket/key`; real S3 normally uses
         // `bucket.host/key` and therefore does not need this override.
         builder = builder.endpoint_url(endpoint).force_path_style(true);
     }

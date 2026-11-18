@@ -52,10 +52,29 @@ class PackagingTests(unittest.TestCase):
         for line in ("er-ai v0.1.0 features=[]", "aws-sdk-s3 v1.0.0 features=[]",
                      "er-pipeline v0.1.0 features=[cloud-stt]",
                      "uniffi_core v0.32.2 features=[ffi-trace]",
-                     "uniffi_bindgen v0.32.2 features=[]"):
+                     "uniffi_bindgen v0.32.2 features=[]", "native-tls v0.2.18 features=[]",
+                     "er-device v0.1.0 features=[development-http]"):
             with self.subTest(line=line), patch.object(bridge, "cargo", return_value=line):
                 with self.assertRaises(SystemExit):
                     bridge.dependencies()
+
+    def test_symbol_check_skips_embedded_bitcode_only_on_apple_hosts(self):
+        # Xcode's nm cannot parse bitcode from Rust's newer LLVM; GNU nm rejects the flag.
+        for system, expected in (("Darwin", ["nm", "-g", "--no-llvm-bc", "lib.a"]),
+                                 ("Linux", ["nm", "-g", "lib.a"])):
+            with self.subTest(system=system), patch.object(bridge.platform, "system", return_value=system), \
+                    patch.object(bridge, "run", return_value="") as run:
+                bridge.exported_symbols("lib.a")
+                self.assertEqual(list(run.call_args.args), expected)
+
+    def test_test_only_export_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            generated, library = Path(directory) / "generated", Path(directory) / "lib.a"
+            generated.mkdir()
+            library.write_bytes(b"production bytes")
+            with patch.object(bridge, "run", return_value="0000 T _uniffi_er_ffi_fn_func_panic_for_test"):
+                with self.assertRaises(SystemExit):
+                    bridge.assert_production(generated, [library])
 
     def test_profile_overrides_are_rejected(self):
         for key, value in (("RUSTFLAGS", "-C panic=abort"),
@@ -121,6 +140,8 @@ with tempfile.TemporaryDirectory() as directory:
     assert len(device.note(first).medications) == 1
     assert len(device.note(first).diagnoses) == 1
     assert device.note(first).ros is None
+    assert device.sync_status().status == "not_connected"
+    assert device.sync_status().queued_events == 7
     device.close()
     device = er_ffi.ErDevice(config)
     state = device.snapshot()
@@ -147,7 +168,7 @@ with tempfile.TemporaryDirectory() as directory:
     device = er_ffi.ErDevice(config)
     assert device.snapshot().shift.id == shift
     device.close()
-assert er_ffi.device_interface_version() == 2
+assert er_ffi.device_interface_version() == 3
 print("Optimized generated FFI lifecycle smoke passed")
 '''
         result = subprocess.run([sys.executable, "-c", script], cwd=output,

@@ -25,6 +25,7 @@ const CLOSED: u8 = 2;
 const FAULTED: u8 = 3;
 
 pub struct DeviceHandle {
+    pub(crate) sync_gate: Mutex<()>,
     admission: Mutex<SyncSender<Command>>,
     status: Arc<AtomicU8>,
     owner: Mutex<Option<JoinHandle<()>>>,
@@ -119,6 +120,7 @@ impl DeviceHandle {
             })
             .map_err(|_| Error::Internal)?;
         Ok(Self {
+            sync_gate: Mutex::new(()),
             admission: Mutex::new(tx),
             status,
             owner: Mutex::new(Some(owner)),

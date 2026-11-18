@@ -19,6 +19,8 @@ final class WorkspaceModel: ObservableObject {
     }
 
     var availability: ServiceAvailability { service.availability }
+    var supportsSync: Bool { service.supportsSync }
+    func synchronize() async { await perform { try await service.synchronize() } }
     var supportsRecording: Bool { service.supportsRecording }
     var supportsGeneration: Bool { service.supportsGeneration }
 

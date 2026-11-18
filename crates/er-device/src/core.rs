@@ -1,3 +1,5 @@
+#[path = "sync_core.rs"]
+mod sync_core;
 use crate::{DeviceError as Error, Result, views::*};
 use chrono::{DateTime, Utc};
 use er_app::{EventBus, PatientNoteStore};
@@ -128,6 +130,7 @@ impl DeviceCore {
             pending: None,
             consent_stop_requested: HashSet::new(),
         };
+        core.rebuild_synchronized_notes()?;
         core.validate_and_load()?;
         Ok(core)
     }
@@ -273,6 +276,9 @@ impl DeviceCore {
         }
         if self.pending.is_some() {
             return Err(Error::Recovery);
+        }
+        if self.repo.delivery_counts(patient)?.conflicts > 0 {
+            return Err(Error::Conflict);
         }
         er_app::validation::editable(&self.note(patient)?)?;
         Ok(())
@@ -451,6 +457,9 @@ impl DeviceCore {
         at_ms: i64,
     ) -> Result<()> {
         self.locate(patient)?;
+        if self.repo.delivery_counts(patient)?.conflicts > 0 {
+            return Err(Error::Conflict);
+        }
         er_app::validation::editable(&self.note(patient)?)?;
         timestamp(at_ms)?;
         text(&policy, 128, false)?;

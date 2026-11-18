@@ -16,7 +16,7 @@ fn legacy_upgrade_preserves_events_and_repeated_migrations() {
     assert_eq!(
         conn.pragma_query_value(None, "user_version", |r| r.get::<_, u32>(0))
             .unwrap(),
-        1
+        2
     );
     assert_eq!(
         conn.pragma_query_value(None, "synchronous", |r| r.get::<_, u32>(0))

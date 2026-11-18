@@ -922,3 +922,35 @@ The repository's existing checks for this contract include:
 Update this document alongside route, DTO, domain serialization, adapter, and
 edge-policy changes. The examples contain synthetic data and placeholder
 credentials/URLs.
+
+
+## Phase 5 capture audit, version 1
+
+`GET /v1/patients/{id}/capture-audit/v1` reads the current authenticated
+clinician's consent/segment audit for a registered patient in their organization.
+An absent audit returns version 0 with empty histories. Existing patient guards,
+general quota, access auditing, and no-store responses apply.
+
+`PUT` at the same path accepts `CaptureAuditWrite { expected_version, audit }`.
+`audit` contains consent entries (`revision`, `status`, `recorded_at_ms`,
+`policy_version`) and segment entries (`id`, `mode`, `source`, `consent_revision`,
+`started_at_ms`, `stopped_at_ms`). The shared definitions are in
+[`er-api/src/capture_audit.rs`](../crates/er-api/src/capture_audit.rs).
+Consent choices use `Unknown`, `Granted`, `Declined`, `Revoked`; capture modes
+remain `Ambient` and `Dictation`. Source is `phone` or `watch`.
+
+The authenticated identity establishes author and organization; neither is a
+request field. Each history is limited to 4096 entries, names/times are checked,
+and the ordinary 2 MiB JSON limit still applies. Existing history cannot be
+rewritten or shortened. A segment may gain a previously absent stop time;
+completed boundaries and attribution cannot change. Segments must match that
+patient's durable capture events. Ambient requires its recorded granted consent
+revision. An incompatible expected version/history returns 409. An identical
+resend returns the same version, including after a lost reply. Version counters
+must remain below the signed database integer limit.
+
+The response is `CaptureAuditView { version, clinician_id, audit }`. This is audit
+metadata, not generated note content, a signed-note edit, or certification of
+patient consent. Templates, saved prompts, pasted context, and scratch drafts
+remain local in Phase 5 Step 3. See the
+[Step 3 explanation](ops/phase5-step3-implementation.md) for delivery and recovery.

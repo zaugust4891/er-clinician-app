@@ -297,7 +297,7 @@ is no DynamoDB table anywhere in this project.
 The mechanism is proven locally, with no AWS spend, by:
 
 ```bash
-docker compose up -d minio
+docker compose up -d s3          # RustFS, the local S3 stand-in
 ./scripts/tf-lock-check.sh
 # ok: second operation refused the lock (HTTP 412 PreconditionFailed)
 ```

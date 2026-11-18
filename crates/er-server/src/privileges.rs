@@ -22,6 +22,12 @@ pub struct Grant {
 }
 
 pub const GRANTS: &[Grant] = &[
+    Grant {
+        object: "TABLE device_capture_audit",
+        api: "SELECT, INSERT, UPDATE (version, payload)",
+        worker: "",
+        onboarding: "",
+    },
     // Clinical history is append-only: neither process may UPDATE, DELETE or TRUNCATE.
     Grant {
         object: "TABLE events",
@@ -731,6 +737,22 @@ mod tests {
             .unwrap();
         assert_eq!(visible, vec![a]); // Deliberately no application org filter.
         tx.commit().await.unwrap();
+        for org in [a, b] {
+            let clinician = Uuid::now_v7();
+            let patient = Uuid::now_v7();
+            sqlx::query("INSERT INTO clinicians(id,org_id,cognito_sub,display_name) VALUES($1,$2,$1::text,'synthetic')").bind(clinician).bind(org).execute(&pool).await.unwrap();
+            sqlx::query("INSERT INTO patients(id,org_id,created_by,chief_complaint) VALUES($1,$2,$3,'synthetic')").bind(patient).bind(org).bind(clinician).execute(&pool).await.unwrap();
+            sqlx::query("INSERT INTO device_capture_audit(org_id,patient_id,clinician_id,version,payload) VALUES($1,$2,$3,1,'{}')").bind(org).bind(patient).bind(clinician).execute(&pool).await.unwrap();
+        }
+        let mut audit_tx = repo.begin_tenant().await.unwrap();
+        let visible_audits: Vec<Uuid> =
+            sqlx::query_scalar("SELECT org_id FROM device_capture_audit")
+                .fetch_all(&mut *audit_tx)
+                .await
+                .unwrap();
+        assert_eq!(visible_audits, vec![a]);
+        audit_tx.commit().await.unwrap();
+
         let mut tx = repo.begin_tenant().await.unwrap();
         let error = sqlx::query("INSERT INTO events (event_id, org_id, patient_id, event_type, payload, clinical_occurred_at) VALUES ($1,$2,$3,'synthetic','{}',now())")
             .bind(Uuid::now_v7()).bind(b).bind(pb).execute(&mut *tx).await.unwrap_err();
@@ -760,7 +782,7 @@ mod tests {
         .await;
         let active: i64 = sqlx::query_scalar("SELECT count(*) FROM pg_class WHERE relnamespace = 'public'::regnamespace AND relrowsecurity")
             .fetch_one(&pool).await.unwrap();
-        assert_eq!(active, 12); // Clinical tables, join table, quotas and audit.
+        assert_eq!(active, 13); // Includes the versioned capture audit table.
     }
 
     #[sqlx::test(migrations = "./migrations")]

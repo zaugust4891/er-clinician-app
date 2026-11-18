@@ -243,11 +243,27 @@ typedef void (*UniffiForeignFutureCompleteVoid)(uint64_t, UniffiForeignFutureRes
     );
 
 #endif
+#ifndef UNIFFI_FFIDEF_CALLBACK_INTERFACE_ACCESS_TOKEN_SOURCE_METHOD0
+#define UNIFFI_FFIDEF_CALLBACK_INTERFACE_ACCESS_TOKEN_SOURCE_METHOD0
+typedef void (*UniffiCallbackInterfaceAccessTokenSourceMethod0)(uint64_t, int8_t, RustBuffer* _Nonnull,
+        RustCallStatus *_Nonnull uniffiCallStatus
+    );
+
+#endif
 #ifndef UNIFFI_FFIDEF_CALLBACK_INTERFACE_DEVICE_CHANGE_LISTENER_METHOD0
 #define UNIFFI_FFIDEF_CALLBACK_INTERFACE_DEVICE_CHANGE_LISTENER_METHOD0
 typedef void (*UniffiCallbackInterfaceDeviceChangeListenerMethod0)(uint64_t, uint64_t, void* _Nonnull,
         RustCallStatus *_Nonnull uniffiCallStatus
     );
+
+#endif
+#ifndef UNIFFI_FFIDEF_V_TABLE_CALLBACK_INTERFACE_ACCESS_TOKEN_SOURCE
+#define UNIFFI_FFIDEF_V_TABLE_CALLBACK_INTERFACE_ACCESS_TOKEN_SOURCE
+typedef struct UniffiVTableCallbackInterfaceAccessTokenSource {
+    UniffiCallbackInterfaceFree _Nonnull uniffiFree;
+    UniffiCallbackInterfaceClone _Nonnull uniffiClone;
+    UniffiCallbackInterfaceAccessTokenSourceMethod0 _Nonnull accessToken;
+} UniffiVTableCallbackInterfaceAccessTokenSource;
 
 #endif
 #ifndef UNIFFI_FFIDEF_V_TABLE_CALLBACK_INTERFACE_DEVICE_CHANGE_LISTENER
@@ -294,6 +310,11 @@ void uniffi_er_ffi_fn_method_erdevice_close(uint64_t ptr, RustCallStatus *_Nonnu
 RustBuffer uniffi_er_ffi_fn_method_erdevice_definition_versions(uint64_t ptr, RustBuffer definition_id, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_DISCARD_SYNC_CONFLICT
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_DISCARD_SYNC_CONFLICT
+void uniffi_er_ffi_fn_method_erdevice_discard_sync_conflict(uint64_t ptr, RustBuffer patient_id, RustBuffer event_id, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_DUPLICATE_DEFINITION
 #define UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_DUPLICATE_DEFINITION
 RustBuffer uniffi_er_ffi_fn_method_erdevice_duplicate_definition(uint64_t ptr, RustBuffer definition_id, RustBuffer name, RustCallStatus *_Nonnull out_status
@@ -312,6 +333,11 @@ RustBuffer uniffi_er_ffi_fn_method_erdevice_export_note(uint64_t ptr, RustBuffer
 #ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_NOTE
 #define UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_NOTE
 RustBuffer uniffi_er_ffi_fn_method_erdevice_note(uint64_t ptr, RustBuffer patient_id, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_POLL_SYNC
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_POLL_SYNC
+RustBuffer uniffi_er_ffi_fn_method_erdevice_poll_sync(uint64_t ptr, RustBuffer config, uint64_t tokens, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_RECORD_DATA_REVIEWED
@@ -402,6 +428,26 @@ RustBuffer uniffi_er_ffi_fn_method_erdevice_snapshot(uint64_t ptr, RustCallStatu
 #ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_START_SHIFT
 #define UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_START_SHIFT
 RustBuffer uniffi_er_ffi_fn_method_erdevice_start_shift(uint64_t ptr, int64_t at_ms, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_SYNC_CONFLICTS
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_SYNC_CONFLICTS
+RustBuffer uniffi_er_ffi_fn_method_erdevice_sync_conflicts(uint64_t ptr, RustBuffer patient_id, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_SYNC_NOW
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_SYNC_NOW
+RustBuffer uniffi_er_ffi_fn_method_erdevice_sync_now(uint64_t ptr, RustBuffer config, uint64_t tokens, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_SYNC_STATUS
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_SYNC_STATUS
+RustBuffer uniffi_er_ffi_fn_method_erdevice_sync_status(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_INIT_CALLBACK_VTABLE_ACCESSTOKENSOURCE
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_INIT_CALLBACK_VTABLE_ACCESSTOKENSOURCE
+void uniffi_er_ffi_fn_init_callback_vtable_accesstokensource(const UniffiVTableCallbackInterfaceAccessTokenSource* _Nonnull vtable
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_INIT_CALLBACK_VTABLE_DEVICECHANGELISTENER
@@ -728,6 +774,12 @@ uint16_t uniffi_er_ffi_checksum_method_erdevice_definition_versions(void
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_DISCARD_SYNC_CONFLICT
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_DISCARD_SYNC_CONFLICT
+uint16_t uniffi_er_ffi_checksum_method_erdevice_discard_sync_conflict(void
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_DUPLICATE_DEFINITION
 #define UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_DUPLICATE_DEFINITION
 uint16_t uniffi_er_ffi_checksum_method_erdevice_duplicate_definition(void
@@ -749,6 +801,12 @@ uint16_t uniffi_er_ffi_checksum_method_erdevice_export_note(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_NOTE
 #define UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_NOTE
 uint16_t uniffi_er_ffi_checksum_method_erdevice_note(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_POLL_SYNC
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_POLL_SYNC
+uint16_t uniffi_er_ffi_checksum_method_erdevice_poll_sync(void
 
 );
 #endif
@@ -860,9 +918,33 @@ uint16_t uniffi_er_ffi_checksum_method_erdevice_start_shift(void
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_SYNC_CONFLICTS
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_SYNC_CONFLICTS
+uint16_t uniffi_er_ffi_checksum_method_erdevice_sync_conflicts(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_SYNC_NOW
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_SYNC_NOW
+uint16_t uniffi_er_ffi_checksum_method_erdevice_sync_now(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_SYNC_STATUS
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_SYNC_STATUS
+uint16_t uniffi_er_ffi_checksum_method_erdevice_sync_status(void
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_CONSTRUCTOR_ERDEVICE_NEW
 #define UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_CONSTRUCTOR_ERDEVICE_NEW
 uint16_t uniffi_er_ffi_checksum_constructor_erdevice_new(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ACCESSTOKENSOURCE_ACCESS_TOKEN
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ACCESSTOKENSOURCE_ACCESS_TOKEN
+uint16_t uniffi_er_ffi_checksum_method_accesstokensource_access_token(void
 
 );
 #endif

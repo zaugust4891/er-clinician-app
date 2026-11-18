@@ -54,7 +54,7 @@ openssl pkey -in dev/keys/dev_private.pem -pubout -out dev/keys/dev_public.pem 2
 
 "${compose[@]}" up -d --wait --wait-timeout 120
 pg_port="$("${compose[@]}" port postgres 5432 | awk -F: '{print $NF}')"
-s3_port="$("${compose[@]}" port minio 9000 | awk -F: '{print $NF}')"
+s3_port="$("${compose[@]}" port s3 9000 | awk -F: '{print $NF}')"
 sqs_port="$("${compose[@]}" port elasticmq 9324 | awk -F: '{print $NF}')"
 export DATABASE_URL="postgres://ci:ci@127.0.0.1:$pg_port/ernote_ci"
 export S3_ENDPOINT_URL="http://127.0.0.1:$s3_port" SQS_ENDPOINT_URL="http://127.0.0.1:$sqs_port"
@@ -62,10 +62,10 @@ export S3_ENDPOINT_URL="http://127.0.0.1:$s3_port" SQS_ENDPOINT_URL="http://127.
 wait_for_services() {
   local deadline=$((SECONDS + $1))
   until "${compose[@]}" exec -T postgres pg_isready -U ci -d ernote_ci >/dev/null 2>&1 &&
-    curl --fail --silent --max-time 2 "$S3_ENDPOINT_URL/minio/health/ready" >/dev/null &&
+    curl --fail --silent --max-time 2 "$S3_ENDPOINT_URL/health/ready" >/dev/null &&
     curl --fail --silent --max-time 2 -d 'Action=ListQueues&Version=2012-11-05' "$SQS_ENDPOINT_URL" >/dev/null; do
     if (( SECONDS >= deadline )); then
-      echo 'CI services failed readiness (Postgres, MinIO or ElasticMQ)' >&2
+      echo 'CI services failed readiness (Postgres, RustFS or ElasticMQ)' >&2
       return 1
     fi
     sleep 1
@@ -85,7 +85,7 @@ test_gate() {
   local status=0
   "$@" > "$work/tests.log" 2>&1 || status=$?
   # Test names and totals only: panic output can include synthetic clinical text.
-  rg '^test [[:alnum:]_:]+ \.\.\. (ok|FAILED|ignored)|^test result:' "$work/tests.log" || true
+  grep -E '^test [[:alnum:]_:]+ \.\.\. (ok|FAILED|ignored)|^test result:' "$work/tests.log" || true
   if (( status )); then
     echo 'Test gate failed; raw fixture/panic output is deliberately not published' >&2
     return "$status"
@@ -98,7 +98,7 @@ fi
 test_gate cargo test -p er-ai --locked
 cargo tree -p er-ai --locked -e normal > "$work/ai-tree.txt"
 cat "$work/ai-tree.txt"
-if rg -q 'aws-(sdk-bedrockruntime|config|smithy)' "$work/ai-tree.txt"; then
+if grep -Eq 'aws-(sdk-bedrockruntime|config|smithy)' "$work/ai-tree.txt"; then
   echo 'The standalone er-ai build acquired an AWS dependency' >&2
   exit 1
 fi
@@ -113,12 +113,12 @@ if SQLX_OFFLINE=false cargo sqlx prepare --workspace --check -- --all-targets --
   echo 'SQLx accepted a missing metadata query' >&2
   exit 1
 fi
-rg -q 'prepare check failed: .sqlx is missing one or more queries' "$work/stale.log"
+grep -qF 'prepare check failed: .sqlx is missing one or more queries' "$work/stale.log"
 mv "$work/query.json" "${queries[0]}"
 echo 'SQLx freshness rejected missing metadata as expected'
 # Each absent service must fail the readiness gate independently. Restore it before
 # the next case; these are this run's disposable containers only.
-for service in postgres minio elasticmq; do
+for service in postgres s3 elasticmq; do
   "${compose[@]}" stop "$service" >/dev/null 2>&1
   if wait_for_services 3 > "$work/readiness.log" 2>&1; then
     echo "Readiness incorrectly accepted absent $service" >&2
@@ -127,7 +127,7 @@ for service in postgres minio elasticmq; do
   echo "Readiness rejected absent $service as expected"
   "${compose[@]}" start "$service" >/dev/null 2>&1
   # Docker may allocate a new host port when a stopped container restarts.
-  s3_port="$("${compose[@]}" port minio 9000 | awk -F: '{print $NF}')"
+  s3_port="$("${compose[@]}" port s3 9000 | awk -F: '{print $NF}')"
   sqs_port="$("${compose[@]}" port elasticmq 9324 | awk -F: '{print $NF}')"
   export S3_ENDPOINT_URL="http://127.0.0.1:$s3_port" SQS_ENDPOINT_URL="http://127.0.0.1:$sqs_port"
   wait_for_services 90

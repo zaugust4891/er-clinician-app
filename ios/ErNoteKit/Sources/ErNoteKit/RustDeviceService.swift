@@ -1,9 +1,11 @@
 import Foundation
 
-/// All blocking FFI calls, including open/drop/close, use this serial queue.
+/// Local FFI calls, including open/drop/close, use one serial queue.
+/// Network calls use a separate queue so local saves remain responsive.
 /// Rust additionally owns its runtime on its own command thread.
 private final class RustSession: @unchecked Sendable {
     let queue = DispatchQueue(label: "app.ernote.rust-service", qos: .userInitiated)
+    let networkQueue = DispatchQueue(label: "app.ernote.sync-network", qos: .utility)
     let config: DeviceConfig
     private var device: ErDevice?
     private var closed = false
@@ -18,6 +20,21 @@ private final class RustSession: @unchecked Sendable {
                     if device == nil { device = try ErDevice(config: config) }
                     continuation.resume(returning: try action(device!))
                 } catch { continuation.resume(throwing: error) }
+            }
+        }
+    }
+
+    func synchronize(config: SyncConfigDto, tokens: any AccessTokenSource, scheduled: Bool = false) async throws -> SyncStatusDto {
+        let device = try await perform { $0 }
+        return try await withCheckedThrowingContinuation { continuation in
+            networkQueue.async {
+                do {
+                    let result: SyncStatusDto
+                    if scheduled { result = try device.pollSync(config: config, tokens: tokens) }
+                    else { result = try device.syncNow(config: config, tokens: tokens) }
+                    continuation.resume(returning: result)
+                }
+                catch { continuation.resume(throwing: error) }
             }
         }
     }
@@ -57,6 +74,37 @@ public final class RustDeviceService: DeviceService {
     public var onChange: (() -> Void)?
     private let session: RustSession
     private var listening = false
+    private var syncConfiguration: SyncConfigDto?
+    private var tokenSource: (any AccessTokenSource)?
+    private var syncTask: Task<Void, Never>?
+    public var supportsSync: Bool { syncConfiguration != nil && tokenSource != nil }
+
+    /// Auth setup supplies the server-verified intended membership. Opening the
+    /// offline store still needs neither a token nor a network connection.
+    public func configureSync(_ configuration: SyncConfigDto, tokens: any AccessTokenSource) {
+        syncConfiguration = configuration
+        tokenSource = tokens
+        syncTask?.cancel()
+        syncTask = Task { [weak self] in
+            while !Task.isCancelled && self != nil {
+                await self?.pollSynchronization()
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+            }
+        }
+    }
+    private func pollSynchronization() async {
+        guard let configuration = syncConfiguration, let tokens = tokenSource else { return }
+        do {
+            _ = try await session.synchronize(config: configuration, tokens: tokens, scheduled: true)
+            snapshot = try await session.perform { try readSnapshot($0) }
+            onChange?()
+        } catch { /* The next foreground attempt retains the same durable work. */ }
+    }
+    public func synchronize() async throws {
+        guard let configuration = syncConfiguration, let tokens = tokenSource else { throw DeviceServiceError.unavailable }
+        _ = try await session.synchronize(config: configuration, tokens: tokens)
+        snapshot = try await session.perform { try readSnapshot($0) }
+    }
 
     public init(databaseURL: URL, accountScope: String) {
         session = RustSession(config: DeviceConfig(databasePath: databaseURL.path, accountScope: accountScope))
@@ -85,7 +133,7 @@ public final class RustDeviceService: DeviceService {
             return try readSnapshot(device)
         }
     }
-    public func close() async throws { try await session.close() }
+    public func close() async throws { syncTask?.cancel(); syncTask = nil; syncConfiguration = nil; tokenSource = nil; try await session.close() }
     public func startShift() async throws {
         try await mutate { _ = try $0.startShift(atMs: epochNow()) }
     }
@@ -188,5 +236,6 @@ private func readSnapshot(_ device: ErDevice) throws -> DeviceSnapshot {
         switch definition.kind { case .template: kind = .template; case .admissionMessage: kind = .admissionMessage; case .dischargeInstructions: kind = .dischargeInstructions; case .custom: kind = .custom }
         return SavedPreference(id: id, section: definition.name, instructions: definition.sections.first?.instructions ?? definition.instructions, isDefault: definition.isDefault, version: definition.version, kind: kind, archived: definition.archived)
     }
-    return DeviceSnapshot(shiftID: state.shift.flatMap { UUID(uuidString: $0.id) }, selectedPatientID: state.shift?.selectedPatientId.flatMap(UUID.init(uuidString:)), patients: patients, preferences: preferences, revision: state.revision)
+    let delivery = try device.syncStatus()
+    return DeviceSnapshot(sync: SyncPresentation(status: delivery.status, queued: delivery.queuedEvents, awaitingConfirmation: delivery.awaitingDownload, conflicts: delivery.conflicts), shiftID: state.shift.flatMap { UUID(uuidString: $0.id) }, selectedPatientID: state.shift?.selectedPatientId.flatMap(UUID.init(uuidString:)), patients: patients, preferences: preferences, revision: state.revision)
 }

@@ -781,3 +781,162 @@ fn process_kill_after_acknowledged_write_survives() {
     assert_eq!(core.view().patients[0].room.as_deref(), Some("Room 4"));
     let _ = std::fs::remove_file(ack);
 }
+
+#[test]
+fn sync_request_budget_and_connection_binding_survive_reopen() {
+    let db = TestDb::new();
+    let mut c = DeviceCore::open(db.config()).unwrap();
+    let binding = er_store::sync::SyncBinding {
+        origin: "https://example.invalid".into(),
+        organization: Uuid::now_v7(),
+        clinician: Uuid::now_v7(),
+    };
+    c.bind_sync(binding.clone()).unwrap();
+    for _ in 0..48 {
+        assert!(c.reserve_request().unwrap());
+    }
+    assert!(!c.reserve_request().unwrap());
+    drop(c);
+    let c = DeviceCore::open(db.config()).unwrap();
+    assert_eq!(c.sync_view().unwrap().status, "budget_wait");
+    let mut other = binding;
+    other.clinician = Uuid::now_v7();
+    assert_eq!(c.sync_can_connect(&other), Err(DeviceError::Scope));
+}
+#[test]
+fn downloaded_signing_blocks_pending_local_edits_before_upload() {
+    use crate::sync::Answer;
+    use er_api::{EventDown, EventsPage};
+    use er_domain::NoteEvent;
+    let db = TestDb::new();
+    let mut c = DeviceCore::open(db.config()).unwrap();
+    c.start_shift(now()).unwrap();
+    let p = patient(&mut c, "4");
+    c.record_data_reviewed(p, "offline change".into(), now())
+        .unwrap();
+    c.bind_sync(er_store::sync::SyncBinding {
+        origin: "https://example.invalid".into(),
+        organization: Uuid::now_v7(),
+        clinician: Uuid::now_v7(),
+    })
+    .unwrap();
+    let segment = Uuid::now_v7();
+    let events = [
+        NoteEvent::audio_started(p, segment, er_domain::CaptureMode::Dictation),
+        NoteEvent::audio_stopped(p, segment),
+        NoteEvent::mdm_generated(p, "Synthetic MDM".into(), vec![segment]),
+        NoteEvent::trigger_mdm(p),
+        NoteEvent::review_ready(p),
+        NoteEvent::sign(p),
+    ];
+    let down = events
+        .into_iter()
+        .enumerate()
+        .map(|(i, event)| EventDown {
+            sequence_id: i as u64 + 100,
+            event_id: Uuid::now_v7(),
+            occurred_at: event.clinical_occurred_at(),
+            event,
+        })
+        .collect();
+    c.accept_sync_answer(Answer::Page(
+        p,
+        0,
+        EventsPage {
+            events: down,
+            has_more: false,
+        },
+    ))
+    .unwrap();
+    assert_eq!(c.sync_view().unwrap().conflicts, 1);
+    assert!(c.note_view(p).unwrap().data_reviewed.is_empty());
+    assert_eq!(
+        c.record_data_reviewed(p, "must fail".into(), now()),
+        Err(DeviceError::Conflict)
+    );
+}
+
+#[test]
+fn reopen_between_pages_can_finish_downloading_a_segment_boundary() {
+    use crate::sync::Answer;
+    use er_api::{EventDown, EventsPage};
+    use er_domain::{CaptureMode, NoteEvent};
+    let db = TestDb::new();
+    let mut c = DeviceCore::open(db.config()).unwrap();
+    c.start_shift(now()).unwrap();
+    let p = patient(&mut c, "4");
+    let binding = er_store::sync::SyncBinding {
+        origin: "https://example.invalid".into(),
+        organization: Uuid::now_v7(),
+        clinician: Uuid::now_v7(),
+    };
+    c.bind_sync(binding.clone()).unwrap();
+    let segment = Uuid::now_v7();
+    let start = NoteEvent::audio_started(p, segment, CaptureMode::Dictation);
+    c.accept_sync_answer(Answer::Page(
+        p,
+        0,
+        EventsPage {
+            events: vec![EventDown {
+                sequence_id: 10,
+                event_id: Uuid::now_v7(),
+                occurred_at: start.clinical_occurred_at(),
+                event: start,
+            }],
+            has_more: true,
+        },
+    ))
+    .unwrap();
+    drop(c);
+    let mut c = DeviceCore::open(db.config()).unwrap();
+    assert!(c.sync_can_connect(&binding).unwrap());
+    let stop = NoteEvent::audio_stopped(p, segment);
+    c.accept_sync_answer(Answer::Page(
+        p,
+        10,
+        EventsPage {
+            events: vec![EventDown {
+                sequence_id: 50,
+                event_id: Uuid::now_v7(),
+                occurred_at: stop.clinical_occurred_at(),
+                event: stop,
+            }],
+            has_more: false,
+        },
+    ))
+    .unwrap();
+    assert_eq!(c.note_view(p).unwrap().phase, ClinicalPhase::Idle);
+    assert!(!c.note_view(p).unwrap().recovery_required);
+    drop(c);
+    DeviceCore::open(db.config()).unwrap();
+}
+
+#[test]
+fn batches_respect_the_encoded_byte_limit_as_well_as_event_count() {
+    let patient = Uuid::now_v7();
+    let events = (0..200)
+        .map(|n| er_store::StoredEvent {
+            sequence_id: n + 1,
+            event_id: Uuid::now_v7(),
+            event: er_domain::NoteEvent::data_reviewed(patient, "\"".repeat(8192)),
+            occurred_at: Utc::now(),
+        })
+        .collect();
+    let batch = crate::sync::bounded_event_batch(events).unwrap();
+    assert!(batch.len() < 200 && !batch.is_empty());
+    assert!(
+        serde_json::to_vec(&er_api::AppendEventsRequest { events: batch })
+            .unwrap()
+            .len()
+            < 2 * 1024 * 1024
+    );
+}
+
+#[test]
+fn first_connection_authentication_failure_remains_visible_without_a_binding() {
+    let db = TestDb::new();
+    let c = DeviceCore::open(db.config()).unwrap();
+    c.sync_failure("authentication", 0).unwrap();
+    assert_eq!(c.sync_view().unwrap().status, "authentication");
+    assert!(c.sync_view().unwrap().retry_at_ms.is_some());
+}

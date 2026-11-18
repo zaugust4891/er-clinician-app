@@ -1,0 +1,1129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Standalone copy of a claude.ai artifact. Opens directly in a browser. -->
+<title>Durable Device Core</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<style>
+/* Layout: long-scroll explainer. Prose column ~68ch, figures and the step-through use the full 1080px.
+   Color carries meaning everywhere: teal = clinical event record, amber = phone-only bookkeeping,
+   indigo = Swift layer, slate = Rust core. */
+:root {
+  --bg: #F1F4F5;
+  --surface: #FFFFFF;
+  --sunk: #E6ECEE;
+  --ink: #14232B;
+  --muted: #56676F;
+  --line: #CDD8DC;
+  --clin: #0A746F;
+  --clin-tint: #DCEFED;
+  --meta: #94570A;
+  --meta-tint: #F6EAD5;
+  --swift: #4351BE;
+  --swift-tint: #E3E6F7;
+  --core: #34464F;
+  --core-tint: #E0E7EA;
+  --ok: #26774A;
+  --ok-tint: #DDF0E4;
+  --bad: #AF3434;
+  --bad-tint: #F7E0E0;
+  --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0E1518; --surface: #152026; --sunk: #1B272D; --ink: #E2EAED; --muted: #93A4AC; --line: #2B3B42;
+    --clin: #47BEB5; --clin-tint: #11322F; --meta: #E3A64C; --meta-tint: #35280F;
+    --swift: #9CA6F6; --swift-tint: #1E2346; --core: #B6C4CB; --core-tint: #223036;
+    --ok: #63C58E; --ok-tint: #133222; --bad: #EF7E7E; --bad-tint: #3A1919;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0E1518; --surface: #152026; --sunk: #1B272D; --ink: #E2EAED; --muted: #93A4AC; --line: #2B3B42;
+  --clin: #47BEB5; --clin-tint: #11322F; --meta: #E3A64C; --meta-tint: #35280F;
+  --swift: #9CA6F6; --swift-tint: #1E2346; --core: #B6C4CB; --core-tint: #223036;
+  --ok: #63C58E; --ok-tint: #133222; --bad: #EF7E7E; --bad-tint: #3A1919;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 16px; line-height: 1.6; }
+.wrap {
+  max-width: 1080px; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 72px;
+}
+h1, h2, h3 { font-family: var(--display); line-height: 1.15; margin: 0; text-wrap: balance; }
+h1 { font-size: clamp(2rem, 5vw, 3.1rem); font-weight: 700; letter-spacing: -0.015em; }
+h2 { font-size: clamp(1.45rem, 3vw, 1.85rem); font-weight: 700; letter-spacing: -0.01em; }
+h3 { font-size: 1.1rem; font-weight: 600; }
+p, ul, ol, dl, figure { margin: 0; }
+a { color: var(--clin); }
+a:focus-visible, button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--swift); outline-offset: 2px; border-radius: 4px; }
+code { font-family: var(--mono); font-size: 0.86em; background: var(--sunk); padding: 0.05em 0.35em; border-radius: 4px; overflow-wrap: anywhere; }
+.prose { max-width: 68ch; display: grid; gap: 14px; }
+.muted { color: var(--muted); }
+.eyebrow { font: 600 0.72rem/1.2 var(--mono); letter-spacing: 0.09em; text-transform: uppercase; color: var(--muted); }
+
+/* Hero */
+.hero { display: grid; gap: 18px; padding-bottom: 36px; }
+.lede { font-size: 1.12rem; max-width: 64ch; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { display: inline-flex; align-items: center; gap: 7px; padding: 4px 11px; border-radius: 999px; font-size: 0.82rem; font-weight: 500; line-height: 1.4; }
+.chip::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none; }
+.chip.ok { background: var(--ok-tint); color: var(--ok); }
+.chip.warn { background: var(--meta-tint); color: var(--meta); }
+.chip.off { background: var(--sunk); color: var(--muted); }
+.toc { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 0.9rem; padding-top: 6px; }
+.toc a { color: var(--muted); text-decoration: none; border-bottom: 1px solid var(--line); }
+.toc a:hover { color: var(--ink); border-color: var(--ink); }
+
+/* Sections */
+.block { padding-block: 44px; border-top: 1px solid var(--line); display: grid; gap: 22px; }
+.block > header { display: grid; gap: 8px; }
+.sub { display: grid; gap: 14px; padding-top: 10px; }
+
+/* Figures */
+figure.fig { display: grid; gap: 10px; }
+.fig-scroll { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
+.fig-scroll svg { display: block; width: 100%; height: auto; min-width: 680px; }
+figcaption { font-size: 0.9rem; color: var(--muted); max-width: 72ch; }
+svg text { font-family: var(--body); fill: currentColor; }
+svg .t-title { font-size: 14px; font-weight: 600; }
+svg .t-sub { font-size: 12px; fill: var(--muted); }
+svg .t-mono { font-family: var(--mono); font-size: 12px; }
+svg .t-label { font-size: 12px; fill: var(--muted); }
+svg .t-row { font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; fill: var(--muted); }
+svg .box { fill: var(--surface); stroke: var(--line); stroke-width: 1.5; }
+svg .box-sunk { fill: var(--sunk); stroke: var(--line); stroke-width: 1.5; }
+svg .box-clin { fill: var(--clin-tint); stroke: var(--clin); stroke-width: 1.5; }
+svg .box-meta { fill: var(--meta-tint); stroke: var(--meta); stroke-width: 1.5; }
+svg .box-ok { fill: var(--ok-tint); stroke: var(--ok); stroke-width: 1.5; }
+svg .box-bad { fill: var(--bad-tint); stroke: var(--bad); stroke-width: 1.5; stroke-dasharray: 5 4; }
+svg .box-swift { fill: var(--swift-tint); stroke: var(--swift); stroke-width: 1.5; }
+svg .box-core { fill: var(--core-tint); stroke: var(--core); stroke-width: 1.5; }
+svg .box-ghost { fill: none; stroke: var(--muted); stroke-width: 1.5; stroke-dasharray: 5 4; }
+svg .wire { stroke: var(--ink); stroke-width: 1.5; fill: none; }
+svg .wire-muted { stroke: var(--muted); stroke-width: 1.5; fill: none; stroke-dasharray: 4 4; }
+svg .boundary { stroke: var(--swift); stroke-width: 1.5; stroke-dasharray: 3 4; }
+svg .c-clin { fill: var(--clin); }
+svg .c-meta { fill: var(--meta); }
+svg .c-ok { fill: var(--ok); }
+svg .c-bad { fill: var(--bad); }
+svg .c-swift { fill: var(--swift); }
+svg .c-core { fill: var(--core); }
+svg .arrowhead { fill: var(--ink); }
+svg .arrowhead-muted { fill: var(--muted); }
+svg .tag { fill: var(--meta); }
+svg .tag-text { font: 700 10px var(--mono); fill: var(--surface); letter-spacing: 0.06em; }
+svg .axis { stroke: var(--line); stroke-width: 1.5; }
+svg .tick { stroke: var(--line); stroke-width: 1; }
+svg .seg { fill: var(--clin-tint); stroke: var(--clin); stroke-width: 1.5; }
+svg .gap { stroke: var(--muted); stroke-width: 1.5; stroke-dasharray: 2 5; }
+svg .ctrl { stroke: var(--swift); stroke-width: 1.2; stroke-dasharray: 2 3; }
+
+/* Can / can't */
+.split { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.panel-list { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; display: grid; gap: 12px; align-content: start; }
+.panel-list h3 { display: flex; align-items: center; gap: 10px; }
+.panel-list ul { padding-left: 1.1em; display: grid; gap: 6px; }
+.panel-list li::marker { color: var(--muted); }
+.step-tag { font: 500 0.72rem var(--mono); background: var(--sunk); color: var(--muted); padding: 1px 6px; border-radius: 4px; white-space: nowrap; }
+@media (max-width: 760px) { .split { grid-template-columns: minmax(0, 1fr); } }
+
+/* Hops */
+.path-grid { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 24px; align-items: start; }
+@media (max-width: 980px) { .path-grid { grid-template-columns: minmax(0, 1fr); } }
+.hops { list-style: none; padding: 0; display: grid; gap: 10px; position: relative; }
+.hops::before { content: ""; position: absolute; left: 44px; top: 12px; bottom: 12px; width: 2px; background: var(--line); }
+.hop { position: relative; display: grid; grid-template-columns: 74px minmax(0, 1fr) minmax(0, 0.95fr); gap: 16px; align-items: start; padding: 14px 16px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line); }
+.hop .layer { justify-self: start; font: 600 0.66rem/1 var(--mono); text-transform: uppercase; letter-spacing: 0.08em; padding: 5px 7px; border-radius: 4px; }
+.hop.swift .layer { background: var(--swift-tint); color: var(--swift); }
+.hop.rust .layer { background: var(--core-tint); color: var(--core); }
+.hop.disk .layer { background: var(--clin-tint); color: var(--clin); }
+.hop.bridge { background: var(--bg); border-style: dashed; border-color: var(--swift); }
+.hop.bridge .layer { background: var(--bg); color: var(--swift); border: 1px dashed var(--swift); }
+.hop .body { display: grid; gap: 4px; min-width: 0; }
+.hop .body p { font-size: 0.94rem; }
+.hop .data { min-width: 0; font: 0.78rem/1.55 var(--mono); background: var(--sunk); border-radius: 6px; padding: 8px 10px; overflow-x: auto; white-space: pre; }
+.data .ok { color: var(--ok); }
+.data .dim { color: var(--muted); }
+@media (max-width: 760px) {
+  .hop { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .hops::before { display: none; }
+}
+.clerk { background: var(--sunk); border-radius: 12px; padding: 18px 20px; display: grid; gap: 12px; }
+.clerk dl { display: grid; gap: 10px; }
+.clerk dt { font-weight: 600; font-size: 0.92rem; }
+.clerk dd { margin: 0; font-size: 0.9rem; color: var(--muted); }
+.clerk dd code { color: var(--ink); }
+
+/* Tables */
+.table-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+th, td { text-align: left; vertical-align: top; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+tr:last-child td { border-bottom: none; }
+th { font: 600 0.72rem var(--mono); text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); background: var(--sunk); }
+td.term { font-family: var(--mono); font-size: 0.85rem; white-space: nowrap; }
+.decoder td.term { white-space: normal; min-width: 150px; }
+
+/* Stepper */
+.stepper { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 18px; display: grid; gap: 18px; }
+.rail { display: flex; flex-wrap: wrap; gap: 6px; }
+.rail button { font: 500 0.8rem var(--mono); width: 34px; height: 34px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--muted); cursor: pointer; font-variant-numeric: tabular-nums; }
+.rail button:hover { border-color: var(--ink); color: var(--ink); }
+.rail button[aria-current="step"] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+.rail button.k-meta::after, .rail button.k-clin::after { content: ""; display: block; width: 14px; height: 3px; border-radius: 2px; margin: 2px auto 0; }
+.rail button.k-meta::after { background: var(--meta); }
+.rail button.k-clin::after { background: var(--clin); }
+.stage { display: grid; grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.4fr); gap: 22px; align-items: start; }
+@media (max-width: 880px) { .stage { grid-template-columns: minmax(0, 1fr); } }
+.narration { display: grid; gap: 12px; align-content: start; min-width: 0; }
+.narration .count { font: 500 0.78rem var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+.narration h3 { font-size: 1.3rem; }
+.where { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.where li { font: 500 0.78rem/1.4 var(--mono); padding: 3px 9px; border-radius: 6px; }
+.where .meta { background: var(--meta-tint); color: var(--meta); }
+.where .clin { background: var(--clin-tint); color: var(--clin); }
+.where .none { background: var(--sunk); color: var(--muted); }
+.where .check { background: var(--ok-tint); color: var(--ok); }
+.checks { list-style: none; padding: 0; display: grid; gap: 6px; font-size: 0.92rem; }
+.checks li { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 6px; }
+.checks li::before { content: "✓"; color: var(--ok); font-weight: 700; }
+.nav { display: flex; gap: 8px; flex-wrap: wrap; padding-top: 4px; }
+.btn { font: 600 0.9rem var(--body); padding: 8px 16px; border-radius: 8px; border: 1px solid var(--ink); background: var(--ink); color: var(--surface); cursor: pointer; }
+.btn.secondary { background: transparent; color: var(--ink); border-color: var(--line); }
+.btn:disabled { opacity: 0.4; cursor: default; }
+.kbd-hint { font-size: 0.8rem; color: var(--muted); align-self: center; }
+.panels { display: grid; gap: 14px; min-width: 0; }
+.store { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; min-width: 0; }
+.store-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 9px 12px; border-bottom: 1px solid var(--line); }
+.store-head .name { font: 600 0.88rem var(--mono); }
+.store-head .kind { font-size: 0.8rem; color: var(--muted); }
+.store-head .rev { margin-left: auto; font: 600 0.78rem var(--mono); padding: 2px 8px; border-radius: 999px; font-variant-numeric: tabular-nums; }
+.store.meta .store-head { background: var(--meta-tint); }
+.store.meta .name { color: var(--meta); }
+.store.meta .rev { background: var(--surface); color: var(--meta); }
+.store.clin .store-head { background: var(--clin-tint); }
+.store.clin .name { color: var(--clin); }
+.store.clin .rev { background: var(--surface); color: var(--clin); }
+.scope-line { font: 0.78rem var(--mono); color: var(--muted); padding: 6px 12px; border-bottom: 1px solid var(--line); background: var(--bg); overflow-wrap: anywhere; }
+.json { font: 0.76rem/1.6 var(--mono); max-height: 430px; overflow: auto; padding: 8px 0; background: var(--surface); white-space: pre; position: relative; }
+.json.static { max-height: none; }
+.jl { padding: 0 12px; min-width: max-content; }
+.jl.chg { background: var(--meta-tint); box-shadow: inset 3px 0 0 var(--meta); }
+.j-key { color: var(--swift); }
+.j-str { color: var(--clin); }
+.j-num { color: var(--meta); }
+.j-null, .j-bool { color: var(--muted); font-style: italic; }
+.j-note { color: var(--muted); font-style: italic; padding-left: 1.2em; }
+.store.clin table { font: 0.78rem var(--mono); }
+.store.clin td, .store.clin th { padding: 7px 12px; white-space: nowrap; }
+.store.clin tr.new td { background: var(--clin-tint); }
+.store.clin tr.new td:first-child { box-shadow: inset 3px 0 0 var(--clin); }
+.store.clin td.payload { white-space: normal; color: var(--muted); font-size: 0.72rem; overflow-wrap: anywhere; }
+.empty-row td { color: var(--muted); font-style: italic; white-space: normal; }
+.restored { font: 600 0.8rem var(--mono); color: var(--ok); background: var(--ok-tint); padding: 8px 12px; border-radius: 8px; }
+@media (prefers-reduced-motion: no-preference) {
+  .jl.chg, .store.clin tr.new td { animation: flash 900ms ease-out; }
+  @keyframes flash { from { filter: brightness(0.92); } to { filter: none; } }
+}
+
+/* Gates */
+.gates { list-style: none; padding: 0; display: grid; gap: 8px; counter-reset: gate; }
+.gates li { counter-increment: gate; display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 10px 14px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+.gates li::before { content: counter(gate); font: 600 0.8rem var(--mono); width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; background: var(--sunk); color: var(--muted); }
+.gates li.fork { border-color: var(--clin); background: var(--clin-tint); }
+.gates .q { font-weight: 500; }
+.gates .q small { display: block; font-weight: 400; color: var(--muted); font-size: 0.85rem; }
+.gates .no { font: 500 0.76rem var(--mono); color: var(--bad); background: var(--bad-tint); padding: 3px 8px; border-radius: 6px; white-space: nowrap; }
+.gates-pass { padding: 12px 14px; border-radius: 10px; background: var(--ok-tint); color: var(--ink); font-size: 0.94rem; }
+.gates-pass strong { color: var(--ok); }
+@media (max-width: 560px) { .gates li { grid-template-columns: 30px minmax(0, 1fr); } .gates .no { grid-column: 2; justify-self: start; } }
+
+/* Failure cards */
+.cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+@media (max-width: 900px) { .cards { grid-template-columns: minmax(0, 1fr); } }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; display: grid; grid-template-rows: auto auto 1fr; gap: 10px; }
+.card-top { display: flex; justify-content: space-between; align-items: start; gap: 10px; }
+.card h3 { font-size: 1rem; }
+.result { flex: none; font: 600 0.72rem var(--mono); padding: 3px 8px; border-radius: 6px; white-space: nowrap; }
+.result.bad { background: var(--bad-tint); color: var(--bad); }
+.result.ok { background: var(--ok-tint); color: var(--ok); }
+.result.warn { background: var(--meta-tint); color: var(--meta); }
+.card p { font-size: 0.9rem; }
+.card .setup { color: var(--muted); }
+.card .rule { font-size: 0.84rem; color: var(--muted); border-top: 1px solid var(--line); padding-top: 8px; align-self: end; }
+
+/* Lists */
+.plain-list { padding-left: 1.1em; display: grid; gap: 8px; max-width: 72ch; }
+.plain-list li::marker { color: var(--muted); }
+.two-col { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; align-items: start; }
+@media (max-width: 860px) { .two-col { grid-template-columns: minmax(0, 1fr); } }
+.json-card { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; min-width: 0; }
+.json-card .store-head { background: var(--swift-tint); }
+.json-card .name { color: var(--swift); }
+
+footer { border-top: 1px solid var(--line); padding-top: 24px; font-size: 0.85rem; color: var(--muted); display: grid; gap: 6px; }
+</style>
+<style>body { margin: 0; } img { max-width: 100%; } [hidden] { display: none !important; }</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <p class="eyebrow">Phase 5 · Step 2 · implemented 2026-11-17</p>
+  <h1>The phone now keeps its own records</h1>
+  <p class="lede">Before this step, the iPhone app's screens ran on a demo service that held fake patients in memory and forgot everything when the app closed. Step 2 replaces it with real Rust code that saves every action to a database file on the phone. It waits for the disk to confirm the save, and only then tells the screen it worked. Close the app, reopen it, and the shift is still there. No internet, login, or server is involved.</p>
+  <div class="chips">
+    <span class="chip ok">Rust core built and tested on Linux</span>
+    <span class="chip warn">Not yet built in Xcode or run on an iPhone</span>
+    <span class="chip off">No audio, sync, or AI on the phone yet</span>
+  </div>
+  <nav class="toc" aria-label="Sections">
+    <a href="#change">What changed</a>
+    <a href="#path">Path of one tap</a>
+    <a href="#file">The file</a>
+    <a href="#walk">Walk through a shift</a>
+    <a href="#recording">Recording rules</a>
+    <a href="#failures">Failures</a>
+    <a href="#screen">What the screen gets</a>
+    <a href="#open">Still open</a>
+    <a href="#decoder">Jargon decoder</a>
+  </nav>
+</header>
+
+<!-- 1. Before / after -->
+<section class="block" id="change">
+  <header>
+    <p class="eyebrow">The big picture</p>
+    <h2>What changed, in one picture</h2>
+  </header>
+  <figure class="fig">
+    <div class="fig-scroll">
+      <svg viewBox="0 0 900 280" role="img" aria-label="Before Step 2, screens talked to an in-memory demo service and nothing was saved. After Step 2, screens call a Swift service, which crosses the Swift-Rust bridge into the Rust core, which saves to device.sqlite on the phone.">
+        <defs>
+          <marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrowhead"/></marker>
+          <marker id="a1m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrowhead-muted"/></marker>
+        </defs>
+        <text x="20" y="28" class="t-row">BEFORE STEP 2</text>
+        <rect x="20" y="45" width="160" height="60" rx="10" class="box-swift"/>
+        <text x="100" y="70" text-anchor="middle" class="t-title">SwiftUI screens</text>
+        <text x="100" y="89" text-anchor="middle" class="t-sub">the app's views</text>
+        <line x1="182" y1="75" x2="256" y2="75" class="wire" marker-end="url(#a1)"/>
+        <text x="220" y="66" text-anchor="middle" class="t-label">reads, writes</text>
+        <rect x="260" y="45" width="220" height="60" rx="10" class="box-sunk"/>
+        <text x="370" y="70" text-anchor="middle" class="t-title">Demo service</text>
+        <text x="370" y="89" text-anchor="middle" class="t-sub">fake patients, held in memory</text>
+        <line x1="482" y1="75" x2="566" y2="75" class="wire-muted" marker-end="url(#a1m)"/>
+        <text x="525" y="66" text-anchor="middle" class="t-label">app closes</text>
+        <rect x="570" y="45" width="190" height="60" rx="10" class="box-bad"/>
+        <text x="665" y="70" text-anchor="middle" class="t-title c-bad">Gone</text>
+        <text x="665" y="89" text-anchor="middle" class="t-sub">nothing was on disk</text>
+
+        <text x="20" y="160" class="t-row">AFTER STEP 2</text>
+        <rect x="20" y="175" width="150" height="60" rx="10" class="box-swift"/>
+        <text x="95" y="200" text-anchor="middle" class="t-title">SwiftUI screens</text>
+        <text x="95" y="219" text-anchor="middle" class="t-sub">same screens</text>
+        <line x1="172" y1="205" x2="226" y2="205" class="wire" marker-end="url(#a1)"/>
+        <text x="200" y="196" text-anchor="middle" class="t-label">calls</text>
+        <rect x="230" y="175" width="180" height="60" rx="10" class="box-swift"/>
+        <text x="320" y="200" text-anchor="middle" class="t-title">RustDeviceService</text>
+        <text x="320" y="219" text-anchor="middle" class="t-sub">Swift, background queue</text>
+        <line x1="445" y1="166" x2="445" y2="250" class="boundary"/>
+        <text x="445" y="268" text-anchor="middle" class="t-label c-swift">Swift ↔ Rust bridge</text>
+        <line x1="412" y1="205" x2="476" y2="205" class="wire" marker-end="url(#a1)"/>
+        <rect x="480" y="175" width="190" height="60" rx="10" class="box-core"/>
+        <text x="575" y="200" text-anchor="middle" class="t-title">ErDevice → DeviceCore</text>
+        <text x="575" y="219" text-anchor="middle" class="t-sub">Rust: checks, then saves</text>
+        <line x1="672" y1="205" x2="726" y2="205" class="wire" marker-end="url(#a1)"/>
+        <text x="700" y="196" text-anchor="middle" class="t-label">saves</text>
+        <rect x="730" y="175" width="150" height="60" rx="10" class="box-ok"/>
+        <text x="805" y="200" text-anchor="middle" class="t-title">device.sqlite</text>
+        <text x="805" y="219" text-anchor="middle" class="t-sub">survives relaunch</text>
+      </svg>
+    </div>
+    <figcaption>Before, nothing reached the disk. Now every tap crosses into Rust and is saved in <code>device.sqlite</code> before the screen hears it worked. If that file can't be opened, the app shows an error screen. It does not quietly fall back to demo data.</figcaption>
+  </figure>
+
+  <div class="split">
+    <div class="panel-list">
+      <h3>The phone now remembers</h3>
+      <ul>
+        <li>The shift: when it started, whether it's open. Ended shifts are kept.</li>
+        <li>The patient list in the order you added it, with room labels</li>
+        <li>Which patient is selected</li>
+        <li>Each patient's consent history, and the ambient or solo choice</li>
+        <li>Chart context you typed (history, meds, vitals and so on), with its source and whether it's been reviewed</li>
+        <li>Structured labs, imaging, vitals, meds, diagnoses and disposition</li>
+        <li>Templates and saved prompts, with every past version</li>
+        <li>A scratch draft per patient</li>
+        <li>Review, sign and plain-text export</li>
+      </ul>
+    </div>
+    <div class="panel-list">
+      <h3>It still can't</h3>
+      <ul>
+        <li>Record audio <span class="step-tag">Step 4</span><br><span class="muted">The rules are written and tested with a fake microphone. The real one is switched off.</span></li>
+        <li>Sync with the server <span class="step-tag">Step 3</span><br><span class="muted">Nothing is uploaded or downloaded. Nothing claims to be synced.</span></li>
+        <li>Write the HPI or MDM with AI <span class="step-tag">Step 7</span><br><span class="muted">The phone can display those sections when they arrive from the server. It has no code to create them.</span></li>
+        <li>Prove itself on Apple hardware <span class="step-tag">needs the Mac</span><br><span class="muted">Xcode build, simulator tests and a signed iPhone run haven't happened yet.</span></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 2. Path of one tap -->
+<section class="block" id="path">
+  <header>
+    <p class="eyebrow">Layers</p>
+    <h2>The path of one tap</h2>
+    <p class="prose">Follow one action from start to finish: entering a potassium of 5.8 mmol/L for the patient in Room 4. It passes through three layers. Swift draws the screen, Rust makes the decisions, and SQLite holds the record.</p>
+  </header>
+  <div class="path-grid">
+    <ol class="hops">
+      <li class="hop swift">
+        <span class="layer">Swift</span>
+        <div class="body"><h3>1. The screen</h3><p>You fill in the lab form for Room 4 and tap Save. The form already holds Room 4's ID, so switching patients before you tap can't send the lab to the wrong chart.</p></div>
+        <div class="data">recordObjective(
+  .lab("Potassium", 5.8, "mmol/L"),
+  for: A)   <span class="dim">// A = Room 4</span></div>
+      </li>
+      <li class="hop swift">
+        <span class="layer">Swift</span>
+        <div class="body"><h3>2. RustDeviceService</h3><p>Moves the job onto one background lane so the screen never freezes while the disk works. Jobs from the app run one after another, in order.</p></div>
+        <div class="data">DispatchQueue
+  "app.ernote.rust-service"
+  <span class="dim">serial: one job at a time</span></div>
+      </li>
+      <li class="hop bridge">
+        <span class="layer">Bridge</span>
+        <div class="body"><h3>Generated bridge (UniFFI)</h3><p>Generated code converts Swift values into Rust values. Nobody edits it by hand. It's regenerated whenever the Rust interface changes, which is now at version 2.</p></div>
+        <div class="data">UUID   → "0196c8e2-7a10-…"
+Double → f64 5.8
+<span class="dim">Swift and Rust versions must match</span></div>
+      </li>
+      <li class="hop rust">
+        <span class="layer">Rust</span>
+        <div class="body"><h3>3. ErDevice: the inbox</h3><p>Drops the job into a queue that holds 64 jobs. If it's full, the call returns <code>Busy</code> right away. Once a job is accepted, the caller waits for the real answer. There's no timeout that could report failure while the save actually goes through.</p></div>
+        <div class="data">queue: 1 of 64 slots used
+<span class="dim">full → Busy (try again)</span></div>
+      </li>
+      <li class="hop rust">
+        <span class="layer">Rust</span>
+        <div class="body"><h3>4. DeviceCore: the checks</h3><p>One dedicated worker thread takes jobs one at a time. Before writing anything, it checks this one.</p></div>
+        <div class="data"><span class="ok">✓</span> Room 4 is on this shift
+<span class="ok">✓</span> Room 4's note isn't signed
+<span class="ok">✓</span> 5.8 is a real number
+  <span class="dim">(NaN or infinity is refused)</span>
+<span class="ok">✓</span> time isn't &gt;5 s in the future
+<span class="ok">✓</span> lab's patient = form's patient</div>
+      </li>
+      <li class="hop disk">
+        <span class="layer">Disk</span>
+        <div class="body"><h3>5. SQLite: the save</h3><p>Adds one row to the events table and waits until the disk confirms it. If this fails, nothing below happens and the app gets a <code>Storage</code> error.</p></div>
+        <div class="data">events #1
+  ResultReceived · patient A
+<span class="dim">synchronous = FULL</span></div>
+      </li>
+      <li class="hop rust">
+        <span class="layer">Rust</span>
+        <div class="body"><h3>6. Update the in-memory note</h3><p>Only after the disk says yes does the core update its working copy of Room 4's note.</p></div>
+        <div class="data">note(A).results = [
+  "Potassium: 5.8 mmol/L"
+]</div>
+      </li>
+      <li class="hop swift">
+        <span class="layer">Swift</span>
+        <div class="body"><h3>7. Ring the bell, redraw</h3><p>The reply goes back to Swift with fresh screen data. Separately, a notification thread rings a bell that only says "something changed." It carries no patient data. Any screen that's listening re-reads what it shows and updates on the main thread.</p></div>
+        <div class="data">invalidated(revision: 12)
+→ snapshot(), note(A)
+→ MainActor redraw
+<span class="dim">quick rings can merge into one</span></div>
+      </li>
+    </ol>
+
+    <aside class="clerk" aria-label="Analogy">
+      <p class="eyebrow">Analogy</p>
+      <h3>The unit clerk at the nurses' station</h3>
+      <dl>
+        <div><dt>One clerk</dt><dd>The owner thread. Every request goes through the same person, one at a time, so two requests can't collide.</dd></div>
+        <div><dt>An inbox tray with 64 slots</dt><dd>The bounded queue. When it's full you're told to come back (<code>Busy</code>). You're never left waiting forever.</dd></div>
+        <div><dt>Writes it in the binder first</dt><dd>SQLite. Nothing counts until it's written down and the ink is dry.</dd></div>
+        <div><dt>Rings a bell</dt><dd>The invalidation. The bell doesn't say what changed. Everyone just looks at the board again.</dd></div>
+        <div><dt>If the clerk faints mid-task</dt><dd>A Rust panic. The job returns <code>Internal</code>, the station closes, and the app has to reopen it. Nobody keeps working from a half-written page.</dd></div>
+      </dl>
+    </aside>
+  </div>
+</section>
+
+<!-- 3. The file -->
+<section class="block" id="file">
+  <header>
+    <p class="eyebrow">Storage</p>
+    <h2>One file, two kinds of records</h2>
+    <p class="prose">Everything lives in one SQLite file in the app's protected storage folder. Inside it, data takes two very different shapes. Which one a tap lands in tells you whether it's part of the clinical record.</p>
+  </header>
+  <figure class="fig">
+    <div class="fig-scroll">
+      <svg viewBox="0 0 860 345" role="img" aria-label="Clinical facts are appended to the events table. Phone bookkeeping is saved into the device_state document. Recording start and stop write to both in one transaction. The file also has snapshots and a device_scope table naming the owning account.">
+        <defs>
+          <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrowhead"/></marker>
+        </defs>
+        <!-- inputs -->
+        <rect x="20" y="30" width="250" height="120" rx="10" class="box-clin"/>
+        <text x="38" y="54" class="t-title c-clin">Clinical facts</text>
+        <text x="38" y="78" class="t-sub">labs, imaging, vitals</text>
+        <text x="38" y="98" class="t-sub">medications, diagnoses</text>
+        <text x="38" y="118" class="t-sub">disposition, data reviewed</text>
+        <text x="38" y="138" class="t-sub">ready for review, sign</text>
+
+        <rect x="20" y="162" width="250" height="48" rx="10" class="box"/>
+        <text x="38" y="182" class="t-title">Recording start / stop</text>
+        <text x="38" y="200" class="t-sub">writes both, in one transaction</text>
+
+        <rect x="20" y="222" width="250" height="108" rx="10" class="box-meta"/>
+        <text x="38" y="246" class="t-title c-meta">Phone bookkeeping</text>
+        <text x="38" y="270" class="t-sub">shift, patient list, selection</text>
+        <text x="38" y="290" class="t-sub">consent, ambient/solo, chart context</text>
+        <text x="38" y="310" class="t-sub">templates, saved prompts, drafts</text>
+
+        <!-- file -->
+        <rect x="330" y="20" width="510" height="310" rx="14" class="box-sunk"/>
+        <text x="350" y="46"><tspan class="t-mono" font-weight="600">device.sqlite</tspan><tspan class="t-sub" dx="8">layout version 1 (user_version)</tspan></text>
+
+        <rect x="350" y="62" width="225" height="110" rx="8" class="box-clin"/>
+        <text x="366" y="88" class="t-mono c-clin" font-weight="600">events</text>
+        <text x="366" y="110" class="t-sub">append-only clinical log</text>
+        <text x="366" y="130" class="t-sub">same types the server uses</text>
+        <text x="366" y="150" class="t-sub">uploads in Step 3</text>
+
+        <rect x="595" y="62" width="225" height="110" rx="8" class="box"/>
+        <text x="611" y="88" class="t-mono" font-weight="600">snapshots</text>
+        <text x="611" y="110" class="t-sub">checkpoint of each note</text>
+        <text x="611" y="130" class="t-sub">so reopening is fast</text>
+        <text x="611" y="150" class="t-sub">damaged → rebuilt from events</text>
+
+        <rect x="350" y="200" width="225" height="110" rx="8" class="box-meta"/>
+        <rect x="527" y="208" width="40" height="18" rx="4" class="tag"/>
+        <text x="547" y="221" text-anchor="middle" class="tag-text">NEW</text>
+        <text x="366" y="226" class="t-mono c-meta" font-weight="600">device_state</text>
+        <text x="366" y="248" class="t-sub">one JSON document</text>
+        <text x="366" y="268" class="t-sub">revision +1 on every save</text>
+        <text x="366" y="288" class="t-sub">stays on the phone for now</text>
+
+        <rect x="595" y="200" width="225" height="110" rx="8" class="box-meta"/>
+        <rect x="772" y="208" width="40" height="18" rx="4" class="tag"/>
+        <text x="792" y="221" text-anchor="middle" class="tag-text">NEW</text>
+        <text x="611" y="226" class="t-mono c-meta" font-weight="600">device_scope</text>
+        <text x="611" y="248" class="t-sub">which account owns</text>
+        <text x="611" y="268" class="t-sub">this file</text>
+        <text x="611" y="288" class="t-mono t-sub">"synthetic-development"</text>
+
+        <!-- arrows -->
+        <line x1="272" y1="90" x2="346" y2="100" class="wire" marker-end="url(#a2)"/>
+        <text x="306" y="84" text-anchor="middle" class="t-label">appends</text>
+        <line x1="272" y1="178" x2="346" y2="152" class="wire" marker-end="url(#a2)"/>
+        <line x1="272" y1="194" x2="346" y2="222" class="wire" marker-end="url(#a2)"/>
+        <line x1="272" y1="272" x2="346" y2="262" class="wire" marker-end="url(#a2)"/>
+        <text x="306" y="258" text-anchor="middle" class="t-label">saves</text>
+      </svg>
+    </div>
+    <figcaption>Clinical facts are appended to the events log, the same format the server already stores. Phone bookkeeping is saved as one JSON document. Starting or stopping a recording writes to both in one transaction, so an audio event and its consent details can never get out of step.</figcaption>
+  </figure>
+
+  <div class="two-col">
+    <div class="prose">
+      <h3>Why two shapes?</h3>
+      <p>The server already understands events like <code>ResultReceived</code> and <code>AudioStarted</code>, so Step 3 can upload them unchanged. Consent, chart context, templates and drafts have no server format yet. Rather than invent one now, Step 2 keeps them on the phone in <code>device_state</code>. Steps 3 and 7 will decide how they sync.</p>
+      <p>Every save to <code>device_state</code> names the revision it started from. The file accepts it only if that's still the latest revision, then bumps the number by one. That's how two edits can't silently overwrite each other.</p>
+    </div>
+    <div class="prose">
+      <h3>Upgrading an older file</h3>
+      <p>The table layout's version number is kept inside SQLite itself. A version 0 file (just events and snapshots, from earlier phases) gets the two new tables added in one transaction, and its old events are left alone. If anything about the upgrade looks wrong, such as a table with the wrong columns, the whole upgrade rolls back.</p>
+      <p>A file written by a newer app version is refused rather than guessed at. The JSON inside <code>device_state</code> has its own version number (<code>format_version: 1</code>) for the same reason.</p>
+    </div>
+  </div>
+</section>
+
+<!-- 4. Walkthrough -->
+<section class="block" id="walk">
+  <header>
+    <p class="eyebrow">Example data</p>
+    <h2>Walk through a shift</h2>
+    <p class="prose">Here's a short shift on a phone with no network. Step through it to see exactly what each tap writes. Amber highlights are changes to <code>device_state</code>. Teal rows are new clinical events. IDs are shortened (real ones look like <code>0196c8e2-7a10-7c3e-9f1a-2b4d6e8f0a11</code>), empty name and age fields are hidden, and times are shown in US Eastern.</p>
+  </header>
+
+  <div class="stepper" id="stepper" tabindex="0" aria-label="Shift walkthrough. Use left and right arrow keys to change step.">
+    <div class="rail" id="rail" aria-label="Steps"></div>
+    <div class="stage">
+      <div class="narration">
+        <p class="count" id="count"></p>
+        <h3 id="stepTitle"></h3>
+        <div id="stepBody" class="prose"></div>
+        <ul class="where" id="where"></ul>
+        <div class="nav">
+          <button class="btn secondary" id="prev" type="button">Back</button>
+          <button class="btn" id="next" type="button">Next step</button>
+          <span class="kbd-hint">or use ← →</span>
+        </div>
+      </div>
+      <div class="panels">
+        <div class="restored" id="restored" hidden>Reopened from disk. Everything below came back unchanged.</div>
+        <section class="store meta" aria-label="device_state contents">
+          <div class="store-head"><span class="name">device_state</span><span class="kind">phone-only bookkeeping</span><span class="rev" id="rev"></span></div>
+          <div class="scope-line">device_scope = "synthetic-development"</div>
+          <div class="json" id="json"></div>
+        </section>
+        <section class="store clin" aria-label="events table contents">
+          <div class="store-head"><span class="name">events</span><span class="kind">clinical record</span><span class="rev" id="evcount"></span></div>
+          <div style="overflow-x:auto">
+            <table>
+              <thead><tr><th>seq</th><th>event_type</th><th>patient</th><th>occurred_at</th></tr></thead>
+              <tbody id="events"></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 5. Recording -->
+<section class="block" id="recording">
+  <header>
+    <p class="eyebrow">Capture and consent</p>
+    <h2>Recording: rules built, microphone off</h2>
+    <p class="prose">The production app can't record. <code>RustDeviceService</code> reports <code>supportsRecording = false</code>, never asks for microphone permission, and opens the Rust core with a mic adapter that's always unavailable. The rules for when recording is allowed are still written and tested now, using a fake microphone in Rust tests. Step 4 then only has to plug in real hardware.</p>
+  </header>
+
+  <div class="sub">
+    <h3>Six checks before the mic can start</h3>
+    <ol class="gates">
+      <li><span class="q">Is a shift open?</span><span class="no">no → refused</span></li>
+      <li><span class="q">Is this the selected patient?<small>You can't start recording for a patient you aren't on.</small></span><span class="no">no → refused</span></li>
+      <li><span class="q">Is the note at Registered, Idle or Finalizing?<small>Pending sign-off and Signed notes can't record. A Finalizing re-eval keeps the existing MDM.</small></span><span class="no">no → refused</span></li>
+      <li><span class="q">Is a microphone adapter available?<small>Production phone: no. Rust tests: a fake one.</small></span><span class="no">no → refused</span></li>
+      <li><span class="q">Is nothing else recording, interrupted or waiting on a stop?</span><span class="no">no → refused</span></li>
+      <li class="fork"><span class="q">Ambient only: is the latest consent Granted?<small>Unknown, Declined and Revoked all fail. Solo dictation skips this check, but only if the clinician chose solo on purpose. Declining never switches modes by itself.</small></span><span class="no">no → refused</span></li>
+    </ol>
+    <p class="gates-pass"><strong>All six pass:</strong> the mic starts, then <code>AudioStarted</code> and the new segment's details (mode, source, which consent revision allowed it) save together in one transaction. If that save fails, the mic is released immediately.</p>
+    <p class="prose">Changing consent to anything other than Granted stops the mic <em>before</em> trying to save the change. If that save then fails, ambient stays locked for that visit until a Granted choice saves successfully.</p>
+  </div>
+
+  <div class="sub">
+    <h3>Recorder states</h3>
+    <figure class="fig">
+      <div class="fig-scroll">
+        <svg viewBox="0 0 820 280" role="img" aria-label="Recorder state diagram. The production phone sits at Unavailable. With a mic, Ready goes to Recording on start. Recording goes to Paused on pause, switch or consent change, and Paused returns to Recording on resume with a new segment ID. If the stop can't be saved, Recording goes to Pending stop, then Paused on retry. If the app dies while recording, reopen shows Interrupted, which goes to Paused only after reconciliation.">
+          <defs>
+            <marker id="a3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrowhead"/></marker>
+            <marker id="a3m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrowhead-muted"/></marker>
+          </defs>
+          <rect x="20" y="180" width="140" height="46" rx="10" class="box-ghost"/>
+          <text x="90" y="200" text-anchor="middle" class="t-title">Unavailable</text>
+          <text x="90" y="217" text-anchor="middle" class="t-sub">the real phone today</text>
+          <line x1="90" y1="178" x2="90" y2="86" class="wire-muted" marker-end="url(#a3m)"/>
+          <text x="100" y="138" class="t-label">Step 4: real mic</text>
+
+          <rect x="20" y="38" width="140" height="46" rx="10" class="box"/>
+          <text x="90" y="66" text-anchor="middle" class="t-title">Ready</text>
+          <line x1="162" y1="61" x2="221" y2="61" class="wire" marker-end="url(#a3)"/>
+          <text x="192" y="52" text-anchor="middle" class="t-label">start</text>
+
+          <rect x="225" y="38" width="140" height="46" rx="10" class="box-clin"/>
+          <text x="295" y="66" text-anchor="middle" class="t-title c-clin">Recording</text>
+
+          <rect x="625" y="38" width="140" height="46" rx="10" class="box"/>
+          <text x="695" y="66" text-anchor="middle" class="t-title">Paused</text>
+
+          <line x1="367" y1="52" x2="621" y2="52" class="wire" marker-end="url(#a3)"/>
+          <text x="494" y="43" text-anchor="middle" class="t-label">pause · switch patient · consent change</text>
+          <line x1="623" y1="72" x2="369" y2="72" class="wire" marker-end="url(#a3)"/>
+          <text x="494" y="92" text-anchor="middle" class="t-label">resume (new segment ID)</text>
+
+          <rect x="405" y="122" width="180" height="48" rx="10" class="box-meta"/>
+          <text x="495" y="142" text-anchor="middle" class="t-title c-meta">Pending stop</text>
+          <text x="495" y="160" text-anchor="middle" class="t-sub">mic off, stop not saved yet</text>
+
+          <rect x="405" y="208" width="180" height="48" rx="10" class="box-bad"/>
+          <text x="495" y="228" text-anchor="middle" class="t-title c-bad">Interrupted</text>
+          <text x="495" y="246" text-anchor="middle" class="t-sub">app died while recording</text>
+
+          <line x1="320" y1="86" x2="402" y2="138" class="wire" marker-end="url(#a3)"/>
+          <text x="300" y="128" text-anchor="end" class="t-label">save fails</text>
+          <line x1="290" y1="86" x2="402" y2="222" class="wire" marker-end="url(#a3)"/>
+          <text x="300" y="196" text-anchor="end" class="t-label">app killed</text>
+
+          <line x1="587" y1="138" x2="668" y2="87" class="wire" marker-end="url(#a3)"/>
+          <text x="640" y="134" class="t-label">retry, same ID</text>
+          <line x1="587" y1="226" x2="700" y2="87" class="wire" marker-end="url(#a3)"/>
+          <text x="666" y="210" class="t-label">reconcile (Step 4)</text>
+        </svg>
+      </div>
+      <figcaption>The real phone sits at Unavailable, so nothing past that box happens in production yet. The two lower states are the failure cases. <strong>Pending stop</strong>: the mic is off but the disk refused the stop, so the core blocks other changes until a retry saves the same stop with the same event ID. <strong>Interrupted</strong>: the app died mid-recording. On reopen the core blocks recording and does not guess an end time. Step 4 will close it using evidence from the audio file.</figcaption>
+    </figure>
+  </div>
+
+  <div class="sub">
+    <h3>A pause, another patient, and a return</h3>
+    <p class="prose">This example comes from the Rust tests, using the fake mic. Here Room 4 grants consent. The clinician records, pauses while waiting on results, dictates solo for Hall 3, then comes back to Room 4.</p>
+    <figure class="fig">
+      <div class="fig-scroll">
+        <svg viewBox="0 0 860 230" role="img" aria-label="Timeline from 7:20 to 8:00 PM. Room 4 records segment A1 ambient from 7:22 to 7:30, is paused with no audio until 7:44, then records segment A2 from 7:44 to 7:50. Hall 3 records segment B1 solo from 7:32 to 7:38.">
+          <text x="20" y="64" class="t-title">Room 4</text>
+          <text x="20" y="81" class="t-sub">consent granted</text>
+          <text x="20" y="134" class="t-title">Hall 3</text>
+          <text x="20" y="151" class="t-sub">solo chosen</text>
+
+          <rect x="165" y="50" width="140" height="34" rx="6" class="seg"/>
+          <text x="235" y="72" text-anchor="middle" class="t-mono">A1 · ambient</text>
+          <line x1="309" y1="67" x2="546" y2="67" class="gap"/>
+          <text x="427" y="44" text-anchor="middle" class="t-label">paused: waiting on results · no audio</text>
+          <rect x="550" y="50" width="105" height="34" rx="6" class="seg"/>
+          <text x="602" y="72" text-anchor="middle" class="t-mono">A2 · ambient</text>
+
+          <rect x="340" y="120" width="105" height="34" rx="6" class="seg"/>
+          <text x="392" y="142" text-anchor="middle" class="t-mono">B1 · solo</text>
+
+          <line x1="322" y1="40" x2="322" y2="168" class="ctrl"/>
+          <text x="322" y="106" text-anchor="middle" class="t-label c-swift">select Hall 3</text>
+          <line x1="532" y1="40" x2="532" y2="168" class="ctrl"/>
+          <text x="532" y="106" text-anchor="middle" class="t-label c-swift">select Room 4</text>
+
+          <line x1="130" y1="180" x2="830" y2="180" class="axis"/>
+          <line x1="130" y1="176" x2="130" y2="184" class="tick"/><text x="130" y="200" text-anchor="middle" class="t-label">7:20</text>
+          <line x1="217.5" y1="176" x2="217.5" y2="184" class="tick"/><text x="217.5" y="200" text-anchor="middle" class="t-label">7:25</text>
+          <line x1="305" y1="176" x2="305" y2="184" class="tick"/><text x="305" y="200" text-anchor="middle" class="t-label">7:30</text>
+          <line x1="392.5" y1="176" x2="392.5" y2="184" class="tick"/><text x="392.5" y="200" text-anchor="middle" class="t-label">7:35</text>
+          <line x1="480" y1="176" x2="480" y2="184" class="tick"/><text x="480" y="200" text-anchor="middle" class="t-label">7:40</text>
+          <line x1="567.5" y1="176" x2="567.5" y2="184" class="tick"/><text x="567.5" y="200" text-anchor="middle" class="t-label">7:45</text>
+          <line x1="655" y1="176" x2="655" y2="184" class="tick"/><text x="655" y="200" text-anchor="middle" class="t-label">7:50</text>
+          <line x1="742.5" y1="176" x2="742.5" y2="184" class="tick"/><text x="742.5" y="200" text-anchor="middle" class="t-label">7:55</text>
+          <line x1="830" y1="176" x2="830" y2="184" class="tick"/><text x="830" y="200" text-anchor="middle" class="t-label">8:00 PM</text>
+        </svg>
+      </div>
+      <figcaption>A1 and A2 are two pieces of the same visit and the same note. Resuming always makes a new segment ID. There's no recording during the wait, and no new "paused" phase was added to the note itself.</figcaption>
+    </figure>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>seq</th><th>Event written</th><th>Patient</th><th>Segment</th><th>Time</th></tr></thead>
+        <tbody>
+          <tr><td class="term">1</td><td class="term">AudioStarted</td><td>Room 4</td><td class="term">A1 · Ambient · consent rev 1</td><td>7:22 PM</td></tr>
+          <tr><td class="term">2</td><td class="term">AudioStopped</td><td>Room 4</td><td class="term">A1</td><td>7:30 PM</td></tr>
+          <tr><td class="term">3</td><td class="term">AudioStarted</td><td>Hall 3</td><td class="term">B1 · Dictation</td><td>7:32 PM</td></tr>
+          <tr><td class="term">4</td><td class="term">AudioStopped</td><td>Hall 3</td><td class="term">B1</td><td>7:38 PM</td></tr>
+          <tr><td class="term">5</td><td class="term">AudioStarted</td><td>Room 4</td><td class="term">A2 · Ambient · consent rev 1</td><td>7:44 PM</td></tr>
+          <tr><td class="term">6</td><td class="term">AudioStopped</td><td>Room 4</td><td class="term">A2</td><td>7:50 PM</td></tr>
+          <tr class="empty-row"><td></td><td colspan="4">Never written by the phone: <code>TranscriptReady</code>, <code>EncounterSummarized</code>, <code>MdmGenerated</code>, <code>TriggerMDM</code>. Those come from the server worker. A test proves it by using a transcriber that crashes if it's ever called.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- 6. Failures -->
+<section class="block" id="failures">
+  <header>
+    <p class="eyebrow">Safety</p>
+    <h2>When something goes wrong</h2>
+    <p class="prose">Most of the Step 2 code is about failure. The rule throughout is to never report success for something that isn't on disk, and never invent data to fill a gap.</p>
+  </header>
+  <div class="cards">
+    <article class="card">
+      <div class="card-top"><h3>The form outlives the selection</h3><span class="result ok">saved to Room 4</span></div>
+      <p class="setup">The lab form is open for Room 4. You tap Hall 3, then tap Save on the form.</p>
+      <p>The lab is written to Room 4. Hall 3 is untouched. A lab for an unknown or signed visit is refused before anything is written.</p>
+      <p class="rule">Every command names its patient. The core never looks at "who's selected" to decide where data goes.</p>
+    </article>
+    <article class="card">
+      <div class="card-top"><h3>Two edits of the same item</h3><span class="result bad">Conflict</span></div>
+      <p class="setup">A context item is at version 3. An older screen still shows version 2 and saves its copy.</p>
+      <p>The save is refused. Version 3 stays. The screen keeps the unsaved text so nothing typed is lost.</p>
+      <p class="rule">Each save says which version it started from. If that isn't the latest, it doesn't overwrite.</p>
+    </article>
+    <article class="card">
+      <div class="card-top"><h3>Stop worked, switch failed</h3><span class="result bad">Storage</span></div>
+      <p class="setup">Recording A1 for Room 4, you tap Hall 3. The mic stops and the stop saves. Saving "selected = Hall 3" then fails.</p>
+      <p>You see an error. Room 4 is still selected and shows Paused. Retrying selects Hall 3 without a second stop or restarting the mic.</p>
+      <p class="rule">These are two saves, and the code reports them as two. It doesn't pretend they're one atomic action.</p>
+    </article>
+    <article class="card">
+      <div class="card-top"><h3>App killed while recording</h3><span class="result warn">Interrupted</span></div>
+      <p class="setup"><code>AudioStarted</code> for A2 saved, then the phone died.</p>
+      <p>On reopen, Room 4 shows Interrupted and recording is blocked. The core doesn't stretch the end time to "now," write a transcript, or turn the mic on.</p>
+      <p class="rule">A real process-kill test covers this. Step 4 will close the segment using the audio file's real end.</p>
+    </article>
+    <article class="card">
+      <div class="card-top"><h3>A stop can't be saved</h3><span class="result warn">PendingStop</span></div>
+      <p class="setup">The mic turns off, but the disk refuses the <code>AudioStopped</code> write.</p>
+      <p>Other changes are blocked until a retry saves that same stop, with the same event ID and contents.</p>
+      <p class="rule">Reusing the ID means a retried stop can never be counted twice.</p>
+    </article>
+    <article class="card">
+      <div class="card-top"><h3>Consent revoked, disk failing</h3><span class="result ok">mic stopped first</span></div>
+      <p class="setup">The patient revokes consent mid-recording, and the consent save fails.</p>
+      <p>The mic stopped before the save was tried. Ambient stays locked for that visit until a Granted choice saves.</p>
+      <p class="rule">Safety comes before storage: stopping the mic doesn't wait on the disk.</p>
+    </article>
+    <article class="card">
+      <div class="card-top"><h3>Disk full</h3><span class="result bad">Storage</span></div>
+      <p class="setup">You add Hall 5 and the save fails because the disk is full.</p>
+      <p>Hall 5 doesn't exist anywhere, not even in memory. The roster is exactly what's on disk.</p>
+      <p class="rule">A test fills a real SQLite file to prove the rollback.</p>
+    </article>
+    <article class="card">
+      <div class="card-top"><h3>A second opener</h3><span class="result bad">Busy</span></div>
+      <p class="setup">Something tries to open the same database file while the core has it, even through a different path or a link to it.</p>
+      <p>It's refused. Only one core can have a live copy of the data in memory.</p>
+      <p class="rule">An operating-system file lock is held for the core's whole lifetime. SQLite's own lock wouldn't be enough.</p>
+    </article>
+    <article class="card">
+      <div class="card-top"><h3>Wrong account</h3><span class="result bad">Scope</span></div>
+      <p class="setup">The file belongs to <code>synthetic-development</code>. Someone opens it as a different account.</p>
+      <p>It's refused before any data is read.</p>
+      <p class="rule">This keeps local data separated by account. It isn't server authorization, which comes with real login.</p>
+    </article>
+  </div>
+</section>
+
+<!-- 7. What the screen gets -->
+<section class="block" id="screen">
+  <header>
+    <p class="eyebrow">The boundary</p>
+    <h2>What the screen gets back</h2>
+    <p class="prose">Swift never sees raw events or Rust's internal objects. It gets flat summaries built for display. Here's Room 4's note view at the end of the walkthrough.</p>
+  </header>
+  <div class="two-col">
+    <div class="json-card">
+      <div class="store-head"><span class="name">note(A) → NoteView</span><span class="kind">what Swift receives</span></div>
+      <div class="json static" id="noteJson"></div>
+    </div>
+    <div class="sub" style="padding-top:0">
+      <p class="prose">When something fails, Swift gets one of ten fixed error names. None of them carry SQL, file paths, patient text or prompt text, so nothing sensitive can end up in a phone log.</p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Error</th><th>Means</th></tr></thead>
+          <tbody>
+            <tr><td class="term">InvalidInput</td><td>A bad value: NaN, text too long, a time in the future</td></tr>
+            <tr><td class="term">InvalidState</td><td>Not allowed right now, such as recording a patient you aren't on</td></tr>
+            <tr><td class="term">NotFound</td><td>No such patient or item on this device</td></tr>
+            <tr><td class="term">Conflict</td><td>Someone saved a newer version first, or a shift is already open</td></tr>
+            <tr><td class="term">Scope</td><td>The file belongs to a different account</td></tr>
+            <tr><td class="term">Storage</td><td>The disk refused: read-only, locked or full</td></tr>
+            <tr><td class="term">Recovery</td><td>The saved data doesn't add up and needs attention</td></tr>
+            <tr><td class="term">Closed</td><td>The core was already shut down</td></tr>
+            <tr><td class="term">Busy</td><td>The queue is full, or another opener holds the file</td></tr>
+            <tr><td class="term">Internal</td><td>A bug or crash. The core shuts itself down.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 8. Shared code + still open -->
+<section class="block" id="open">
+  <header>
+    <p class="eyebrow">Around the edges</p>
+    <h2>Other changes, and what's still open</h2>
+  </header>
+  <div class="two-col">
+    <div class="sub" style="padding-top:0">
+      <h3>Changes outside the phone code</h3>
+      <ul class="plain-list">
+        <li><strong>Shared app logic (er-app)</strong> now has a setting for who writes the AI text. The CLI keeps doing it locally. The phone build leaves the AI code out entirely, and a dependency check fails the build if the AI client or HTTP library sneaks in.</li>
+        <li><strong>Event publishing</strong>: a retried stop reuses its original event ID, so it can't be applied twice.</li>
+        <li><strong>Storage (er-store)</strong>: the layout version and upgrade described above, plus safer write settings for SQLite. Resending an event with the same ID returns its original sequence number. Resending the same ID with different contents is rejected.</li>
+        <li><strong>Swift</strong>: the real service now runs in both Debug and Release builds. Demo controls appear only with the demo service. Failed text drafts stay on screen, and screens show where data came from and mark audio, AI and EMR as unavailable.</li>
+        <li><strong>Unchanged</strong>: the server API, OpenAPI file and AWS resources.</li>
+      </ul>
+    </div>
+    <div class="sub" style="padding-top:0">
+      <h3>Still open</h3>
+      <ul class="plain-list">
+        <li><strong>Apple acceptance.</strong> This Linux machine has no Xcode. On the M1, run <code>scripts/check-bridge-apple.sh</code> to build the Apple binaries with SQLite bundled in and run simulator tests. Then do the physical drill: two visits, consent, context and a preference, force-quit, relaunch, confirm it all came back. Record the result in <code>docs/ops/ios-development.md</code>.</li>
+        <li><strong>Step 3 (next): sync.</strong> Step 3 adds syncing alongside this file without replacing it:
+          <ul class="plain-list" style="padding-top:6px">
+            <li>keep a durable outbox of events not yet sent</li>
+            <li>link local shift S1 to the server's shift ID</li>
+            <li>register patients before their events, using the same IDs</li>
+            <li>download server events in server order, then replay any unsent local ones on top</li>
+            <li>decide how consent, context, templates and drafts sync</li>
+            <li>stay inside the 60 requests per minute limit</li>
+          </ul>
+        </li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 9. Decoder -->
+<section class="block" id="decoder">
+  <header>
+    <p class="eyebrow">Reference</p>
+    <h2>Jargon decoder</h2>
+    <p class="prose">Terms from the implementation doc, in plain words.</p>
+  </header>
+  <div class="table-scroll">
+    <table class="decoder">
+      <thead><tr><th>Doc says</th><th>Plain English</th></tr></thead>
+      <tbody>
+        <tr><td class="term">composition root</td><td>The one place that wires the existing pieces (store, event bus, note loader) into a working whole. Here that's the new <code>er-device</code> crate.</td></tr>
+        <tr><td class="term">UniFFI</td><td>The tool that generates the Swift ↔ Rust translation code from the Rust definitions.</td></tr>
+        <tr><td class="term">owned UniFFI object, handle (<code>ErDevice</code>)</td><td>The single object Swift holds to use the Rust core. Swift holds it, and Rust controls everything inside it.</td></tr>
+        <tr><td class="term">owner thread, serialized owner</td><td>The one Rust thread allowed to touch the core and the database. Everything is done in order, one job at a time.</td></tr>
+        <tr><td class="term">bounded admission</td><td>The job queue has a fixed size (64). When it's full you get <code>Busy</code>.</td></tr>
+        <tr><td class="term">persist-first, acknowledged write</td><td>Save to disk, wait for the confirmation, then update memory and report success.</td></tr>
+        <tr><td class="term">event, event-sourced</td><td>Each clinical action is saved as a "this happened" row. The note is whatever you get by playing those rows back in order.</td></tr>
+        <tr><td class="term">projection</td><td>The in-memory note built from those events. It's a view of the events, not a second copy of the truth.</td></tr>
+        <tr><td class="term">replay, rehydrate</td><td>Rebuilding a note by re-applying its saved events, starting from a snapshot checkpoint if one exists.</td></tr>
+        <tr><td class="term">snapshot</td><td>A saved checkpoint of a note, so reopening doesn't replay every event. A damaged one is thrown away and rebuilt.</td></tr>
+        <tr><td class="term">metadata aggregate</td><td>The single JSON document in <code>device_state</code>.</td></tr>
+        <tr><td class="term">compare-and-save, CAS, expected revision/version</td><td>A save names the version it started from. If the stored version has moved on, the save is refused with <code>Conflict</code>.</td></tr>
+        <tr><td class="term">metadata revision vs projection version</td><td>Two separate counters. One counts saves to <code>device_state</code>. The other counts changes to one patient's note.</td></tr>
+        <tr><td class="term">full invalidation, coalesced</td><td>One generic "something changed" bell. Several quick changes can merge into one ring. Screens re-read everything they show.</td></tr>
+        <tr><td class="term">read model, DTO, view</td><td>Plain, flat data shapes made for the screen, like <code>NoteView</code>.</td></tr>
+        <tr><td class="term">scope</td><td>A label for which account owns the database file. The placeholder <code>synthetic-development</code> is used until real login exists.</td></tr>
+        <tr><td class="term">user_version, format_version</td><td>Two version stamps. One is for the table layout and the other for the JSON layout inside <code>device_state</code>.</td></tr>
+        <tr><td class="term">WAL, synchronous = FULL</td><td>SQLite settings that put "never lose a confirmed save" ahead of speed.</td></tr>
+        <tr><td class="term">UUIDv7</td><td>Unique IDs that begin with a timestamp, so they sort by when they were made. They're made on the phone and will be reused when syncing.</td></tr>
+        <tr><td class="term">segment, encounter</td><td>One stretch of recording. Pausing ends a segment and resuming starts a new one in the same visit.</td></tr>
+        <tr><td class="term">boundary</td><td>The confirmed time a recording segment started or stopped.</td></tr>
+        <tr><td class="term">server-owned generation</td><td>Transcripts, HPI and MDM are written by the server worker and delivered to the phone. The phone never writes them.</td></tr>
+        <tr><td class="term">fixture service</td><td>The demo service with fake in-memory patients. It's now only used for previews.</td></tr>
+        <tr><td class="term">panic containment, faulted</td><td>If Rust code crashes inside a job, that job returns <code>Internal</code> and the core shuts down instead of carrying on in an unknown state.</td></tr>
+        <tr><td class="term">MainActor</td><td>Swift's main UI thread, where screen updates happen.</td></tr>
+        <tr><td class="term">interface version 2</td><td>The bridge's version number. The Swift bindings and the Rust library must match it exactly.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<footer>
+  <p>Source: <code>docs/ops/phase5-step2-implementation.md</code>, checked against <code>crates/er-device</code>, <code>crates/er-store/src/device.rs</code>, <code>crates/er-ffi/src/device.rs</code> and <code>RustDeviceService.swift</code>.</p>
+  <p>All patient data on this page is synthetic. Counter values like <code>audit_count</code> are illustrative.</p>
+</footer>
+
+</div>
+
+<script>
+(function () {
+  // ---------- tiny JSON renderer with change highlighting ----------
+  const T0 = Date.UTC(2026, 10, 18, 0, 0, 0); // 7:00 PM US Eastern, Nov 17
+  const at = (n) => T0 + n * 60000;
+  const iso = (ms) => new Date(ms).toISOString().replace('.000Z', 'Z');
+  const clock = (ms) => {
+    const min = Math.round((ms - T0) / 60000);
+    const h = 7 + Math.floor(min / 60);
+    return h + ':' + String(((min % 60) + 60) % 60).padStart(2, '0') + ' PM';
+  };
+  const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const isObj = (v) => v !== null && typeof v === 'object';
+
+  function fmt(v) {
+    if (v === null) return '<span class="j-null">null</span>';
+    if (typeof v === 'string') return '<span class="j-str">"' + esc(v) + '"</span>';
+    if (typeof v === 'number') return '<span class="j-num">' + v + '</span>';
+    if (typeof v === 'boolean') return '<span class="j-bool">' + v + '</span>';
+    return esc(v);
+  }
+  function autoNote(key, value) {
+    if (typeof key !== 'string') return '';
+    if (/_ms$/.test(key) && typeof value === 'number') {
+      if (value === 0) return 'nothing yet';
+      return clock(value);
+    }
+    if ((key === 'created_at' || key === 'occurred_at') && typeof value === 'string') return clock(Date.parse(value));
+    return '';
+  }
+  function render(value, prev, notes) {
+    const out = [];
+    (function walk(v, p, path, depth, key, last) {
+      const pad = '  '.repeat(depth);
+      const k = key !== null ? '<span class="j-key">"' + esc(key) + '"</span>: ' : '';
+      const comma = last ? '' : ',';
+      if (isObj(v)) {
+        const arr = Array.isArray(v);
+        const entries = arr ? v.map((x, i) => [i, x]) : Object.entries(v);
+        const open = arr ? '[' : '{', close = arr ? ']' : '}';
+        const fresh = p === undefined;
+        if (!entries.length) {
+          const prevEmpty = isObj(p) && (Array.isArray(p) ? p.length === 0 : Object.keys(p).length === 0);
+          out.push({ html: pad + k + open + close + comma, chg: fresh || !prevEmpty });
+          return;
+        }
+        out.push({ html: pad + k + open, chg: fresh });
+        entries.forEach(([ck, cv], i) => walk(cv, isObj(p) ? p[ck] : undefined, path.concat(ck), depth + 1, arr ? null : ck, i === entries.length - 1));
+        out.push({ html: pad + close + comma, chg: fresh });
+      } else {
+        const chg = p === undefined || p !== v;
+        const pathKey = path.join('.');
+        const note = (notes && notes[key]) || (notes && notes[pathKey]) || autoNote(key, v);
+        out.push({ html: pad + k + fmt(v) + comma + (note ? '<span class="j-note">// ' + esc(note) + '</span>' : ''), chg });
+      }
+    })(value, prev, [], 0, null, true);
+    return out;
+  }
+  function paint(el, lines) {
+    el.innerHTML = lines.map((l) => '<div class="jl' + (l.chg ? ' chg' : '') + '">' + l.html + '</div>').join('');
+  }
+
+  // ---------- the example shift ----------
+  const SCOPE = 'synthetic-development';
+  const newVisit = (id, complaint, room, min) => ({
+    patient: { id, chief_complaint: complaint, room, created_at: iso(at(min)) },
+    consents: [], mode: 'Ambient', recorder: 'Unavailable', boundary_at_ms: null, pause_reason: null,
+    segments: [], context: [], manual_draft: null
+  });
+  const draft = '62M, substernal pressure x2h, worse with exertion. Prior stent.';
+
+  const steps = [
+    { title: 'Open the app for the first time', time: null,
+      body: '<p>The app asks iOS for its protected storage folder and opens <code>ClinicalData/device.sqlite</code> there. The core creates the tables, stamps the layout as version 1, and records which account owns the file.</p><p>There is no login yet, so a placeholder account name stands in. Real account selection arrives with Steps 3 and 5.</p>',
+      where: [['meta', 'device_state created · revision 0'], ['meta', 'owner recorded in device_scope']],
+      apply: () => {} },
+    { title: 'Start the shift', time: 0, bump: true,
+      body: '<p>A shift is created on the phone with its own ID. <code>server_shift_id</code> stays empty because the phone hasn’t talked to a server, and the app doesn’t invent one. Step 3 will link them.</p>',
+      where: [['meta', 'revision 0 → 1'], ['none', 'events: no change']],
+      apply: (m) => { m.shifts.push({ id: 'S1', server_shift_id: null, started_at_ms: at(0), ended_at_ms: null, selected_patient_id: null, visits: [] }); m.last_control_at_ms = at(0); } },
+    { title: 'Add Room 4: chest pain', time: 4, bump: true,
+      body: '<p>The patient joins the roster. Nothing goes into the events table yet. Room 4 will still come back after a restart, even with zero events, because the roster lives here in <code>device_state</code>.</p><p>The recorder says <code>Unavailable</code> because the production app has no microphone code.</p>',
+      where: [['meta', 'revision 1 → 2'], ['none', 'events: no change']],
+      apply: (m) => { m.shifts[0].visits.push(newVisit('A', 'Chest pain', 'Room 4', 4)); } },
+    { title: 'Add Hall 3: ankle injury', time: 6, bump: true,
+      body: '<p>A second visit. The order of the <code>visits</code> list is the order of the roster on screen. Each visit gets an ID for this ED stay only. It isn’t a lifelong patient identity, and a room label never becomes an EMR identifier.</p>',
+      where: [['meta', 'revision 2 → 3']],
+      apply: (m) => { m.shifts[0].visits.push(newVisit('B', 'Ankle injury', 'Hall 3', 6)); } },
+    { title: 'Select Room 4', time: 8, bump: true,
+      body: '<p>The selection is saved too, so a restart lands you on the same patient.</p><p>Control actions like this must be in time order. A select stamped earlier than the last one would be refused.</p>',
+      where: [['meta', 'revision 3 → 4']],
+      apply: (m) => { m.shifts[0].selected_patient_id = 'A'; m.last_control_at_ms = at(8); } },
+    { title: 'The patient declines recording', time: 9, bump: true,
+      body: '<p>Consent is kept as a history, not a single switch. Each choice adds an entry numbered 1, 2, 3 and so on, recording which account entered it and under which policy.</p><p>With <code>Declined</code> as the latest entry, the core will refuse ambient recording for Room 4.</p>',
+      where: [['meta', 'revision 4 → 5']],
+      apply: (m) => { m.shifts[0].visits[0].consents.push({ status: 'Declined', recorded_at_ms: at(9), actor_scope: SCOPE, policy_version: 'synthetic-development-v1', revision: 1 }); } },
+    { title: 'Choose solo dictation', time: null, bump: true,
+      body: '<p>Declining doesn’t switch the mode by itself. The clinician picks solo on purpose. It’s stored as <code>Dictation</code>: the clinician talking alone in the hallway or at a workstation. The consent check applies only to ambient.</p>',
+      where: [['meta', 'revision 5 → 6']],
+      apply: (m) => { m.shifts[0].visits[0].mode = 'Dictation'; } },
+    { title: 'Type chart context: prior stent', time: 11, bump: true,
+      body: '<p>The clinician types a history item the patient reported. It’s stored with its source. The clinical time is left empty because nobody knows exactly when it happened.</p><p>Typing it doesn’t mark it reviewed. This is phone-only and doesn’t change the clinical note.</p>',
+      where: [['meta', 'revision 6 → 7'], ['none', 'events: no change']],
+      apply: (m) => { m.shifts[0].visits[0].context.push({ id: 'C1', patient_id: 'A', version: 1, category: 'History', text: 'Prior MI with stent, 2019', source: 'Patient report', clinical_at_ms: null, entered_at_ms: at(11), reviewed: false }); } },
+    { title: 'Enter potassium 5.8 mmol/L', time: 15, bump: false,
+      body: '<p>This one is different. A structured lab is a clinical fact, so it becomes an event of type <code>ResultReceived</code>, which the server already stores.</p><p><code>device_state</code> is untouched and its revision stays at 7. Compare this with the typed history item in the previous step.</p>',
+      where: [['clin', 'events: row 1 added'], ['none', 'device_state: no change']],
+      apply: (m, ev) => { ev.push({ seq: 1, type: 'ResultReceived', patient: 'A', occurred_at: iso(at(15)), payload: '{"patient_id":"A","result":{"Lab":{"display_name":"Potassium","value":5.8,"unit":"mmol/L"}},"source":"Manual", …}' }); } },
+    { title: 'Save an HPI template', time: null, bump: true,
+      body: '<p>Templates and saved prompts are stored as numbered versions under a stable ID. This is version 1, marked as the default template. Definitions never store generated output.</p>',
+      where: [['meta', 'revision 7 → 8']],
+      apply: (m) => { m.definitions.push({ id: 'D1', version: 1, name: 'HPI', kind: 'Template', instructions: '', sections: [{ section: 'hpi', instructions: 'Onset, character, radiation, associated symptoms.' }], archived: false, is_default: true }); } },
+    { title: 'Edit the template', time: null, bump: true,
+      body: '<p>Editing doesn’t overwrite. Version 2 is added next to version 1, so anything that used version 1 can still point to exactly what it said.</p><p>Archiving, restoring an old version and changing the default all add new versions too.</p>',
+      where: [['meta', 'revision 8 → 9']],
+      apply: (m) => { m.definitions.push({ id: 'D1', version: 2, name: 'HPI', kind: 'Template', instructions: '', sections: [{ section: 'hpi', instructions: 'Onset, character, radiation, associated symptoms. Include pertinent negatives.' }], archived: false, is_default: true }); } },
+    { title: 'Type a scratch draft', time: 20, bump: true,
+      body: '<p>The free-text editor saves to <code>manual_draft</code>, the clinician’s own scratch text for this visit. It’s kept apart from the AI-written sections and left out of the export until a later step defines how clinician edits sync.</p>',
+      where: [['meta', 'revision 9 → 10']],
+      apply: (m) => { m.shifts[0].visits[0].manual_draft = draft; } },
+    { title: 'Force-quit the app and reopen it', time: null, bump: false, reopen: true,
+      body: '<p>Before showing anything, the core re-checks the file:</p><ul class="checks"><li>No other copy holds the file lock</li><li>The owner is still <code>synthetic-development</code></li><li>The JSON layout is version 1 and the revision matches</li><li>Only one shift is open, and the selected patient is on its roster</li><li>Consent entries are numbered 1, 2, 3 with no gaps</li><li>Every event belongs to the patient it’s filed under</li><li>Room 4’s note is rebuilt from its snapshot plus newer events</li><li>No recording was left unfinished (if one was, the visit shows Interrupted)</li></ul><p>Everything comes back: the shift, roster order, selection, consent, solo mode, context, both template versions and the draft. Nothing claims to be synced, and the recorder still says Unavailable.</p>',
+      where: [['check', 'nothing written · all checks pass']],
+      apply: () => {} }
+  ];
+
+  const frames = [];
+  (function build() {
+    const meta = { last_control_at_ms: 0, format_version: 1, revision: 0, shifts: [], definitions: [] };
+    const events = [];
+    steps.forEach((s) => {
+      s.apply(meta, events);
+      if (s.bump) meta.revision += 1;
+      frames.push({ meta: JSON.parse(JSON.stringify(meta)), events: JSON.parse(JSON.stringify(events)) });
+    });
+  })();
+
+  const $ = (id) => document.getElementById(id);
+  const rail = $('rail');
+  steps.forEach((s, i) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = String(i + 1);
+    const kinds = s.where.map((w) => w[0]);
+    if (kinds.includes('clin')) b.classList.add('k-clin');
+    else if (kinds.includes('meta')) b.classList.add('k-meta');
+    b.setAttribute('aria-label', 'Step ' + (i + 1) + ': ' + s.title);
+    b.addEventListener('click', () => show(i));
+    rail.appendChild(b);
+  });
+
+  let current = 0;
+  function show(i) {
+    current = Math.max(0, Math.min(steps.length - 1, i));
+    const s = steps[current];
+    const f = frames[current];
+    const prev = current > 0 ? frames[current - 1] : null;
+    Array.from(rail.children).forEach((b, j) => {
+      if (j === current) b.setAttribute('aria-current', 'step'); else b.removeAttribute('aria-current');
+    });
+    $('count').textContent = 'Step ' + (current + 1) + ' of ' + steps.length + (s.time !== null ? ' · ' + clock(at(s.time)) : '');
+    $('stepTitle').textContent = s.title;
+    $('stepBody').innerHTML = s.body;
+    $('where').innerHTML = s.where.map((w) => '<li class="' + w[0] + '">' + esc(w[1]) + '</li>').join('');
+    $('prev').disabled = current === 0;
+    $('next').disabled = current === steps.length - 1;
+    $('restored').hidden = !s.reopen;
+    $('rev').textContent = 'revision ' + f.meta.revision;
+    const jsonEl = $('json');
+    paint(jsonEl, render(f.meta, prev ? prev.meta : undefined));
+    const firstChg = current > 0 ? jsonEl.querySelector('.chg') : null;
+    jsonEl.scrollTop = firstChg ? Math.max(0, firstChg.offsetTop - 60) : 0;
+    const prevSeqs = new Set(prev ? prev.events.map((e) => e.seq) : []);
+    $('evcount').textContent = f.events.length + (f.events.length === 1 ? ' row' : ' rows');
+    $('events').innerHTML = f.events.length
+      ? f.events.map((e) => {
+          const cls = prevSeqs.has(e.seq) ? '' : ' class="new"';
+          return '<tr' + cls + '><td>' + e.seq + '</td><td>' + e.type + '</td><td>' + e.patient + ' (Room 4)</td><td>' + clock(Date.parse(e.occurred_at)) + '</td></tr>' +
+                 '<tr' + cls + '><td></td><td colspan="3" class="payload">payload (trimmed): ' + esc(e.payload) + '</td></tr>';
+        }).join('')
+      : '<tr class="empty-row"><td colspan="4">No events yet. Nothing clinical has been recorded.</td></tr>';
+  }
+  $('prev').addEventListener('click', () => show(current - 1));
+  $('next').addEventListener('click', () => show(current + 1));
+  $('stepper').addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight') { e.preventDefault(); show(current + 1); }
+    if (e.key === 'ArrowLeft') { e.preventDefault(); show(current - 1); }
+  });
+  show(0);
+
+  // ---------- NoteView example ----------
+  const note = {
+    patient_id: 'A', phase: 'Registered',
+    hpi: null, ros: null, exam: null, mdm: null, disposition: null, disposition_text: null,
+    objective_items: [{ id: 'R1', category: 'Lab', summary: 'Potassium: 5.8 mmol/L', source: 'manual', clinical_at_ms: at(15) }],
+    results: ['Potassium: 5.8 mmol/L'], medications: [], diagnoses: [], data_reviewed: [],
+    encounter_count: 0, audit_count: 1, projection_version: 1,
+    recovery_required: false, manual_draft: draft
+  };
+  const noteNotes = {
+    phase: 'no recording yet, so still Registered',
+    hpi: 'arrives from the server (Step 7)',
+    mdm: 'arrives from the server (Step 7)',
+    source: 'where the value came from',
+    projection_version: 'counts changes to this note',
+    recovery_required: 'true if Interrupted or PendingStop',
+    manual_draft: 'scratch text, not exported'
+  };
+  paint($('noteJson'), render(note, note, noteNotes));
+})();
+</script>
+</body>
+</html>

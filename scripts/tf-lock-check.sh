@@ -6,21 +6,21 @@
 # backend takes a lock by writing a small `<key>.tflock` object with a conditional
 # "only if it does not already exist" header. S3 answers `412 PreconditionFailed` when
 # someone else already holds it. This script runs two applies against the same key in
-# the local MinIO container and checks that the second one is refused.
+# the local S3 stand-in (RustFS) and checks that the second one is refused.
 #
-# It exercises the mechanism, not the real backend: MinIO stands in for S3 and there is
+# It exercises the mechanism, not the real backend: RustFS stands in for S3 and there is
 # no KMS, no bucket policy, and no IAM. The equivalent check against the real staging
 # bucket is in docs/ops/staging-deploy.md.
 #
-#   docker compose up -d minio
+#   docker compose up -d s3
 #   ./scripts/tf-lock-check.sh
 set -euo pipefail
 
-endpoint="${MINIO_ENDPOINT:-http://localhost:9000}"
+endpoint="${S3_ENDPOINT:-http://localhost:9000}"
 bucket="${TF_LOCK_CHECK_BUCKET:-tf-lock-check}"
 hold_seconds="${TF_LOCK_CHECK_HOLD_SECONDS:-25}"
 
-# The credentials docker-compose.yml gives MinIO. Local emulator values, not secrets.
+# The credentials docker-compose.yml gives RustFS. Local emulator values, not secrets.
 export AWS_ACCESS_KEY_ID=dev
 export AWS_SECRET_ACCESS_KEY=devdevdev
 export AWS_REGION=us-east-1

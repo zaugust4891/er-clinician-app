@@ -28,7 +28,7 @@ done
 # Nothing below runs an unmocked plan/apply or touches a real backend/state.
 for file in main.tf audit.tf; do
   guard_file="${repo_root}/infra/modules/observability/${file}"
-  rg -q 'prevent_destroy = true' "${guard_file}"
+  grep -qF 'prevent_destroy = true' "${guard_file}"
   sed -i 's/prevent_destroy = true/prevent_destroy = false/' "${work}/infra/modules/observability/${file}"
 done
 cp "${repo_root}/infra/envs/staging/foundation/.terraform.lock.hcl" "${work}/infra/modules/network/"

@@ -24,6 +24,7 @@ const API_TABLES: &[&str] = &[
     "public.request_quotas",
     "public.audio_bindings",
     "public.dispatch_outbox",
+    "public.device_capture_audit",
 ];
 
 /// Resolved audio resource locations. `Config` contains deploy-time names;

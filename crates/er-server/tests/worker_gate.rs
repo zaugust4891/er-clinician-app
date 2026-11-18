@@ -2,7 +2,7 @@
 //!
 //! Where `audio_complete_gate.rs` stops at "a job reached the queue", these tests
 //! pick that job up. They drive the real [`er_server::worker::poll_once`] against
-//! real MinIO, real ElasticMQ and real Postgres, with the STT seam swapped for
+//! real RustFS, real ElasticMQ and real Postgres, with the STT seam swapped for
 //! `MockSpeechToText` in **echo** mode — which is what makes the assertions exact
 //! rather than approximate: chunk 1's audio literally becomes chunk 1's words, so
 //! index ordering and attribution are observable in a single `assert_eq!` (S5's

@@ -20,6 +20,11 @@ struct WorkspaceView: View {
                     case .localCore:
                         Text("Local core • saved on this device • synthetic data only")
                     }
+                    Text(model.snapshot.sync.message)
+                    if model.snapshot.sync.queued > 0 { Text("Waiting to send: \(model.snapshot.sync.queued)") }
+                    if model.snapshot.sync.awaitingConfirmation > 0 { Text("Waiting for confirmation: \(model.snapshot.sync.awaitingConfirmation)") }
+                    Text("Preferences and pasted context are saved on this device.").font(.footnote)
+                    Button("Synchronize") { Task { await model.synchronize() } }.disabled(!model.supportsSync || model.isWorking)
                     Text("Recording, generation, and EMR connections are unavailable.")
                         .font(.footnote)
                     if let error = model.commandError {

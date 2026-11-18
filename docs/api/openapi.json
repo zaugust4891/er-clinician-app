@@ -165,6 +165,68 @@
         ],
         "type": "object"
       },
+      "CaptureAuditV1": {
+        "properties": {
+          "consents": {
+            "items": {
+              "$ref": "#/components/schemas/ConsentAudit"
+            },
+            "type": "array"
+          },
+          "segments": {
+            "items": {
+              "$ref": "#/components/schemas/SegmentAudit"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "consents",
+          "segments"
+        ],
+        "type": "object"
+      },
+      "CaptureAuditView": {
+        "properties": {
+          "audit": {
+            "$ref": "#/components/schemas/CaptureAuditV1"
+          },
+          "clinician_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "version": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "clinician_id",
+          "audit"
+        ],
+        "title": "CaptureAuditView",
+        "type": "object"
+      },
+      "CaptureAuditWrite": {
+        "properties": {
+          "audit": {
+            "$ref": "#/components/schemas/CaptureAuditV1"
+          },
+          "expected_version": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_version",
+          "audit"
+        ],
+        "title": "CaptureAuditWrite",
+        "type": "object"
+      },
       "CaptureMode": {
         "description": "How the audio was captured — affects summarization strategy.",
         "oneOf": [
@@ -259,6 +321,41 @@
           "result_type"
         ],
         "type": "object"
+      },
+      "ConsentAudit": {
+        "properties": {
+          "policy_version": {
+            "type": "string"
+          },
+          "recorded_at_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "revision": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ConsentChoice"
+          }
+        },
+        "required": [
+          "revision",
+          "status",
+          "recorded_at_ms",
+          "policy_version"
+        ],
+        "type": "object"
+      },
+      "ConsentChoice": {
+        "enum": [
+          "Unknown",
+          "Granted",
+          "Declined",
+          "Revoked"
+        ],
+        "type": "string"
       },
       "Diagnosis": {
         "properties": {
@@ -1602,6 +1699,44 @@
           }
         ]
       },
+      "SegmentAudit": {
+        "properties": {
+          "consent_revision": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/CaptureMode"
+          },
+          "source": {
+            "type": "string"
+          },
+          "started_at_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "stopped_at_ms": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "mode",
+          "source",
+          "consent_revision",
+          "started_at_ms"
+        ],
+        "type": "object"
+      },
       "ShiftView": {
         "properties": {
           "ended_at": {
@@ -1745,7 +1880,7 @@
   "paths": {
     "/api-docs": {
       "get": {
-        "operationId": "operation_21",
+        "operationId": "operation_23",
         "parameters": [],
         "responses": {
           "200": {
@@ -1789,7 +1924,7 @@
     },
     "/api-docs/openapi.json": {
       "get": {
-        "operationId": "operation_20",
+        "operationId": "operation_22",
         "parameters": [],
         "responses": {
           "200": {
@@ -1884,7 +2019,7 @@
     },
     "/v1/audio/{chunk_id}": {
       "get": {
-        "operationId": "operation_14",
+        "operationId": "operation_16",
         "parameters": [
           {
             "in": "path",
@@ -1938,7 +2073,7 @@
     },
     "/v1/audio/{chunk_id}/complete": {
       "post": {
-        "operationId": "operation_13",
+        "operationId": "operation_15",
         "parameters": [
           {
             "in": "path",
@@ -1992,7 +2127,7 @@
     },
     "/v1/jobs/{job_id}": {
       "get": {
-        "operationId": "operation_11",
+        "operationId": "operation_13",
         "parameters": [
           {
             "in": "path",
@@ -2090,7 +2225,7 @@
     },
     "/v1/patients": {
       "post": {
-        "operationId": "operation_3",
+        "operationId": "operation_5",
         "parameters": [],
         "requestBody": {
           "content": {
@@ -2154,9 +2289,137 @@
         ]
       }
     },
+    "/v1/patients/{id}/capture-audit/v1": {
+      "get": {
+        "operationId": "operation_3",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaptureAuditView"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Missing/invalid token or inactive/non-physician membership; empty body"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "408": {
+            "description": "Request timeout; empty body"
+          },
+          "409": {
+            "description": "State conflict"
+          },
+          "429": {
+            "description": "Clinician quota exhausted; Retry-After: 60"
+          },
+          "500": {
+            "description": "Internal failure; static error code only"
+          },
+          "503": {
+            "description": "Quota/audit storage unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "put": {
+        "operationId": "operation_4",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CaptureAuditWrite"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaptureAuditView"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation, state, media or body rejection; see docs/api-contract.md"
+          },
+          "401": {
+            "description": "Missing/invalid token or inactive/non-physician membership; empty body"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "408": {
+            "description": "Request timeout; empty body"
+          },
+          "409": {
+            "description": "Validation, state, media or body rejection; see docs/api-contract.md"
+          },
+          "413": {
+            "description": "Validation, state, media or body rejection; see docs/api-contract.md"
+          },
+          "415": {
+            "description": "Validation, state, media or body rejection; see docs/api-contract.md"
+          },
+          "422": {
+            "description": "Validation, state, media or body rejection; see docs/api-contract.md"
+          },
+          "429": {
+            "description": "Clinician quota exhausted; Retry-After: 60"
+          },
+          "500": {
+            "description": "Internal failure; static error code only"
+          },
+          "503": {
+            "description": "Quota/audit storage unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/v1/patients/{id}/encounters/{eid}/audio": {
       "post": {
-        "operationId": "operation_12",
+        "operationId": "operation_14",
         "parameters": [
           {
             "in": "path",
@@ -2241,7 +2504,7 @@
     },
     "/v1/patients/{id}/events": {
       "get": {
-        "operationId": "operation_7",
+        "operationId": "operation_9",
         "parameters": [
           {
             "in": "path",
@@ -2313,7 +2576,7 @@
         ]
       },
       "post": {
-        "operationId": "operation_6",
+        "operationId": "operation_8",
         "parameters": [
           {
             "in": "path",
@@ -2389,7 +2652,7 @@
     },
     "/v1/patients/{id}/mdm": {
       "post": {
-        "operationId": "operation_10",
+        "operationId": "operation_12",
         "parameters": [
           {
             "in": "path",
@@ -2465,7 +2728,7 @@
     },
     "/v1/patients/{id}/note": {
       "get": {
-        "operationId": "operation_4",
+        "operationId": "operation_6",
         "parameters": [
           {
             "in": "path",
@@ -2519,7 +2782,7 @@
     },
     "/v1/patients/{id}/note/export": {
       "get": {
-        "operationId": "operation_5",
+        "operationId": "operation_7",
         "parameters": [
           {
             "in": "path",
@@ -2573,7 +2836,7 @@
     },
     "/v1/patients/{id}/snapshot": {
       "get": {
-        "operationId": "operation_9",
+        "operationId": "operation_11",
         "parameters": [
           {
             "in": "path",
@@ -2625,7 +2888,7 @@
         ]
       },
       "put": {
-        "operationId": "operation_8",
+        "operationId": "operation_10",
         "parameters": [
           {
             "in": "path",
@@ -2694,7 +2957,7 @@
     },
     "/v1/shifts": {
       "post": {
-        "operationId": "operation_15",
+        "operationId": "operation_17",
         "parameters": [],
         "responses": {
           "200": {
@@ -2738,7 +3001,7 @@
     },
     "/v1/shifts/active": {
       "get": {
-        "operationId": "operation_16",
+        "operationId": "operation_18",
         "parameters": [],
         "responses": {
           "200": {
@@ -2782,7 +3045,7 @@
     },
     "/v1/shifts/{id}": {
       "get": {
-        "operationId": "operation_17",
+        "operationId": "operation_19",
         "parameters": [
           {
             "in": "path",
@@ -2836,7 +3099,7 @@
     },
     "/v1/shifts/{id}/end": {
       "post": {
-        "operationId": "operation_18",
+        "operationId": "operation_20",
         "parameters": [
           {
             "in": "path",
@@ -2890,7 +3153,7 @@
     },
     "/v1/stats": {
       "get": {
-        "operationId": "operation_19",
+        "operationId": "operation_21",
         "parameters": [],
         "responses": {
           "200": {

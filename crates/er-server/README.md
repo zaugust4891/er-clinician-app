@@ -6,7 +6,7 @@ and authorization for PHI use are separate work.
 
 ## Local development
 
-Start the existing Postgres, MinIO and ElasticMQ compose services and configure
+Start the existing Postgres, RustFS (S3) and ElasticMQ compose services and configure
 the values in the repository's `.env.example`. Select development **in the shell**:
 
 ```bash

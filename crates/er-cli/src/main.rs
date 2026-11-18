@@ -65,6 +65,12 @@ fn remote_config() -> Option<(String, String)> {
     remote_from(env::var("ER_SERVER_URL").ok(), env::var("ER_TOKEN").ok())
 }
 
+/// A blank `ANTHROPIC_KEY=` (as `.env.example` ships it) means "no key": use
+/// the mock summarizer, as the worker does, rather than fail at startup.
+fn has_claude_key(key: Option<String>) -> bool {
+    key.is_some_and(|k| !k.trim().is_empty())
+}
+
 /// The decision itself, kept free of the environment so it can be tested.
 fn remote_from(url: Option<String>, token: Option<String>) -> Option<(String, String)> {
     let non_blank = |v: Option<String>| v.map(|s| s.trim().to_owned()).filter(|s| !s.is_empty());
@@ -114,7 +120,7 @@ fn main() -> AppResult<()> {
     dotenv().ok();
     let threaded_rt = Arc::new(tokio::runtime::Runtime::new()?);
 
-    let summarizer = if env::var("ANTHROPIC_KEY").is_ok() {
+    let summarizer = if has_claude_key(env::var("ANTHROPIC_KEY").ok()) {
         AppSummarizer::Claude(bail(
             "Failed to create ClaudeSummarizer",
             ClaudeSummarizer::new(),
@@ -370,6 +376,14 @@ mod tests {
             display_label: room.map(str::to_string),
             created_at: Utc.with_ymd_and_hms(2026, 8, 13, 7, 30, 0).unwrap(),
         }
+    }
+
+    #[test]
+    fn blank_anthropic_key_selects_the_mock_summarizer() {
+        assert!(!has_claude_key(None));
+        assert!(!has_claude_key(Some(String::new())));
+        assert!(!has_claude_key(Some("   ".to_string())));
+        assert!(has_claude_key(Some("synthetic-key".to_string())));
     }
 
     /// Half a configuration is a mistake, not local mode: booting into SQLite

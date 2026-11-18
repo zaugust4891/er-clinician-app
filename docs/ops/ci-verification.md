@@ -39,8 +39,9 @@ one RSA keypair and `dev-key-1` JWKS using `mint_dev_token`, and runs all test b
 against that same pair. It never changes the developer's keys. Each run creates a
 separate Compose project, random localhost ports, and disposable database/object
 storage. Postgres's disposable `ci` superuser supplies SQLx's `CREATEDB` privilege;
-this is not the cloud runtime account. Readiness probes Postgres, MinIO and ElasticMQ
-protocols with a deadline. Cleanup removes only that run's containers, volumes and
+this is not the cloud runtime account. Readiness probes Postgres, RustFS (the S3
+stand-in that replaced MinIO after its public images were withdrawn in 2026-09) and
+ElasticMQ protocols with a deadline. Cleanup removes only that run's containers, volumes and
 private directory, including after failure or interruption. The normal dev stack can
 remain running. Build outputs stay in `target/` and are never uploaded or cached by CI.
 

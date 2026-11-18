@@ -8,8 +8,10 @@ workers and operator binaries; `er-cli` drives either SQLite or the remote API.
 `er-device` composes the scoped offline SQLite core and its serialized command owner;
 `er-ffi` exposes that owner through flat UniFFI DTOs to the Swift phone service.
 `er-app/local-generation` gates the AI adapter/provider dependency; CLI/server opt
-in and the device opts out. Actual phone sync and microphone capture remain later
-Phase 5 steps. See the [Step 2 implementation](docs/ops/phase5-step2-implementation.md)
+in and the device opts out. The phone now has durable event synchronization and a versioned capture-audit
+contract; microphone capture remains Step 4. Network requests run outside the
+clinical owner thread, and delivery receipts never advance download bookmarks.
+See the [Step 3 explanation](docs/ops/phase5-step3-implementation.md). See the [Step 2 implementation](docs/ops/phase5-step2-implementation.md)
 for durability, consent, recovery, threading and the Step 3 handoff.
 
 `schema` is an optional documentation build feature on domain/API crates. It

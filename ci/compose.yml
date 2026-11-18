@@ -8,14 +8,16 @@ services:
       POSTGRES_DB: ernote_ci
     ports: ["127.0.0.1::5432"]
     tmpfs: [/var/lib/postgresql/data]
-  minio:
-    image: minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
-    command: server /data
+  # S3-compatible stand-in. MinIO's public images were withdrawn in 2026-09;
+  # RustFS (Apache-2.0) passes the same versioned-object and presigned-PUT tests.
+  s3:
+    image: rustfs/rustfs:1.0.6@sha256:ee717072290bec9b11abfc0365f8310b00df1cd9b3639943edae47bdef05044a
     environment:
-      MINIO_ROOT_USER: dev
-      MINIO_ROOT_PASSWORD: devdevdev
+      RUSTFS_ACCESS_KEY: dev
+      RUSTFS_SECRET_KEY: devdevdev
     ports: ["127.0.0.1::9000"]
-    tmpfs: [/data]
+    # RustFS runs as uid 10001; a default tmpfs is root-owned and unwritable.
+    tmpfs: ["/data:mode=1777"]
   elasticmq:
     image: softwaremill/elasticmq-native@sha256:e4580ab9ad1bd5cd37b4ba04911bc5ccc8cd2d9ab4de56ece65acee71c24e05c
     ports: ["127.0.0.1::9324"]

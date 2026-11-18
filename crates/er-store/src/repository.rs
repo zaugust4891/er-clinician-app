@@ -64,7 +64,7 @@ impl SqliteRepository {
 
     /// Shared row → StoredEvent mapping for the get_events* queries.
     /// `sql` MUST select (sequence_id, event_id, payload, occurred_at) in that order.
-    fn query_stored_events(
+    pub(crate) fn query_stored_events(
         &self,
         sql: &str,
         params: impl rusqlite::Params,
@@ -167,8 +167,8 @@ impl Repository for SqliteRepository {
 
     async fn get_events(&self, patient_id: PatientId) -> StoreResult<Vec<StoredEvent>> {
         self.query_stored_events(
-            "SELECT sequence_id, event_id, payload, occurred_at \
-            FROM events WHERE patient_id = ?1 ORDER BY sequence_id ASC",
+            "SELECT e.sequence_id, e.event_id, e.payload, e.occurred_at \
+            FROM events e LEFT JOIN device_event_delivery d USING(event_id) WHERE patient_id = ?1 AND d.conflict IS NULL ORDER BY d.server_sequence IS NULL,d.server_sequence,e.sequence_id",
             rusqlite::params![patient_id.to_string()],
         )
     }
@@ -192,6 +192,11 @@ impl Repository for SqliteRepository {
         snapshot: &PatientNote,
     ) -> StoreResult<()> {
         let conn = self.conn.lock().unwrap();
+        let synchronized: bool =
+            conn.query_row("SELECT EXISTS(SELECT 1 FROM device_sync)", [], |r| r.get(0))?;
+        if synchronized {
+            return Ok(());
+        }
 
         // Serialize the aggregate. state: Option<Box<dyn NoteState>> is
         // #[serde(skip)] on PatientNote — hydrate() reconstructs it on load.
@@ -225,6 +230,11 @@ impl Repository for SqliteRepository {
         patient_id: PatientId,
     ) -> StoreResult<Option<(u64, PatientNote)>> {
         let conn = self.conn.lock().unwrap();
+        let synchronized: bool =
+            conn.query_row("SELECT EXISTS(SELECT 1 FROM device_sync)", [], |r| r.get(0))?;
+        if synchronized {
+            return Ok(None);
+        }
 
         // 0 or 1 row — patient_id is the PRIMARY KEY.
         let row_result = conn.query_row(

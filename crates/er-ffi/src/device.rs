@@ -432,7 +432,7 @@ impl ErDevice {
 
 #[uniffi::export]
 pub fn device_interface_version() -> Result<u32, FfiError> {
-    ffi_guard(|| Ok(2))
+    ffi_guard(|| Ok(3))
 }
 
 impl From<DeviceError> for FfiError {
@@ -868,5 +868,121 @@ impl From<er_device::ObjectiveView> for ObjectiveDto {
             source: v.source,
             clinical_at_ms: v.clinical_at_ms,
         }
+    }
+}
+
+/// Auth remains platform-owned. The callback runs on the network worker.
+#[uniffi::export(callback_interface)]
+pub trait AccessTokenSource: Send + Sync {
+    fn access_token(&self, force_refresh: bool) -> Result<String, FfiError>;
+}
+struct TokenAdapter(Box<dyn AccessTokenSource>);
+impl er_device::AccessTokenProvider for TokenAdapter {
+    fn access_token(&self, refresh: bool) -> er_device::Result<String> {
+        self.0
+            .access_token(refresh)
+            .map_err(|_| DeviceError::InvalidState)
+    }
+}
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct SyncConfigDto {
+    pub server_origin: String,
+    pub organization_id: String,
+    pub clinician_id: String,
+}
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct SyncStatusDto {
+    pub status: String,
+    pub queued_events: u64,
+    pub awaiting_download: u64,
+    pub conflicts: u64,
+    pub retry_at_ms: Option<i64>,
+    pub local_only_preferences: bool,
+    pub local_only_context: bool,
+}
+impl From<er_device::SyncView> for SyncStatusDto {
+    fn from(v: er_device::SyncView) -> Self {
+        Self {
+            status: v.status,
+            queued_events: v.queued_events,
+            awaiting_download: v.awaiting_download,
+            conflicts: v.conflicts,
+            retry_at_ms: v.retry_at_ms,
+            local_only_preferences: v.local_only_preferences,
+            local_only_context: v.local_only_context,
+        }
+    }
+}
+#[uniffi::export]
+impl ErDevice {
+    pub fn sync_now(
+        &self,
+        config: SyncConfigDto,
+        tokens: Box<dyn AccessTokenSource>,
+    ) -> Result<SyncStatusDto, FfiError> {
+        ffi_guard(AssertUnwindSafe(|| {
+            let config = er_device::SyncConfig {
+                origin: config.server_origin,
+                organization: er_device::core::id(&config.organization_id)?,
+                clinician: er_device::core::id(&config.clinician_id)?,
+            };
+            Ok(self
+                .handle
+                .synchronize(config, Arc::new(TokenAdapter(tokens)))?
+                .into())
+        }))
+    }
+    pub fn sync_status(&self) -> Result<SyncStatusDto, FfiError> {
+        ffi_guard(AssertUnwindSafe(|| Ok(self.handle.sync_status()?.into())))
+    }
+    pub fn discard_sync_conflict(
+        &self,
+        patient_id: String,
+        event_id: String,
+    ) -> Result<(), FfiError> {
+        self.call(true, move |c| {
+            c.discard_sync_conflict(
+                er_device::core::id(&patient_id)?,
+                er_device::core::id(&event_id)?,
+            )
+        })
+    }
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct SyncConflictDto {
+    pub event_id: String,
+    pub reason: String,
+}
+#[uniffi::export]
+impl ErDevice {
+    pub fn sync_conflicts(&self, patient_id: String) -> Result<Vec<SyncConflictDto>, FfiError> {
+        self.call(false, move |c| {
+            Ok(c.sync_conflicts(er_device::core::id(&patient_id)?)?
+                .into_iter()
+                .map(|(event_id, reason)| SyncConflictDto { event_id, reason })
+                .collect())
+        })
+    }
+}
+
+#[uniffi::export]
+impl ErDevice {
+    pub fn poll_sync(
+        &self,
+        config: SyncConfigDto,
+        tokens: Box<dyn AccessTokenSource>,
+    ) -> Result<SyncStatusDto, FfiError> {
+        ffi_guard(AssertUnwindSafe(|| {
+            let config = er_device::SyncConfig {
+                origin: config.server_origin,
+                organization: er_device::core::id(&config.organization_id)?,
+                clinician: er_device::core::id(&config.clinician_id)?,
+            };
+            Ok(self
+                .handle
+                .poll_synchronization(config, Arc::new(TokenAdapter(tokens)))?
+                .into())
+        }))
     }
 }

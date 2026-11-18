@@ -615,6 +615,8 @@ public protocol ErDeviceProtocol: AnyObject, Sendable {
 
     func definitionVersions(definitionId: String) throws  -> [DefinitionDto]
 
+    func discardSyncConflict(patientId: String, eventId: String) throws
+
     func duplicateDefinition(definitionId: String, name: String) throws  -> String
 
     func endShift(atMs: Int64) throws
@@ -622,6 +624,8 @@ public protocol ErDeviceProtocol: AnyObject, Sendable {
     func exportNote(patientId: String) throws  -> String
 
     func note(patientId: String) throws  -> NoteDto
+
+    func pollSync(config: SyncConfigDto, tokens: AccessTokenSource) throws  -> SyncStatusDto
 
     func recordDataReviewed(patientId: String, text: String, atMs: Int64) throws
 
@@ -658,6 +662,12 @@ public protocol ErDeviceProtocol: AnyObject, Sendable {
     func snapshot() throws  -> DeviceSnapshotDto
 
     func startShift(atMs: Int64) throws  -> String
+
+    func syncConflicts(patientId: String) throws  -> [SyncConflictDto]
+
+    func syncNow(config: SyncConfigDto, tokens: AccessTokenSource) throws  -> SyncStatusDto
+
+    func syncStatus() throws  -> SyncStatusDto
 
 }
 open class ErDevice: ErDeviceProtocol, @unchecked Sendable {
@@ -762,6 +772,16 @@ open func definitionVersions(definitionId: String)throws  -> [DefinitionDto]  {
 })
 }
 
+open func discardSyncConflict(patientId: String, eventId: String)throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_er_ffi_fn_method_erdevice_discard_sync_conflict(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(patientId),
+        FfiConverterString.lower(eventId),uniffiCallStatus
+    )
+}
+}
+
 open func duplicateDefinition(definitionId: String, name: String)throws  -> String  {
     return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
         uniffiCallStatus in
@@ -798,6 +818,17 @@ open func note(patientId: String)throws  -> NoteDto  {
     uniffi_er_ffi_fn_method_erdevice_note(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(patientId),uniffiCallStatus
+    )
+})
+}
+
+open func pollSync(config: SyncConfigDto, tokens: AccessTokenSource)throws  -> SyncStatusDto  {
+    return try  FfiConverterTypeSyncStatusDto_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_er_ffi_fn_method_erdevice_poll_sync(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeSyncConfigDto_lower(config),
+        FfiConverterCallbackInterfaceAccessTokenSource_lower(tokens),uniffiCallStatus
     )
 })
 }
@@ -989,6 +1020,36 @@ open func startShift(atMs: Int64)throws  -> String  {
     uniffi_er_ffi_fn_method_erdevice_start_shift(
             self.uniffiCloneHandle(),
         FfiConverterInt64.lower(atMs),uniffiCallStatus
+    )
+})
+}
+
+open func syncConflicts(patientId: String)throws  -> [SyncConflictDto]  {
+    return try  FfiConverterSequenceTypeSyncConflictDto.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_er_ffi_fn_method_erdevice_sync_conflicts(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(patientId),uniffiCallStatus
+    )
+})
+}
+
+open func syncNow(config: SyncConfigDto, tokens: AccessTokenSource)throws  -> SyncStatusDto  {
+    return try  FfiConverterTypeSyncStatusDto_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_er_ffi_fn_method_erdevice_sync_now(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeSyncConfigDto_lower(config),
+        FfiConverterCallbackInterfaceAccessTokenSource_lower(tokens),uniffiCallStatus
+    )
+})
+}
+
+open func syncStatus()throws  -> SyncStatusDto  {
+    return try  FfiConverterTypeSyncStatusDto_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_er_ffi_fn_method_erdevice_sync_status(
+            self.uniffiCloneHandle(),uniffiCallStatus
     )
 })
 }
@@ -1919,6 +1980,192 @@ public func FfiConverterTypeShiftDto_lift(_ buf: RustBuffer) throws -> ShiftDto 
 #endif
 public func FfiConverterTypeShiftDto_lower(_ value: ShiftDto) -> RustBuffer {
     return FfiConverterTypeShiftDto.lower(value)
+}
+
+
+public struct SyncConfigDto: Equatable, Hashable {
+    public let serverOrigin: String
+    public let organizationId: String
+    public let clinicianId: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(serverOrigin: String, organizationId: String, clinicianId: String) {
+        self.serverOrigin = serverOrigin
+        self.organizationId = organizationId
+        self.clinicianId = clinicianId
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension SyncConfigDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSyncConfigDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SyncConfigDto {
+        return
+            try SyncConfigDto(
+                serverOrigin: FfiConverterString.read(from: &buf),
+                organizationId: FfiConverterString.read(from: &buf),
+                clinicianId: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SyncConfigDto, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.serverOrigin, into: &buf)
+        FfiConverterString.write(value.organizationId, into: &buf)
+        FfiConverterString.write(value.clinicianId, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSyncConfigDto_lift(_ buf: RustBuffer) throws -> SyncConfigDto {
+    return try FfiConverterTypeSyncConfigDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSyncConfigDto_lower(_ value: SyncConfigDto) -> RustBuffer {
+    return FfiConverterTypeSyncConfigDto.lower(value)
+}
+
+
+public struct SyncConflictDto: Equatable, Hashable {
+    public let eventId: String
+    public let reason: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(eventId: String, reason: String) {
+        self.eventId = eventId
+        self.reason = reason
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension SyncConflictDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSyncConflictDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SyncConflictDto {
+        return
+            try SyncConflictDto(
+                eventId: FfiConverterString.read(from: &buf),
+                reason: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SyncConflictDto, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.eventId, into: &buf)
+        FfiConverterString.write(value.reason, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSyncConflictDto_lift(_ buf: RustBuffer) throws -> SyncConflictDto {
+    return try FfiConverterTypeSyncConflictDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSyncConflictDto_lower(_ value: SyncConflictDto) -> RustBuffer {
+    return FfiConverterTypeSyncConflictDto.lower(value)
+}
+
+
+public struct SyncStatusDto: Equatable, Hashable {
+    public let status: String
+    public let queuedEvents: UInt64
+    public let awaitingDownload: UInt64
+    public let conflicts: UInt64
+    public let retryAtMs: Int64?
+    public let localOnlyPreferences: Bool
+    public let localOnlyContext: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(status: String, queuedEvents: UInt64, awaitingDownload: UInt64, conflicts: UInt64, retryAtMs: Int64?, localOnlyPreferences: Bool, localOnlyContext: Bool) {
+        self.status = status
+        self.queuedEvents = queuedEvents
+        self.awaitingDownload = awaitingDownload
+        self.conflicts = conflicts
+        self.retryAtMs = retryAtMs
+        self.localOnlyPreferences = localOnlyPreferences
+        self.localOnlyContext = localOnlyContext
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension SyncStatusDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSyncStatusDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SyncStatusDto {
+        return
+            try SyncStatusDto(
+                status: FfiConverterString.read(from: &buf),
+                queuedEvents: FfiConverterUInt64.read(from: &buf),
+                awaitingDownload: FfiConverterUInt64.read(from: &buf),
+                conflicts: FfiConverterUInt64.read(from: &buf),
+                retryAtMs: FfiConverterOptionInt64.read(from: &buf),
+                localOnlyPreferences: FfiConverterBool.read(from: &buf),
+                localOnlyContext: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SyncStatusDto, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.status, into: &buf)
+        FfiConverterUInt64.write(value.queuedEvents, into: &buf)
+        FfiConverterUInt64.write(value.awaitingDownload, into: &buf)
+        FfiConverterUInt64.write(value.conflicts, into: &buf)
+        FfiConverterOptionInt64.write(value.retryAtMs, into: &buf)
+        FfiConverterBool.write(value.localOnlyPreferences, into: &buf)
+        FfiConverterBool.write(value.localOnlyContext, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSyncStatusDto_lift(_ buf: RustBuffer) throws -> SyncStatusDto {
+    return try FfiConverterTypeSyncStatusDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSyncStatusDto_lower(_ value: SyncStatusDto) -> RustBuffer {
+    return FfiConverterTypeSyncStatusDto.lower(value)
 }
 
 
@@ -2857,6 +3104,145 @@ public func FfiConverterTypeVitalKind_lower(_ value: VitalKind) -> RustBuffer {
 
 
 
+/**
+ * Auth remains platform-owned. The callback runs on the network worker.
+ */
+public protocol AccessTokenSource: AnyObject, Sendable {
+
+    func accessToken(forceRefresh: Bool) throws  -> String
+
+}
+
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+fileprivate struct UniffiCallbackInterfaceAccessTokenSource {
+
+    // Create the VTable using a series of closures.
+    // Swift automatically converts these into C callback functions.
+    //
+    // Store the vtable directly.
+    static let vtable: UniffiVTableCallbackInterfaceAccessTokenSource = UniffiVTableCallbackInterfaceAccessTokenSource(
+        uniffiFree: { (uniffiHandle: UInt64) -> () in
+            do {
+                try FfiConverterCallbackInterfaceAccessTokenSource.handleMap.remove(handle: uniffiHandle)
+            } catch {
+                print("Uniffi callback interface AccessTokenSource: handle missing in uniffiFree")
+            }
+        },
+        uniffiClone: { (uniffiHandle: UInt64) -> UInt64 in
+            do {
+                return try FfiConverterCallbackInterfaceAccessTokenSource.handleMap.clone(handle: uniffiHandle)
+            } catch {
+                fatalError("Uniffi callback interface AccessTokenSource: handle missing in uniffiClone")
+            }
+        },
+        accessToken: { (
+            uniffiHandle: UInt64,
+            forceRefresh: Int8,
+            uniffiOutReturn: UnsafeMutablePointer<RustBuffer>,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> String in
+                guard let uniffiObj = try? FfiConverterCallbackInterfaceAccessTokenSource.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return try uniffiObj.accessToken(
+                     forceRefresh: try FfiConverterBool.lift(forceRefresh)
+                )
+            }
+
+
+            let writeReturn = { uniffiOutReturn.pointee = FfiConverterString.lower($0) }
+            uniffiTraitInterfaceCallWithError(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn,
+                lowerError: FfiConverterTypeFfiError_lower
+            )
+        }
+    )
+
+    // Rust stores this pointer for future callback invocations, so it must live
+    // for the process lifetime (not just for the init function call).
+    //
+    // `nonisolated(unsafe)` is needed under Swift 6 strict concurrency.
+    // This is safe because the pointee is initialized once during static init
+    // and never mutated by either side of the FFI.  Its fields are C function pointers.
+    nonisolated(unsafe) static let vtablePtr: UnsafePointer<UniffiVTableCallbackInterfaceAccessTokenSource> = {
+        let ptr = UnsafeMutablePointer<UniffiVTableCallbackInterfaceAccessTokenSource>.allocate(capacity: 1)
+        ptr.initialize(to: vtable)
+        return UnsafePointer(ptr)
+    }()
+}
+
+private func uniffiCallbackInitAccessTokenSource() {
+    uniffi_er_ffi_fn_init_callback_vtable_accesstokensource(UniffiCallbackInterfaceAccessTokenSource.vtablePtr)
+}
+
+// FfiConverter protocol for callback interfaces
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterCallbackInterfaceAccessTokenSource {
+    fileprivate static let handleMap = UniffiHandleMap<AccessTokenSource>()
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+extension FfiConverterCallbackInterfaceAccessTokenSource : FfiConverter {
+    typealias SwiftType = AccessTokenSource
+    typealias FfiType = UInt64
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func lift(_ handle: UInt64) throws -> SwiftType {
+        try handleMap.get(handle: handle)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func lower(_ v: SwiftType) -> UInt64 {
+        return handleMap.insert(obj: v)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func write(_ v: SwiftType, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(v))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterCallbackInterfaceAccessTokenSource_lift(_ handle: UInt64) throws -> AccessTokenSource {
+    return try FfiConverterCallbackInterfaceAccessTokenSource.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterCallbackInterfaceAccessTokenSource_lower(_ v: AccessTokenSource) -> UInt64 {
+    return FfiConverterCallbackInterfaceAccessTokenSource.lower(v)
+}
+
+
+
+
 public protocol DeviceChangeListener: AnyObject, Sendable {
 
     func invalidated(revision: UInt64)
@@ -3259,6 +3645,31 @@ fileprivate struct FfiConverterSequenceTypeShiftDto: FfiConverterRustBuffer {
         return seq
     }
 }
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeSyncConflictDto: FfiConverterRustBuffer {
+    typealias SwiftType = [SyncConflictDto]
+
+    public static func write(_ value: [SyncConflictDto], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeSyncConflictDto.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [SyncConflictDto] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [SyncConflictDto]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeSyncConflictDto.read(from: &buf))
+        }
+        return seq
+    }
+}
 public func ping()throws  -> String  {
     return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
         uniffiCallStatus in
@@ -3321,6 +3732,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_er_ffi_checksum_method_erdevice_definition_versions() != 30026) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_er_ffi_checksum_method_erdevice_discard_sync_conflict() != 33640) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_er_ffi_checksum_method_erdevice_duplicate_definition() != 13419) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -3331,6 +3745,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_er_ffi_checksum_method_erdevice_note() != 49484) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_er_ffi_checksum_method_erdevice_poll_sync() != 23879) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_er_ffi_checksum_method_erdevice_record_data_reviewed() != 14814) {
@@ -3387,13 +3804,26 @@ private let initializationResult: InitializationResult = {
     if (uniffi_er_ffi_checksum_method_erdevice_start_shift() != 33229) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_er_ffi_checksum_method_erdevice_sync_conflicts() != 516) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_er_ffi_checksum_method_erdevice_sync_now() != 17423) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_er_ffi_checksum_method_erdevice_sync_status() != 23701) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_er_ffi_checksum_constructor_erdevice_new() != 63341) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_er_ffi_checksum_method_accesstokensource_access_token() != 30654) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_er_ffi_checksum_method_devicechangelistener_invalidated() != 38753) {
         return InitializationResult.apiChecksumMismatch
     }
 
+    uniffiCallbackInitAccessTokenSource()
     uniffiCallbackInitDeviceChangeListener()
     return InitializationResult.ok
 }()

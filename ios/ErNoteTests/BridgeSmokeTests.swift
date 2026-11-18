@@ -34,10 +34,12 @@ final class BridgeSmokeTests: XCTestCase {
         XCTAssertEqual(reopened.snapshot.patients[0].note, "Synthetic manual draft")
         XCTAssertEqual(reopened.snapshot.patients[0].context[0].observedAt, nil)
         XCTAssertEqual(reopened.snapshot.preferences.count, 2)
+        XCTAssertEqual(reopened.snapshot.sync.status, "not_connected")
+        XCTAssertEqual(reopened.snapshot.sync.queued, 1)
         XCTAssertFalse(reopened.supportsRecording)
         XCTAssertFalse(reopened.supportsGeneration)
         try await reopened.close()
-        XCTAssertEqual(try deviceInterfaceVersion(), 2)
+        XCTAssertEqual(try deviceInterfaceVersion(), 3)
     }
     func testProductionBridgeAndConfigRoundTrip() throws {
         XCTAssertEqual(try ping(), "pong")

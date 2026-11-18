@@ -33,5 +33,5 @@ class Reconciliation(unittest.TestCase):
             elif isinstance(value,list):
                 for child in value:walk(child)
         walk(doc)
-        self.assertEqual(len(doc['paths']),20)
+        self.assertEqual(len(doc['paths']),21)  # 21st: Phase 5 Step 3 capture-audit
 if __name__=='__main__': unittest.main()

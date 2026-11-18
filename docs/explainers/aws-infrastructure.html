@@ -1,0 +1,1172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Standalone copy of a claude.ai artifact. Opens directly in a browser. -->
+<title>ER Note AWS Infrastructure</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<style>
+/* Layout: long-scroll explainer that zooms in. Overview first, then one section per part.
+   Prose ~68ch; diagrams and grids use the full 1100px.
+   Color = kind of thing, used the same way everywhere:
+   ochre = public entry (load balancer, NAT), indigo = running code (ECS tasks),
+   teal = data stores, plum = identity and secrets. Green/red = live/blocked. */
+:root {
+  --bg: #F1F4F5;
+  --surface: #FFFFFF;
+  --sunk: #E6ECEE;
+  --ink: #14232B;
+  --muted: #56676F;
+  --line: #CDD8DC;
+  --faint: #B9C6CB;
+  --pub: #8E5E00;
+  --pub-tint: #F6EDD3;
+  --cmp: #4351BE;
+  --cmp-tint: #E3E6F7;
+  --dat: #0A746F;
+  --dat-tint: #DCEFED;
+  --sec: #7B3D8E;
+  --sec-tint: #F1E3F4;
+  --ok: #26774A;
+  --ok-tint: #DDF0E4;
+  --bad: #AF3434;
+  --bad-tint: #F7E0E0;
+  --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0E1518; --surface: #152026; --sunk: #1B272D; --ink: #E2EAED; --muted: #93A4AC; --line: #2B3B42; --faint: #3A4C54;
+    --pub: #E0B44F; --pub-tint: #352A0E; --cmp: #9CA6F6; --cmp-tint: #1E2346;
+    --dat: #47BEB5; --dat-tint: #11322F; --sec: #D69BE6; --sec-tint: #33203A;
+    --ok: #63C58E; --ok-tint: #133222; --bad: #EF7E7E; --bad-tint: #3A1919;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0E1518; --surface: #152026; --sunk: #1B272D; --ink: #E2EAED; --muted: #93A4AC; --line: #2B3B42; --faint: #3A4C54;
+  --pub: #E0B44F; --pub-tint: #352A0E; --cmp: #9CA6F6; --cmp-tint: #1E2346;
+  --dat: #47BEB5; --dat-tint: #11322F; --sec: #D69BE6; --sec-tint: #33203A;
+  --ok: #63C58E; --ok-tint: #133222; --bad: #EF7E7E; --bad-tint: #3A1919;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 16px; line-height: 1.6; }
+.wrap {
+  max-width: 1100px; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 72px;
+}
+h1, h2, h3, h4 { font-family: var(--display); line-height: 1.15; margin: 0; text-wrap: balance; }
+h1 { font-size: clamp(2rem, 5vw, 3.1rem); font-weight: 700; letter-spacing: -0.015em; }
+h2 { font-size: clamp(1.45rem, 3vw, 1.85rem); font-weight: 700; letter-spacing: -0.01em; }
+h3 { font-size: 1.3rem; font-weight: 700; }
+h4 { font-size: 1.02rem; font-weight: 600; }
+p, ul, ol, dl, figure { margin: 0; }
+a { color: var(--dat); }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--cmp); outline-offset: 2px; border-radius: 4px; }
+code { font-family: var(--mono); font-size: 0.86em; background: var(--sunk); padding: 0.05em 0.35em; border-radius: 4px; overflow-wrap: anywhere; }
+.prose { max-width: 68ch; display: grid; gap: 14px; }
+.muted { color: var(--muted); }
+.eyebrow { font: 600 0.72rem/1.2 var(--mono); letter-spacing: 0.09em; text-transform: uppercase; color: var(--muted); }
+
+.hero { display: grid; gap: 18px; padding-bottom: 36px; }
+.lede { font-size: 1.12rem; max-width: 66ch; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { display: inline-flex; align-items: center; gap: 7px; padding: 4px 11px; border-radius: 999px; font-size: 0.82rem; font-weight: 500; line-height: 1.4; }
+.chip::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none; }
+.chip.ok { background: var(--ok-tint); color: var(--ok); }
+.chip.off { background: var(--sunk); color: var(--muted); }
+.chip.warn { background: var(--pub-tint); color: var(--pub); }
+.toc { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 0.9rem; padding-top: 6px; }
+.toc a { color: var(--muted); text-decoration: none; border-bottom: 1px solid var(--line); }
+.toc a:hover { color: var(--ink); border-color: var(--ink); }
+
+.block { padding-block: 44px; border-top: 1px solid var(--line); display: grid; gap: 22px; }
+.block > header { display: grid; gap: 8px; }
+.part { padding-block: 34px; border-top: 1px dashed var(--line); display: grid; gap: 18px; }
+.part:first-of-type { border-top: none; padding-top: 8px; }
+.part-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 14px; }
+.path { font: 500 0.8rem var(--mono); color: var(--muted); }
+.kind { font: 600 0.7rem var(--mono); text-transform: uppercase; letter-spacing: 0.08em; padding: 3px 7px; border-radius: 4px; }
+.kind.pub { background: var(--pub-tint); color: var(--pub); }
+.kind.cmp { background: var(--cmp-tint); color: var(--cmp); }
+.kind.dat { background: var(--dat-tint); color: var(--dat); }
+.kind.sec { background: var(--sec-tint); color: var(--sec); }
+.kind.neu { background: var(--sunk); color: var(--muted); }
+
+/* Figures */
+figure.fig { display: grid; gap: 10px; }
+.fig-scroll { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+.fig-scroll svg { display: block; width: 100%; height: auto; min-width: 720px; }
+.fig-scroll.wide svg { min-width: 860px; }
+figcaption { font-size: 0.9rem; color: var(--muted); max-width: 76ch; }
+svg text { font-family: var(--body); fill: currentColor; }
+svg .t-title { font-size: 13px; font-weight: 600; }
+svg .t-big { font-size: 14px; font-weight: 600; }
+svg .t-sub { font-size: 11px; fill: var(--muted); }
+svg .t-mono { font-family: var(--mono); font-size: 11px; }
+svg .t-label { font-size: 11px; fill: var(--muted); }
+svg .t-row { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.08em; fill: var(--muted); }
+svg .acct { fill: none; stroke: var(--muted); stroke-width: 1.2; stroke-dasharray: 6 4; }
+svg .vpc { fill: var(--sunk); stroke: var(--line); stroke-width: 1.5; }
+svg .tier { fill: var(--surface); stroke: var(--line); stroke-width: 1; }
+svg .box { fill: var(--surface); stroke: var(--line); stroke-width: 1.5; }
+svg .box-sunk { fill: var(--sunk); stroke: var(--line); stroke-width: 1.5; }
+svg .n-pub { fill: var(--pub-tint); stroke: var(--pub); stroke-width: 1.5; }
+svg .n-cmp { fill: var(--cmp-tint); stroke: var(--cmp); stroke-width: 1.5; }
+svg .n-dat { fill: var(--dat-tint); stroke: var(--dat); stroke-width: 1.5; }
+svg .n-sec { fill: var(--sec-tint); stroke: var(--sec); stroke-width: 1.5; }
+svg .n-ext { fill: var(--surface); stroke: var(--ink); stroke-width: 1.5; }
+svg .n-ok { fill: var(--ok-tint); stroke: var(--ok); stroke-width: 1.5; }
+svg .n-bad { fill: var(--bad-tint); stroke: var(--bad); stroke-width: 1.5; }
+svg .n-off { fill: none; stroke: var(--muted); stroke-width: 1.3; stroke-dasharray: 5 4; }
+svg .n-res { fill: none; stroke: var(--faint); stroke-width: 1.2; stroke-dasharray: 4 4; }
+svg .c-pub { fill: var(--pub); } svg .c-cmp { fill: var(--cmp); } svg .c-dat { fill: var(--dat); }
+svg .c-sec { fill: var(--sec); } svg .c-ok { fill: var(--ok); } svg .c-bad { fill: var(--bad); }
+svg .wire { stroke: var(--ink); stroke-width: 1.5; fill: none; }
+svg .wire-ok { stroke: var(--ok); stroke-width: 1.8; fill: none; }
+svg .wire-bad { stroke: var(--bad); stroke-width: 1.3; fill: none; stroke-dasharray: 4 4; }
+svg .wire-dash { stroke: var(--muted); stroke-width: 1.3; fill: none; stroke-dasharray: 4 4; }
+svg .ah { fill: var(--ink); } svg .ah-ok { fill: var(--ok); } svg .ah-off { fill: var(--faint); } svg .ah-muted { fill: var(--muted); }
+svg .edge { fill: none; stroke: var(--faint); stroke-width: 1.4; }
+svg .edge.on { stroke: var(--ink); stroke-width: 2.4; }
+svg .badge circle { fill: var(--ink); }
+svg .badge text { fill: var(--surface); font: 700 11px var(--mono); }
+@media (prefers-reduced-motion: no-preference) { svg .edge { transition: stroke 200ms, stroke-width 200ms; } }
+
+/* Flow tracer */
+.tracer { display: grid; gap: 14px; }
+.flow-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
+.flow-tabs button { font: 600 0.88rem var(--body); padding: 8px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; }
+.flow-tabs button:hover { border-color: var(--ink); }
+.flow-tabs button[aria-pressed="true"] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+.flow-steps { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
+.flow-steps li { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; align-items: start; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font-size: 0.92rem; }
+.flow-steps .n { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; background: var(--ink); color: var(--surface); font: 700 0.75rem var(--mono); }
+.flow-note { font-size: 0.88rem; color: var(--muted); }
+
+/* Overview grid */
+.parts-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 1000px) { .parts-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 760px) { .parts-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 480px) { .parts-grid { grid-template-columns: minmax(0, 1fr); } }
+.pcard { display: grid; grid-template-rows: auto auto 1fr auto; gap: 6px; padding: 14px 16px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; text-decoration: none; color: var(--ink); }
+.pcard:hover { border-color: var(--ink); }
+.pcard h4 { font-size: 1rem; }
+.pcard p { font-size: 0.88rem; color: var(--muted); }
+.pcard .status { justify-self: start; font: 500 0.72rem var(--mono); padding: 2px 7px; border-radius: 5px; }
+.status.live { background: var(--ok-tint); color: var(--ok); }
+.status.written { background: var(--sunk); color: var(--muted); }
+
+/* Analogy */
+.analogy { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 22px; background: var(--sunk); border-radius: 12px; padding: 18px 20px; }
+.analogy h4 { grid-column: 1 / -1; }
+.analogy div { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 10px; font-size: 0.92rem; padding-block: 4px; border-bottom: 1px solid var(--line); }
+.analogy dt { font-weight: 600; }
+.analogy dd { margin: 0; color: var(--muted); }
+@media (max-width: 760px) { .analogy { grid-template-columns: minmax(0, 1fr); } .analogy div { grid-template-columns: minmax(0, 1fr); gap: 2px; } }
+
+/* Tables */
+.table-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+th, td { text-align: left; vertical-align: top; padding: 9px 13px; border-bottom: 1px solid var(--line); }
+tr:last-child td { border-bottom: none; }
+th { font: 600 0.7rem var(--mono); text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); background: var(--sunk); white-space: nowrap; }
+td.m { font-family: var(--mono); font-size: 0.82rem; }
+td.nowrap, th.nowrap { white-space: nowrap; }
+td.num { text-align: right; font-variant-numeric: tabular-nums; font-family: var(--mono); font-size: 0.85rem; white-space: nowrap; }
+td.y { color: var(--ok); font-weight: 600; }
+td.n { color: var(--muted); }
+tr.total td { font-weight: 600; background: var(--sunk); }
+
+/* Fact lists, two-col */
+.two-col { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 22px; align-items: start; }
+@media (max-width: 860px) { .two-col { grid-template-columns: minmax(0, 1fr); } }
+.facts { display: grid; gap: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.facts div { display: grid; grid-template-columns: 170px minmax(0, 1fr); gap: 12px; padding: 9px 14px; border-bottom: 1px solid var(--line); font-size: 0.9rem; }
+.facts div:last-child { border-bottom: none; }
+.facts dt { font-weight: 600; }
+.facts dd { margin: 0; color: var(--muted); min-width: 0; }
+.facts dd code { color: var(--ink); }
+@media (max-width: 560px) { .facts div { grid-template-columns: minmax(0, 1fr); gap: 2px; } }
+.plain-list { padding-left: 1.1em; display: grid; gap: 7px; max-width: 74ch; }
+.plain-list li::marker { color: var(--muted); }
+.why { background: var(--sunk); border-radius: 10px; padding: 14px 16px; display: grid; gap: 8px; font-size: 0.94rem; max-width: 80ch; }
+.why strong { font-family: var(--display); }
+
+/* Code / JSON */
+.code { font: 0.78rem/1.6 var(--mono); background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; overflow-x: auto; white-space: pre; min-width: 0; }
+.code .k { color: var(--cmp); } .code .s { color: var(--dat); } .code .c { color: var(--muted); font-style: italic; } .code .x { color: var(--sec); }
+
+/* Job attempts strip */
+.strip { display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px; }
+.strip .st { flex: 1 1 150px; min-width: 0; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); font-size: 0.86rem; display: grid; gap: 2px; align-content: start; }
+.strip .st strong { font-family: var(--display); font-size: 0.95rem; }
+.strip .st.dlq { border-color: var(--bad); background: var(--bad-tint); }
+.strip .arrow { align-self: center; color: var(--muted); font-family: var(--mono); }
+@media (max-width: 640px) { .strip .arrow { display: none; } }
+
+/* WAF rule pipe */
+.pipe { list-style: none; padding: 0; display: grid; gap: 8px; }
+.pipe li { display: grid; grid-template-columns: 54px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 10px 14px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+.pipe .pr { font: 600 0.75rem var(--mono); color: var(--muted); }
+.pipe .rn { font-weight: 600; }
+.pipe .rn small { display: block; font-weight: 400; color: var(--muted); font-size: 0.86rem; }
+.pipe .act { font: 600 0.72rem var(--mono); padding: 3px 8px; border-radius: 6px; white-space: nowrap; }
+.act.block { background: var(--bad-tint); color: var(--bad); }
+.act.label { background: var(--sunk); color: var(--muted); }
+.act.allow { background: var(--ok-tint); color: var(--ok); }
+.pipe li.closed { border-color: var(--bad); }
+@media (max-width: 560px) { .pipe li { grid-template-columns: 44px minmax(0, 1fr); } .pipe .act { grid-column: 2; justify-self: start; } }
+
+/* Switch ladder */
+.ladder { list-style: none; padding: 0; display: grid; gap: 0; counter-reset: sw; position: relative; }
+.ladder li { counter-increment: sw; display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 14px; align-items: start; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.ladder li::before { content: counter(sw); width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font: 600 0.8rem var(--mono); background: var(--sunk); color: var(--muted); }
+.ladder li.live::before { background: var(--ok); color: var(--surface); }
+.ladder .sw { display: grid; gap: 3px; min-width: 0; }
+.ladder .sw code { justify-self: start; }
+.ladder .sw .needs { font-size: 0.86rem; color: var(--muted); }
+.ladder .sw .needs strong { color: var(--ink); font-weight: 600; }
+.ladder .state { font: 600 0.72rem var(--mono); padding: 3px 8px; border-radius: 6px; white-space: nowrap; }
+.state.on { background: var(--ok-tint); color: var(--ok); }
+.state.off { background: var(--sunk); color: var(--muted); }
+@media (max-width: 560px) { .ladder li { grid-template-columns: 36px minmax(0, 1fr); } .ladder .state { grid-column: 2; justify-self: start; } }
+
+footer { border-top: 1px solid var(--line); padding-top: 24px; font-size: 0.85rem; color: var(--muted); display: grid; gap: 6px; }
+</style>
+<style>body { margin: 0; } img { max-width: 100%; } [hidden] { display: none !important; }</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <p class="eyebrow">infra/ · Terraform · Phase 4 Step 8</p>
+  <h1>The cloud setup, from the top down</h1>
+  <p class="lede"><code>infra/</code> is Terraform code: text files that describe every AWS resource the server needs, from the private network and database to the load balancer, permissions and alarms. Running Terraform compares that description with what exists in AWS and creates or changes things to match. Almost all of it is written and tested offline but has not been created in AWS yet. Only the bootstrap layer, which stores Terraform's own records, is live.</p>
+  <div class="chips">
+    <span class="chip ok">Bootstrap live since 2026-10-14</span>
+    <span class="chip off">Staging written and tested offline, not created</span>
+    <span class="chip off">Production written, switched off</span>
+    <span class="chip warn">Synthetic data only, no patient data</span>
+  </div>
+  <nav class="toc" aria-label="Sections">
+    <a href="#whole">The whole system</a>
+    <a href="#parts">Every part in one line</a>
+    <a href="#roots">Five roots</a>
+    <a href="#drill">Drill down</a>
+    <a href="#deploy">How a deploy works</a>
+    <a href="#switches">Safety switches</a>
+    <a href="#status">Status and cost</a>
+    <a href="#decoder">Jargon decoder</a>
+  </nav>
+</header>
+
+<!-- LEVEL 1: whole system -->
+<section class="block" id="whole">
+  <header>
+    <p class="eyebrow">Level 1 · the big picture</p>
+    <h2>What staging looks like once it's running</h2>
+    <p class="prose">This is the target picture once staging is switched on. Pick a flow to see the path a real request takes. Faint lines are connections the selected flow doesn't use.</p>
+  </header>
+
+  <div class="tracer">
+    <div class="flow-tabs" role="group" aria-label="Choose a flow">
+      <button type="button" data-flow="0" aria-pressed="true">Sign in and save</button>
+      <button type="button" data-flow="1" aria-pressed="false">Upload audio</button>
+      <button type="button" data-flow="2" aria-pressed="false">Transcribe and summarize</button>
+      <button type="button" data-flow="3" aria-pressed="false">A container starts</button>
+    </div>
+    <figure class="fig">
+      <div class="fig-scroll wide">
+        <svg id="arch" viewBox="0 0 1000 680" role="img" aria-label="Staging architecture. A phone signs in with Cognito and calls the load balancer, which forwards to two API tasks in private subnets. The API uses PostgreSQL in isolated subnets, the S3 audio bucket and the SQS job queue. A worker task reads jobs, downloads audio, calls Deepgram through the NAT gateway and Claude on Bedrock, and writes results to PostgreSQL. ECR, Secrets Manager and CloudWatch support tasks at startup.">
+          <defs>
+            <marker id="arr-off" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah-off"/></marker>
+            <marker id="arr-on" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker>
+          </defs>
+          <!-- account + VPC -->
+          <rect x="190" y="10" width="800" height="660" rx="16" class="acct"/>
+          <text x="206" y="30" class="t-row">AWS ACCOUNT · us-east-2 · STAGING</text>
+          <rect x="205" y="120" width="560" height="535" rx="14" class="vpc"/>
+          <text x="219" y="140" class="t-row">VPC 10.40.0.0/16 · TWO AVAILABILITY ZONES</text>
+          <rect x="220" y="152" width="150" height="490" rx="10" class="tier"/>
+          <text x="232" y="172" class="t-label c-pub" font-weight="600">Public subnets</text>
+          <rect x="385" y="152" width="190" height="490" rx="10" class="tier"/>
+          <text x="397" y="172" class="t-label c-cmp" font-weight="600">Private task subnets</text>
+          <rect x="590" y="152" width="160" height="490" rx="10" class="tier"/>
+          <text x="602" y="172" class="t-label c-dat" font-weight="600">Isolated DB</text>
+          <text x="790" y="132" class="t-row">MANAGED SERVICES</text>
+
+          <!-- edges (drawn first, under nodes) -->
+          <path id="e-login" class="edge" d="M60 250 V72 H213" marker-end="url(#arr-off)"/>
+          <path id="e-s3put" class="edge" d="M120 250 V112 H955 V138" marker-end="url(#arr-off)"/>
+          <path id="e-https" class="edge" d="M166 280 H230" marker-end="url(#arr-off)"/>
+          <path id="e-albapi" class="edge" d="M358 280 H398" marker-end="url(#arr-off)"/>
+          <path id="e-apidb" class="edge" d="M560 300 H600" marker-end="url(#arr-off)"/>
+          <path id="e-apis3" class="edge" d="M560 258 H700 V160 H788" marker-end="url(#arr-off)"/>
+          <path id="e-apisqs" class="edge" d="M560 274 H788" marker-end="url(#arr-off)"/>
+          <path id="e-wdb" class="edge" d="M560 404 H640 V372" marker-end="url(#arr-off)"/>
+          <path id="e-ws3" class="edge" d="M560 414 H780 V184 H788" marker-end="url(#arr-off)"/>
+          <path id="e-wsqs" class="edge" d="M560 426 H772 V292 H788" marker-end="url(#arr-off)"/>
+          <path id="e-wbed" class="edge" d="M560 446 H788" marker-end="url(#arr-off)"/>
+          <path id="e-wnat" class="edge" d="M400 446 H295 V498" marker-end="url(#arr-off)"/>
+          <path id="e-natdg" class="edge" d="M232 530 H168" marker-end="url(#arr-off)"/>
+          <path id="e-ecr" class="edge" d="M788 506 H500 V463" marker-end="url(#arr-off)"/>
+          <path id="e-sec" class="edge" d="M788 560 H470 V463" marker-end="url(#arr-off)"/>
+          <path id="e-logs" class="edge" d="M430 462 V614 H788" marker-end="url(#arr-off)"/>
+
+          <!-- outside nodes -->
+          <rect x="16" y="250" width="150" height="60" rx="10" class="n-ext"/>
+          <text x="91" y="276" text-anchor="middle" class="t-title">Phone / CLI</text>
+          <text x="91" y="293" text-anchor="middle" class="t-sub">outside AWS</text>
+          <rect x="16" y="500" width="150" height="60" rx="10" class="n-ext"/>
+          <text x="91" y="526" text-anchor="middle" class="t-title">Deepgram</text>
+          <text x="91" y="543" text-anchor="middle" class="t-sub">speech-to-text, outside AWS</text>
+
+          <rect x="215" y="44" width="170" height="56" rx="10" class="n-sec"/>
+          <text x="300" y="68" text-anchor="middle" class="t-title c-sec">Cognito</text>
+          <text x="300" y="85" text-anchor="middle" class="t-sub">sign-in, MFA, tokens</text>
+
+          <!-- VPC nodes -->
+          <rect x="232" y="250" width="126" height="60" rx="10" class="n-pub"/>
+          <text x="295" y="275" text-anchor="middle" class="t-title c-pub">Load balancer</text>
+          <text x="295" y="292" text-anchor="middle" class="t-sub">+ WAF firewall</text>
+          <rect x="232" y="500" width="126" height="60" rx="10" class="n-pub"/>
+          <text x="295" y="525" text-anchor="middle" class="t-title c-pub">NAT gateway</text>
+          <text x="295" y="542" text-anchor="middle" class="t-sub">outbound only</text>
+
+          <rect x="400" y="250" width="160" height="60" rx="10" class="n-cmp"/>
+          <text x="480" y="275" text-anchor="middle" class="t-title c-cmp">API × 2 tasks</text>
+          <text x="480" y="292" text-anchor="middle" class="t-sub">er-server</text>
+          <rect x="400" y="400" width="160" height="60" rx="10" class="n-cmp"/>
+          <text x="480" y="425" text-anchor="middle" class="t-title c-cmp">Worker × 1 task</text>
+          <text x="480" y="442" text-anchor="middle" class="t-sub">er-worker</text>
+
+          <rect x="602" y="290" width="136" height="80" rx="10" class="n-dat"/>
+          <text x="670" y="320" text-anchor="middle" class="t-title c-dat">PostgreSQL 16</text>
+          <text x="670" y="337" text-anchor="middle" class="t-sub">RDS</text>
+          <text x="670" y="353" text-anchor="middle" class="t-sub">no route out</text>
+
+          <!-- managed services -->
+          <rect x="790" y="140" width="185" height="56" rx="10" class="n-dat"/>
+          <text x="882" y="164" text-anchor="middle" class="t-title c-dat">S3 audio bucket</text>
+          <text x="882" y="181" text-anchor="middle" class="t-sub">encrypted, 7-day expiry</text>
+          <rect x="790" y="252" width="185" height="56" rx="10" class="n-dat"/>
+          <text x="882" y="276" text-anchor="middle" class="t-title c-dat">SQS job queue</text>
+          <text x="882" y="293" text-anchor="middle" class="t-sub">+ dead-letter queue</text>
+          <rect x="790" y="402" width="185" height="56" rx="10" class="box"/>
+          <text x="882" y="426" text-anchor="middle" class="t-title">Bedrock</text>
+          <text x="882" y="443" text-anchor="middle" class="t-sub">Claude Sonnet 4.6</text>
+          <rect x="790" y="486" width="185" height="40" rx="9" class="box"/>
+          <text x="882" y="511" text-anchor="middle" class="t-title">ECR image registry</text>
+          <rect x="790" y="540" width="185" height="40" rx="9" class="n-sec"/>
+          <text x="882" y="565" text-anchor="middle" class="t-title c-sec">Secrets Manager</text>
+          <rect x="790" y="594" width="185" height="40" rx="9" class="box"/>
+          <text x="882" y="619" text-anchor="middle" class="t-title">CloudWatch logs</text>
+
+          <g id="badges"></g>
+        </svg>
+      </div>
+      <figcaption id="flowCaption">The API's TLS on port 8443 uses a certificate each task makes for itself at startup. Only the load balancer talks to the API directly, and the database has no route to the internet at all.</figcaption>
+    </figure>
+    <ol class="flow-steps" id="flowSteps"></ol>
+  </div>
+
+  <div class="analogy">
+    <h4>If AWS were the hospital</h4>
+    <div><dt>VPC</dt><dd>The building. Everything private lives inside it.</dd></div>
+    <div><dt>Public subnets</dt><dd>The lobby and loading dock. The only place that touches the street.</dd></div>
+    <div><dt>Private task subnets</dt><dd>Staff-only floors where the API and worker do their work.</dd></div>
+    <div><dt>Isolated DB subnets</dt><dd>The records room. It has no outside door, not even a staff exit.</dd></div>
+    <div><dt>Load balancer + WAF</dt><dd>Front desk with a security guard. Checks every visitor, then sends them to an API task.</dd></div>
+    <div><dt>NAT gateway</dt><dd>A staff-only exit door. Staff can step out to call Deepgram; nobody can walk in through it.</dd></div>
+    <div><dt>Security groups</dt><dd>Badge readers on each door that say which rooms may talk to which.</dd></div>
+    <div><dt>IAM roles</dt><dd>ID badges. Each program gets its own badge with exactly the doors it needs.</dd></div>
+    <div><dt>KMS keys</dt><dd>The key safe. Stored data is locked, and the badge rules say who may unlock it.</dd></div>
+    <div><dt>Terraform state</dt><dd>The facilities binder: the building plan plus a record of what was actually built.</dd></div>
+  </div>
+</section>
+
+<!-- LEVEL 1b: every part -->
+<section class="block" id="parts">
+  <header>
+    <p class="eyebrow">Level 1 · the parts list</p>
+    <h2>Every part in one line</h2>
+    <p class="prose">The code is split into reusable modules (in <code>infra/modules/</code>) that are assembled by a few top-level folders. Click any card to jump to its detail section.</p>
+  </header>
+  <div class="parts-grid">
+    <a class="pcard" href="#p-bootstrap"><span class="kind sec">records</span><h4>Bootstrap</h4><p>Where Terraform keeps its own records, and who may read or change each one.</p><span class="status live">live</span></a>
+    <a class="pcard" href="#p-network"><span class="kind pub">network</span><h4>Network</h4><p>The private network: subnets in two zones, routes, the NAT exit and door rules.</p><span class="status written">written</span></a>
+    <a class="pcard" href="#p-data"><span class="kind dat">data</span><h4>Data</h4><p>Postgres database, audio bucket, job queue with a failure queue, and their encryption key.</p><span class="status written">written</span></a>
+    <a class="pcard" href="#p-identity"><span class="kind sec">identity</span><h4>Identity</h4><p>Permission badges for each program and for GitHub, plus empty secret containers.</p><span class="status written">written</span></a>
+    <a class="pcard" href="#p-auth"><span class="kind sec">sign-in</span><h4>Auth</h4><p>The Cognito user pool that proves who a clinician is. MFA on, no self-signup.</p><span class="status written">written, off</span></a>
+    <a class="pcard" href="#p-cluster"><span class="kind cmp">compute</span><h4>Cluster</h4><p>The image registry and the ECS cluster that runs containers. Images are never overwritten.</p><span class="status written">written</span></a>
+    <a class="pcard" href="#p-edge"><span class="kind pub">entry</span><h4>Edge</h4><p>Domain name, HTTPS certificate, load balancer and WAF firewall. Starts fully closed.</p><span class="status written">written, off</span></a>
+    <a class="pcard" href="#p-observability"><span class="kind neu">monitoring</span><h4>Observability</h4><p>Log groups, audit trail, alarms that email someone, and a monthly budget.</p><span class="status written">written</span></a>
+    <a class="pcard" href="#p-manifest"><span class="kind neu">contract</span><h4>Manifest</h4><p>A small JSON file listing resource names, passed from foundation to release.</p><span class="status written">written</span></a>
+    <a class="pcard" href="#p-release"><span class="kind cmp">compute</span><h4>Release + tasks</h4><p>The running API and worker services, and the one-shot migration task.</p><span class="status written">written, off</span></a>
+    <a class="pcard" href="#p-guards"><span class="kind sec">guards</span><h4>Encryption guards</h4><p>Bucket rules that refuse plain HTTP, old TLS and uploads with the wrong key.</p><span class="status live">live on bootstrap</span></a>
+    <a class="pcard" href="#deploy"><span class="kind neu">pipeline</span><h4>Deploy pipeline</h4><p>GitHub workflows that build, migrate, deploy, smoke-test and roll back.</p><span class="status written">written, not run</span></a>
+  </div>
+</section>
+
+<!-- LEVEL 2: roots -->
+<section class="block" id="roots">
+  <header>
+    <p class="eyebrow">Level 2 · how the code is organized</p>
+    <h2>Five roots, three layers</h2>
+    <p class="prose">A <strong>root</strong> is a folder you run Terraform in. Each one keeps its own state file, so each can be given its own permissions and can break without taking the others with it. There are five: one bootstrap, then a foundation and a release for each environment.</p>
+  </header>
+  <figure class="fig">
+    <div class="fig-scroll">
+      <svg viewBox="0 0 940 300" role="img" aria-label="Bootstrap holds state for all five roots. In each environment, the foundation root writes a manifest JSON file and the release root reads it. Staging is active and production is switched off.">
+        <defs>
+          <marker id="r-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker>
+          <marker id="r-am" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah-muted"/></marker>
+        </defs>
+        <rect x="20" y="30" width="180" height="260" rx="12" class="n-sec"/>
+        <text x="36" y="56" class="t-mono c-sec" font-weight="600">bootstrap/</text>
+        <text x="36" y="74" class="t-sub">runs once per account</text>
+        <text x="36" y="104" class="t-title">state bucket</text>
+        <text x="36" y="120" class="t-sub">every root's state file</text>
+        <text x="36" y="146" class="t-title">deploy bucket</text>
+        <text x="36" y="162" class="t-sub">manifests, release records</text>
+        <text x="36" y="188" class="t-title">KMS key</text>
+        <text x="36" y="204" class="t-sub">encrypts both buckets</text>
+        <text x="36" y="230" class="t-title">5 operator roles</text>
+        <text x="36" y="246" class="t-sub">one per root</text>
+        <rect x="36" y="258" width="110" height="20" rx="5" class="n-ok"/>
+        <text x="91" y="272" text-anchor="middle" class="t-mono c-ok" font-weight="600">LIVE</text>
+
+        <text x="240" y="22" class="t-row">STAGING</text>
+        <rect x="240" y="30" width="220" height="100" rx="12" class="box"/>
+        <text x="256" y="56" class="t-mono" font-weight="600">staging/foundation</text>
+        <text x="256" y="76" class="t-sub">network · data · identity · auth</text>
+        <text x="256" y="92" class="t-sub">cluster · edge · observability</text>
+        <text x="256" y="117" class="t-label">changes rarely, reviewed</text>
+        <line x1="462" y1="80" x2="516" y2="80" class="wire" marker-end="url(#r-a)"/>
+        <text x="489" y="72" text-anchor="middle" class="t-label">writes</text>
+        <rect x="520" y="52" width="150" height="56" rx="10" class="box-sunk"/>
+        <text x="595" y="76" text-anchor="middle" class="t-mono" font-weight="600">manifest.json</text>
+        <text x="595" y="94" text-anchor="middle" class="t-sub">resource names only</text>
+        <line x1="672" y1="80" x2="726" y2="80" class="wire" marker-end="url(#r-a)"/>
+        <text x="699" y="72" text-anchor="middle" class="t-label">reads</text>
+        <rect x="730" y="30" width="190" height="100" rx="12" class="n-cmp"/>
+        <text x="746" y="56" class="t-mono c-cmp" font-weight="600">staging/release</text>
+        <text x="746" y="76" class="t-sub">ECS task definitions</text>
+        <text x="746" y="92" class="t-sub">and services</text>
+        <text x="746" y="117" class="t-label">changes every deploy</text>
+
+        <text x="240" y="172" class="t-row">PRODUCTION · enabled = false</text>
+        <rect x="240" y="180" width="220" height="100" rx="12" class="n-off"/>
+        <text x="256" y="206" class="t-mono muted" font-weight="600">prod/foundation</text>
+        <text x="256" y="226" class="t-sub">same modules, no Cognito yet</text>
+        <text x="256" y="242" class="t-sub">plans create nothing</text>
+        <text x="256" y="267" class="t-label">needs its own reviewed decisions</text>
+        <line x1="462" y1="230" x2="516" y2="230" class="wire-dash" marker-end="url(#r-am)"/>
+        <rect x="520" y="202" width="150" height="56" rx="10" class="n-off"/>
+        <text x="595" y="226" text-anchor="middle" class="t-mono muted" font-weight="600">manifest.json</text>
+        <text x="595" y="244" text-anchor="middle" class="t-sub">not published</text>
+        <line x1="672" y1="230" x2="726" y2="230" class="wire-dash" marker-end="url(#r-am)"/>
+        <rect x="730" y="180" width="190" height="100" rx="12" class="n-off"/>
+        <text x="746" y="206" class="t-mono muted" font-weight="600">prod/release</text>
+        <text x="746" y="226" class="t-sub">same as staging release</text>
+        <text x="746" y="242" class="t-sub">reads nothing until enabled</text>
+      </svg>
+    </div>
+    <figcaption>Each root's state lives at its own key in bootstrap's state bucket, such as <code>staging/release/terraform.tfstate</code>. The manifest is the only thing a release learns about its foundation.</figcaption>
+  </figure>
+  <div class="two-col">
+    <div class="why">
+      <strong>Why split foundation from release?</strong>
+      <p>A deploy happens often and should only be able to do one thing: swap the running containers. A foundation change is rare, reviewed, and can delete a database. Keeping them in separate roots means a routine deploy never carries the power to touch the database.</p>
+      <p>It also avoids a fight. If the deploy script registered containers on its own while Terraform also described them, Terraform's next run would try to undo the deploy. Here the release root owns the container definitions, and the pipeline just hands it the new image digest.</p>
+    </div>
+    <div class="why">
+      <strong>Why a manifest file instead of reading the foundation's state?</strong>
+      <p>Terraform can read another root's state directly, but that hands over everything in it, including values that are only stored there because Terraform had to remember them. The manifest is an explicit list of names. The release's permissions can be limited to that one file, and secrets never appear in it, only pointers to them.</p>
+    </div>
+  </div>
+</section>
+
+<!-- LEVEL 3: drill down -->
+<section class="block" id="drill">
+  <header>
+    <p class="eyebrow">Level 3 · drill down</p>
+    <h2>Each part, in order of what depends on what</h2>
+    <p class="prose">Example values are realistic but synthetic. The account ID is shown as <code>000000000000</code>, the project prefix is <code>ernote</code>, and the environment is <code>staging</code>, so most names start with <code>ernote-staging-</code>.</p>
+  </header>
+
+  <!-- Bootstrap -->
+  <article class="part" id="p-bootstrap">
+    <div class="part-head"><span class="kind sec">records</span><h3>Bootstrap</h3><span class="path">infra/bootstrap/</span></div>
+    <p class="prose">Terraform needs somewhere safe to keep its state before it can build anything else, so this root goes first and is run by hand once per account. It is the only part that exists in AWS today.</p>
+    <div class="two-col">
+      <dl class="facts">
+        <div><dt>State bucket</dt><dd><code>ernote-tfstate-000000000000-us-east-2</code>. Versioned, so every old state is recoverable for 365 days. Can't be deleted by Terraform.</dd></div>
+        <div><dt>Deploy bucket</dt><dd><code>ernote-deploy-…</code>. Holds each environment's manifest and the pipeline's release records. Old versions kept 180 days.</dd></div>
+        <div><dt>KMS key</dt><dd><code>alias/ernote-tfstate</code>. Encrypts both buckets, rotates yearly, 30-day deletion delay. Usable only through S3 in this region.</dd></div>
+        <div><dt>Locking</dt><dd>Terraform writes a small <code>.tflock</code> file next to the state. A second person running the same root at the same time is refused. No DynamoDB table needed.</dd></div>
+        <div><dt>Bucket rules</dt><dd>Refuse plain HTTP, TLS older than 1.2, and uploads with the wrong encryption. These apply even to an account admin.</dd></div>
+        <div><dt>GitHub trust</dt><dd>An optional sign-in link so GitHub Actions can get short-lived AWS credentials. Off until GitHub environments are protected.</dd></div>
+      </dl>
+      <div class="prose">
+        <h4>Five roles, each fenced to one state file</h4>
+        <p>Each root gets its own IAM role. The role can read and write its own state file and lock, read its environment's manifest, and (for foundations) publish it. It then carries an <strong>explicit Deny</strong> on every other root's files. In IAM, a Deny beats any Allow, so even if someone attaches a broader policy to the role by mistake, a staging credential still can't touch production state.</p>
+      </div>
+    </div>
+    <figure class="fig">
+      <div class="fig-scroll">
+        <svg viewBox="0 0 920 230" role="img" aria-label="The staging-release operator role can read and write only staging/release state. Bootstrap, staging foundation, prod foundation and prod release state are all explicitly denied.">
+          <defs><marker id="b-ok" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah-ok"/></marker></defs>
+          <rect x="348" y="16" width="220" height="54" rx="10" class="n-sec"/>
+          <text x="458" y="40" text-anchor="middle" class="t-title c-sec">staging-release role</text>
+          <text x="458" y="57" text-anchor="middle" class="t-sub">example: the deploy pipeline</text>
+          <rect x="16" y="120" width="888" height="96" rx="12" class="box-sunk"/>
+          <text x="30" y="140" class="t-row">STATE BUCKET</text>
+          <rect x="30" y="150" width="160" height="50" rx="8" class="box"/><text x="110" y="180" text-anchor="middle" class="t-mono">bootstrap/</text>
+          <rect x="204" y="150" width="160" height="50" rx="8" class="box"/><text x="284" y="180" text-anchor="middle" class="t-mono">staging/foundation/</text>
+          <rect x="378" y="150" width="160" height="50" rx="8" class="n-ok"/><text x="458" y="180" text-anchor="middle" class="t-mono c-ok" font-weight="600">staging/release/</text>
+          <rect x="552" y="150" width="160" height="50" rx="8" class="box"/><text x="632" y="180" text-anchor="middle" class="t-mono">prod/foundation/</text>
+          <rect x="726" y="150" width="160" height="50" rx="8" class="box"/><text x="806" y="180" text-anchor="middle" class="t-mono">prod/release/</text>
+          <line x1="458" y1="72" x2="458" y2="146" class="wire-ok" marker-end="url(#b-ok)"/>
+          <text x="466" y="112" class="t-label c-ok" font-weight="600">allow</text>
+          <line x1="400" y1="70" x2="120" y2="146" class="wire-bad"/>
+          <line x1="420" y1="72" x2="290" y2="146" class="wire-bad"/>
+          <line x1="500" y1="72" x2="626" y2="146" class="wire-bad"/>
+          <line x1="520" y1="70" x2="800" y2="146" class="wire-bad"/>
+          <text x="120" y="146" text-anchor="middle" class="t-big c-bad">✕</text>
+          <text x="290" y="146" text-anchor="middle" class="t-big c-bad">✕</text>
+          <text x="626" y="146" text-anchor="middle" class="t-big c-bad">✕</text>
+          <text x="800" y="146" text-anchor="middle" class="t-big c-bad">✕</text>
+          <text x="250" y="100" text-anchor="middle" class="t-label c-bad">explicit deny</text>
+          <text x="680" y="100" text-anchor="middle" class="t-label c-bad">explicit deny</text>
+        </svg>
+      </div>
+      <figcaption>Every root works this way. The same pattern applies to manifests: staging roles are denied the production manifest and vice versa.</figcaption>
+    </figure>
+  </article>
+
+  <!-- Network -->
+  <article class="part" id="p-network">
+    <div class="part-head"><span class="kind pub">network</span><h3>Network</h3><span class="path">infra/modules/network/</span></div>
+    <p class="prose">The VPC is a private address range, <code>10.40.0.0/16</code> (65,536 addresses). The module cuts it into eight equal slices of 8,192 addresses. Six are used, in pairs, so every tier exists in both availability zones (two separate data centers in the region). Two are kept free for later.</p>
+    <figure class="fig">
+      <div class="fig-scroll">
+        <svg viewBox="0 0 920 190" role="img" aria-label="Address map. 10.40.0.0/16 is split into eight /19 ranges: two public subnets that route to the internet gateway, two private task subnets that route out through NAT, two isolated database subnets with no route out, and two reserved ranges.">
+          <text x="20" y="20" class="t-row">10.40.0.0/16 · SPLIT INTO EIGHT /19 RANGES</text>
+          <rect x="20" y="32" width="108" height="58" rx="6" class="n-pub"/><text x="74" y="56" text-anchor="middle" class="t-title c-pub">public · a</text><text x="74" y="74" text-anchor="middle" class="t-mono">10.40.0.0</text>
+          <rect x="130" y="32" width="108" height="58" rx="6" class="n-pub"/><text x="184" y="56" text-anchor="middle" class="t-title c-pub">public · b</text><text x="184" y="74" text-anchor="middle" class="t-mono">10.40.32.0</text>
+          <rect x="240" y="32" width="108" height="58" rx="6" class="n-cmp"/><text x="294" y="56" text-anchor="middle" class="t-title c-cmp">tasks · a</text><text x="294" y="74" text-anchor="middle" class="t-mono">10.40.64.0</text>
+          <rect x="350" y="32" width="108" height="58" rx="6" class="n-cmp"/><text x="404" y="56" text-anchor="middle" class="t-title c-cmp">tasks · b</text><text x="404" y="74" text-anchor="middle" class="t-mono">10.40.96.0</text>
+          <rect x="460" y="32" width="108" height="58" rx="6" class="n-dat"/><text x="514" y="56" text-anchor="middle" class="t-title c-dat">database · a</text><text x="514" y="74" text-anchor="middle" class="t-mono">10.40.128.0</text>
+          <rect x="570" y="32" width="108" height="58" rx="6" class="n-dat"/><text x="624" y="56" text-anchor="middle" class="t-title c-dat">database · b</text><text x="624" y="74" text-anchor="middle" class="t-mono">10.40.160.0</text>
+          <rect x="680" y="32" width="108" height="58" rx="6" class="n-res"/><text x="734" y="56" text-anchor="middle" class="t-title muted">reserved</text><text x="734" y="74" text-anchor="middle" class="t-mono muted">10.40.192.0</text>
+          <rect x="790" y="32" width="108" height="58" rx="6" class="n-res"/><text x="844" y="56" text-anchor="middle" class="t-title muted">reserved</text><text x="844" y="74" text-anchor="middle" class="t-mono muted">10.40.224.0</text>
+          <path d="M24 102 V110 H234 V102" class="wire-dash"/>
+          <path d="M244 102 V110 H454 V102" class="wire-dash"/>
+          <path d="M464 102 V110 H674 V102" class="wire-dash"/>
+          <text x="129" y="130" text-anchor="middle" class="t-title">→ internet gateway</text>
+          <text x="129" y="147" text-anchor="middle" class="t-sub">two-way internet access</text>
+          <text x="129" y="163" text-anchor="middle" class="t-sub">holds load balancer + NAT</text>
+          <text x="349" y="130" text-anchor="middle" class="t-title">→ NAT gateway</text>
+          <text x="349" y="147" text-anchor="middle" class="t-sub">can call out, can't be called</text>
+          <text x="349" y="163" text-anchor="middle" class="t-sub">holds API, worker, one-shots</text>
+          <text x="569" y="130" text-anchor="middle" class="t-title">→ nowhere</text>
+          <text x="569" y="147" text-anchor="middle" class="t-sub">no default route at all</text>
+          <text x="569" y="163" text-anchor="middle" class="t-sub">holds PostgreSQL</text>
+          <text x="789" y="130" text-anchor="middle" class="t-sub">kept free for later</text>
+        </svg>
+      </div>
+      <figcaption>Each slice is a <code>/19</code>. Zone "a" and "b" will be pinned to two Ohio zones such as us-east-2a and us-east-2b before the first apply, since changing them later would rebuild subnets. No subnet hands out public IP addresses automatically.</figcaption>
+    </figure>
+    <div class="two-col">
+      <div class="prose">
+        <h4>Door rules (security groups)</h4>
+        <p>Every component gets its own security group, and only these connections are allowed. Everything else is refused, including the VPC's default group, which is emptied on purpose.</p>
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th>From</th><th>To</th><th>Port</th></tr></thead>
+            <tbody>
+              <tr><td>Listed client IPs (empty for now)</td><td>Load balancer</td><td class="m">443</td></tr>
+              <tr><td>Load balancer</td><td>API</td><td class="m">8443</td></tr>
+              <tr><td>API, worker, migration, onboarding</td><td>PostgreSQL</td><td class="m">5432</td></tr>
+              <tr><td>Each task</td><td>Anywhere, HTTPS only</td><td class="m">443</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="muted" style="font-size:0.9rem">Never created: task-to-task traffic, SSH, a jump box, or any path from the internet to the database.</p>
+      </div>
+      <div class="prose">
+        <h4>Shortcuts and trade-offs</h4>
+        <ul class="plain-list">
+          <li><strong>S3 gateway endpoint.</strong> A free private shortcut from the task subnets to S3, so the worker downloads audio without going through NAT. Its policy only allows the audio bucket and the bucket ECR images are pulled from.</li>
+          <li><strong>One NAT, not two.</strong> Staging puts its only NAT in zone a to save about $37 a month. If zone a fails, both zones lose outbound internet. <code>nat_per_az = true</code> fixes that.</li>
+          <li><strong>Optional private endpoints</strong> for SQS, Bedrock, Secrets Manager, ECR and logs cost money per zone, so they're off by default. NAT stays regardless, because Deepgram and Cognito's public keys are on the internet.</li>
+        </ul>
+      </div>
+    </div>
+  </article>
+
+  <!-- Data -->
+  <article class="part" id="p-data">
+    <div class="part-head"><span class="kind dat">data</span><h3>Data</h3><span class="path">infra/modules/data/</span></div>
+    <p class="prose">The three places the server keeps things, plus one encryption key for all of them. The names are a contract with the code. For example, the app is told <code>STT_QUEUE=ernote-staging-jobs</code> and works out the failure queue name itself by adding <code>-dlq</code>.</p>
+    <div class="two-col">
+      <dl class="facts">
+        <div><dt>PostgreSQL 16 (RDS)</dt><dd>Every event, snapshot, transcript, chunk row and usage record. <code>db.t4g.small</code>, 50 GiB that can grow to 100. One zone in staging. Plaintext connections refused; the app verifies the server certificate.</dd></div>
+        <div><dt>Backups</dt><dd>Daily, kept 7 days in staging and can't be turned off. Deleting the database needs two deliberate changes, and a final snapshot is forced.</dd></div>
+        <div><dt>Master password</dt><dd>Created and stored by RDS in Secrets Manager. It never passes through Terraform, and it's used once to create the real app logins.</dd></div>
+        <div><dt>S3 audio bucket</dt><dd><code>ernote-staging-audio-000000000000-us-east-2</code>. Never public, versioned, encrypted by default. Current files expire after 7 days, and replaced versions 7 days after they're replaced.</dd></div>
+        <div><dt>SQS queue + DLQ</dt><dd><code>ernote-staging-jobs</code> and <code>ernote-staging-jobs-dlq</code>. Messages hold only IDs, never transcripts or names.</dd></div>
+        <div><dt>Data KMS key</dt><dd>Encrypts the database, its backups, audio and queue messages. Separate from the bootstrap key. <strong>Deleting it makes the data unrecoverable</strong>, so deletion waits 30 days.</dd></div>
+      </dl>
+      <div class="prose">
+        <h4>What happens to a job that keeps failing</h4>
+        <p>When the worker takes a job, the message is hidden from everyone else for 300 seconds. The worker renews that every 60 seconds while it works. If it crashes or gives up, the message reappears and another try starts.</p>
+        <div class="strip">
+          <div class="st"><strong>Try 1</strong>300 s lease, renewed every 60 s</div>
+          <span class="arrow">→</span>
+          <div class="st"><strong>Try 2</strong>message reappears after a failure</div>
+          <span class="arrow">→</span>
+          <div class="st"><strong>Try 3</strong>last attempt</div>
+          <span class="arrow">→</span>
+          <div class="st dlq"><strong>Dead-letter queue</strong>kept 14 days, alarm fires</div>
+        </div>
+        <p class="muted" style="font-size:0.9rem">The main queue keeps messages 4 days and the DLQ keeps them 14, so evidence of a failure outlives the work that caused it.</p>
+      </div>
+    </div>
+  </article>
+
+  <!-- Identity -->
+  <article class="part" id="p-identity">
+    <div class="part-head"><span class="kind sec">identity</span><h3>Identity</h3><span class="path">infra/modules/identity/</span></div>
+    <p class="prose">Every program gets <strong>two</strong> roles. They all run from the same container image, but no two programs share a role.</p>
+    <div class="two-col">
+      <div class="why">
+        <strong>Execution role: the stagehand</strong>
+        <p>Used by ECS <em>before</em> the program starts. It pulls the image, injects that program's own secrets as environment variables, and writes to that program's own log group. Nothing else.</p>
+      </div>
+      <div class="why">
+        <strong>Task role: the program's own badge</strong>
+        <p>Used by the running program for its AWS calls. Task roles can <em>never</em> read Secrets Manager. Secrets only arrive through injection at startup, so a bug in running code can't go fishing for other secrets.</p>
+      </div>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Program</th><th>Accept audio uploads</th><th>Read audio</th><th>Send jobs</th><th>Take jobs</th><th>Call Bedrock</th><th>Look up users</th><th>Secrets injected at start</th></tr></thead>
+        <tbody>
+          <tr><td class="m">api</td><td class="y">✓ signs upload URLs</td><td class="y">✓ checks it arrived</td><td class="y">✓</td><td class="n">✗</td><td class="n">✗</td><td class="n">✗</td><td class="m">db/api</td></tr>
+          <tr><td class="m">worker</td><td class="n">✗</td><td class="y">✓ downloads</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓ one approved model</td><td class="n">✗</td><td class="m">db/worker, deepgram</td></tr>
+          <tr><td class="m">migration</td><td class="n">✗</td><td class="n">✗</td><td class="n">✗</td><td class="n">✗</td><td class="n">✗</td><td class="n">✗</td><td class="m">db/migration</td></tr>
+          <tr><td class="m">onboarding</td><td class="n">✗</td><td class="n">✗</td><td class="n">✗</td><td class="n">✗</td><td class="n">✗</td><td class="y">✓ reads Cognito users</td><td class="m">db/onboarding</td></tr>
+          <tr><td class="m">db-bootstrap</td><td colspan="6" class="n">No task role at all. It makes no AWS calls.</td><td class="m">all four DB logins + RDS master</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="two-col">
+      <div class="prose">
+        <h4>Denied for every program</h4>
+        <p>Each task role ends with a blanket Deny. No program can assume another role, change networks, IAM, the database server, queues or buckets, read Secrets Manager, or disable or delete a key. The <code>db-bootstrap</code> role is the only one that can read the master database credential.</p>
+        <h4>Five empty secret containers</h4>
+        <p><code>ernote-staging/db/api</code>, <code>/db/worker</code>, <code>/db/migration</code>, <code>/db/onboarding</code> and <code>ernote-staging/deepgram</code>. Terraform creates the containers but never a value, so no password ever lands in Terraform state. There's no Anthropic key at all, because Bedrock uses the worker's role.</p>
+      </div>
+      <div class="prose">
+        <h4>GitHub deploy roles (optional, off)</h4>
+        <dl class="facts">
+          <div><dt>infrastructure</dt><dd>State and plan files only. Creating foundation resources needs a separately reviewed policy, or a person using SSO.</dd></div>
+          <div><dt>release</dt><dd>Push images, register containers, update the two services, run only the migration task. Can't change networks, the database, IAM or secrets, and can't read audio or credentials.</dd></div>
+          <div><dt>smoke</dt><dd>Reads one synthetic login and one approved test WAV. Nothing else.</dd></div>
+        </dl>
+        <p class="muted" style="font-size:0.9rem">GitHub can assume these only from this repository's protected environments. No role can hop into another role.</p>
+      </div>
+    </div>
+  </article>
+
+  <!-- Auth -->
+  <article class="part" id="p-auth">
+    <div class="part-head"><span class="kind sec">sign-in</span><h3>Auth</h3><span class="path">infra/modules/auth/</span></div>
+    <div class="two-col">
+      <div class="prose">
+        <p>One Cognito user pool and one app client per environment. The key idea: <strong>signing in proves who you are, and that's all.</strong> A successful login grants nothing. Which organization a clinician belongs to lives in the database's <code>clinicians</code> table, and only the <code>er-onboard</code> task can add someone there.</p>
+        <p>The pool can't be deleted or replaced by accident. A new pool would give every user a new ID (<code>sub</code>) and orphan every clinician row.</p>
+        <p class="muted" style="font-size:0.9rem">Off in staging until someone decides whether to import the existing sandbox pool or create a fresh one. Not wired into production yet.</p>
+      </div>
+      <dl class="facts">
+        <div><dt>Self-signup</dt><dd>Off. Only an admin can create users.</dd></div>
+        <div><dt>Password reset</dt><dd>Admin only. No email or SMS takeover path.</dd></div>
+        <div><dt>MFA</dt><dd>Required (authenticator app). Staging's labeled exception makes it optional for automated synthetic test users only.</dd></div>
+        <div><dt>Client secret</dt><dd>None. Phones can't keep secrets, so it uses the SRP password protocol instead.</dd></div>
+        <div><dt>Tokens</dt><dd>Access and ID tokens last 60 minutes, refresh tokens 12 hours. Refresh tokens can be revoked.</dd></div>
+        <div><dt>Hosted login page</dt><dd>Off unless exact callback URLs are given. No wildcards, no plain HTTP.</dd></div>
+      </dl>
+    </div>
+  </article>
+
+  <!-- Cluster -->
+  <article class="part" id="p-cluster">
+    <div class="part-head"><span class="kind cmp">compute</span><h3>Cluster</h3><span class="path">infra/modules/cluster/</span></div>
+    <div class="two-col">
+      <div class="prose">
+        <p>Two long-lived things: an ECR image registry named <code>ernote-staging</code>, and a Fargate-only ECS cluster with the same name. Fargate means AWS runs the servers. You only describe containers.</p>
+        <p>Image tags are <strong>immutable</strong>: once <code>sha-3f8afd7…</code> is pushed, nothing can push different bytes under that name. Every push is scanned for known vulnerabilities.</p>
+      </div>
+      <div class="prose">
+        <h4>Why only untagged images are ever deleted</h4>
+        <p>ECR's cleanup rules can't see which images are running. Any rule like "keep the last 50 tagged images" could eventually delete the running image or the one you'd roll back to. So the only rule deletes <em>untagged</em> images after 7 days, and Terraform refuses any rule that touches tagged ones. Tagged images pile up, and that storage cost is accepted.</p>
+        <p class="muted" style="font-size:0.9rem">Builds must push a plain single-platform image, because the extra untagged pieces of a multi-platform build would match the cleanup rule.</p>
+      </div>
+    </div>
+  </article>
+
+  <!-- Edge -->
+  <article class="part" id="p-edge">
+    <div class="part-head"><span class="kind pub">entry</span><h3>Edge</h3><span class="path">infra/modules/edge/</span></div>
+    <div class="two-col">
+      <div class="prose">
+        <p>The front door. It needs a domain you already own in Route 53, such as <code>api.staging.example.com</code>. It creates:</p>
+        <ul class="plain-list">
+          <li>An <strong>HTTPS certificate</strong> from ACM, proven by a DNS record.</li>
+          <li>An <strong>application load balancer</strong> in the public subnets. It accepts TLS 1.3 or 1.2 on port 443, drops malformed headers, and can't be deleted by accident.</li>
+          <li>A <strong>target group</strong> that sends traffic to API tasks on 8443 and checks <code>/readyz</code> every 15 seconds. Two failures take a task out and two passes put it back.</li>
+          <li>A <strong>DNS record</strong> pointing the name at the load balancer.</li>
+          <li>A <strong>WAF</strong> attached before the listener exists, so not even the first request skips it. If the load balancer can't reach the WAF, requests are refused rather than let through.</li>
+        </ul>
+      </div>
+      <div class="prose">
+        <h4>Every request runs this list, top to bottom</h4>
+        <ol class="pipe">
+          <li class="closed"><span class="pr">0</span><span class="rn">IngressClosed<small>Only present while ingress is off. Blocks every request.</small></span><span class="act block">block all</span></li>
+          <li><span class="pr">5</span><span class="rn">LabelSyncBodies<small>Tags JSON POSTs to <code>/v1/patients/{id}/events</code>, which can be large.</small></span><span class="act label">tag only</span></li>
+          <li><span class="pr">10</span><span class="rn">AWS common rules<small>Managed protections against common attacks. Its 8 KiB body rule is set to count only.</small></span><span class="act block">block</span></li>
+          <li><span class="pr">20</span><span class="rn">Oversize bodies<small>Bodies over 8 KiB are blocked, unless tagged as event sync.</small></span><span class="act block">block</span></li>
+          <li><span class="pr">30</span><span class="rn">Per-IP rate<small>More than 2,000 requests from one IP in 5 minutes.</small></span><span class="act block">block</span></li>
+          <li><span class="pr">end</span><span class="rn">Default</span><span class="act allow">allow</span></li>
+        </ol>
+      </div>
+    </div>
+  </article>
+
+  <!-- Observability -->
+  <article class="part" id="p-observability">
+    <div class="part-head"><span class="kind neu">monitoring</span><h3>Observability</h3><span class="path">infra/modules/observability/</span></div>
+    <div class="two-col">
+      <dl class="facts">
+        <div><dt>Log groups</dt><dd>One per program, such as <code>/ecs/ernote-staging/worker</code>. Created before any task starts, encrypted, kept 14 days. Tasks can't create groups or change retention.</dd></div>
+        <div><dt>Audit trail</dt><dd>CloudTrail records every AWS management action into a restricted, encrypted bucket for 365 days.</dd></div>
+        <div><dt>Alerts</dt><dd>An encrypted SNS topic emails the people listed. Off until delivery is tested for real.</dd></div>
+        <div><dt>Budget</dt><dd>A monthly budget with alerts at set percentages. The default is $50, which is below the real estimate (see Status).</dd></div>
+        <div><dt>Not logged</dt><dd>No raw request bodies, no WAF or load balancer request logs. Clinical text stays out of logs.</dd></div>
+      </dl>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Alarm</th><th>Fires when</th></tr></thead>
+          <tbody>
+            <tr><td class="m">worker_progress</td><td>The worker reports no progress for 6 minutes</td></tr>
+            <tr><td class="m">queue_age</td><td>The oldest job has waited over 10 minutes, for 3 minutes</td></tr>
+            <tr><td class="m">dlq_visible</td><td>Anything lands in the dead-letter queue</td></tr>
+            <tr><td class="m">usage_write_failed</td><td>A cost record failed to save</td></tr>
+            <tr><td class="m">db_storage</td><td>Less than 20% of disk free (10 GiB of 50)</td></tr>
+            <tr><td class="m">db_cpu</td><td>Database CPU above 80% for 15 minutes</td></tr>
+            <tr><td class="m">db_connections</td><td>35 or more connections, for 3 minutes</td></tr>
+            <tr><td class="m">api_healthy</td><td>No healthy API task, for 3 minutes</td></tr>
+            <tr><td class="m">api_5xx / alb_5xx</td><td>5 or more server errors in 5 minutes</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </article>
+
+  <!-- Manifest -->
+  <article class="part" id="p-manifest">
+    <div class="part-head"><span class="kind neu">contract</span><h3>Manifest</h3><span class="path">infra/modules/manifest/</span></div>
+    <div class="two-col">
+      <div class="code" aria-label="Example manifest"><span class="c">// s3://ernote-deploy-…/envs/staging/foundation-manifest.json (trimmed)</span>
+{
+  <span class="k">"schema_version"</span>: <span class="s">"1.0"</span>,
+  <span class="k">"environment"</span>: <span class="s">"staging"</span>,
+  <span class="k">"account_id"</span>: <span class="s">"000000000000"</span>,
+  <span class="k">"region"</span>: <span class="s">"us-east-2"</span>,
+  <span class="k">"resources"</span>: {
+    <span class="k">"private_subnet_ids"</span>: <span class="s">"[\"subnet-0a1…\",\"subnet-0b2…\"]"</span>,
+    <span class="k">"api_https_port"</span>: <span class="s">"8443"</span>,
+    <span class="k">"audio_bucket"</span>: <span class="s">"ernote-staging-audio-000000000000-us-east-2"</span>,
+    <span class="k">"stt_queue_name"</span>: <span class="s">"ernote-staging-jobs"</span>,
+    <span class="k">"db_endpoint"</span>: <span class="s">"ernote-staging.c1x2y3.us-east-2.rds.amazonaws.com"</span>,
+    <span class="k">"worker_task_role_arn"</span>: <span class="s">"arn:aws:iam::000000000000:role/ernote-staging-worker-task"</span>,
+    <span class="k">"ecr_repository_url"</span>: <span class="s">"000000000000.dkr.ecr.us-east-2.amazonaws.com/ernote-staging"</span>,
+    <span class="k">"cognito_pool_id"</span>: <span class="s">"us-east-2_AbC123xyz"</span>,
+    <span class="k">"alarm_topic_arn"</span>: <span class="s">"arn:aws:sns:us-east-2:000000000000:ernote-staging-alarms"</span>,
+    <span class="c">… up to 38 keys</span>
+  },
+  <span class="k">"secret_refs"</span>: {
+    <span class="k">"worker_db"</span>: <span class="x">"arn:aws:secretsmanager:…:secret:ernote-staging/db/worker-Ab12Cd"</span>,
+    <span class="k">"deepgram"</span>:  <span class="x">"arn:aws:secretsmanager:…:secret:ernote-staging/deepgram-Xy34Zw"</span>
+  }
+}</div>
+      <div class="prose">
+        <p>The foundation writes this file after everything it names has finished building. The bucket is versioned, so a release can pin the exact version it was reviewed against, and a later foundation change can't alter it.</p>
+        <h4>The release refuses a manifest when</h4>
+        <ul class="plain-list">
+          <li>its environment, account, region or project don't match</li>
+          <li>any required key is missing, which catches a half-finished foundation before it reaches ECS</li>
+          <li>a Cognito ID doesn't look like one from this region</li>
+          <li>anything under <code>secret_refs</code> isn't a Secrets Manager ARN. This is checked on the way out <em>and</em> on the way in, so a real password can't sneak through.</li>
+        </ul>
+        <p class="muted" style="font-size:0.9rem">The schema only allows text values, which is why the subnet list is stored as a JSON string and decoded on the other side.</p>
+      </div>
+    </div>
+  </article>
+
+  <!-- Release -->
+  <article class="part" id="p-release">
+    <div class="part-head"><span class="kind cmp">compute</span><h3>Release, compute and tasks</h3><span class="path">infra/envs/*/release/ · modules/compute/ · modules/task/</span></div>
+    <p class="prose">The release root takes two inputs from the pipeline: an image digest (the exact bytes, <code>sha256:…</code>) and the manifest version. With only those, it prepares container definitions for the API, worker and migration. It only creates the running services when <code>services_enabled = true</code>.</p>
+    <div class="two-col">
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th></th><th>API</th><th>Worker</th><th>Migration</th></tr></thead>
+          <tbody>
+            <tr><td>Runs as</td><td>service</td><td>service</td><td>one-shot task, per deploy</td></tr>
+            <tr><td>Copies</td><td class="m">2</td><td class="m">1</td><td class="m">1</td></tr>
+            <tr><td>Size</td><td colspan="3">0.5 vCPU, 1 GiB memory, Linux x86 on Fargate</td></tr>
+            <tr><td>During a deploy</td><td>starts new copies before stopping old ones (100–200%)</td><td>stops the old one, then starts the new one (0–100%)</td><td>must exit successfully before services change</td></tr>
+            <tr><td>DB connections</td><td class="m">5 each</td><td class="m">5</td><td class="m">1</td></tr>
+            <tr><td>Behind load balancer</td><td>yes, 120 s grace on start</td><td>no</td><td>no</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="prose">
+        <h4>Applies to every container</h4>
+        <ul class="plain-list">
+          <li>Runs as a non-root user with a read-only filesystem.</li>
+          <li>No public IP, and remote shell access (ECS Exec) off.</li>
+          <li>If a new version keeps failing, ECS rolls back by itself (circuit breaker).</li>
+          <li>Old container definitions are kept, so a rollback can reuse them exactly.</li>
+          <li>Terraform never runs the migration itself. The pipeline does, before anything else changes.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="two-col">
+      <div class="code" aria-label="Worker container settings"><span class="c">// worker container, as rendered (trimmed)</span>
+<span class="k">image</span>       000000000000.dkr.ecr.us-east-2.amazonaws.com/ernote-staging@sha256:9f2c…
+<span class="k">environment</span>
+  APP_ENV          = <span class="s">staging</span>
+  DB_HOST          = <span class="s">ernote-staging.c1x2y3.us-east-2.rds.amazonaws.com</span>
+  DB_SSL_ROOT_CERT = <span class="s">/etc/ssl/certs/rds-global-bundle.pem</span>
+  DB_MAX_CONNECTIONS = <span class="s">5</span>
+  AUDIO_BUCKET     = <span class="s">ernote-staging-audio-000000000000-us-east-2</span>
+  STT_QUEUE        = <span class="s">ernote-staging-jobs</span>
+  TRANSPORT        = <span class="s">bedrock</span>
+  BEDROCK_SUMMARY_MODEL_ID = <span class="s">us.anthropic.claude-sonnet-4-6</span>
+<span class="k">secrets</span>     <span class="c">// filled in by the execution role at start</span>
+  DB_USERNAME      ← <span class="x">ernote-staging/db/worker : username</span>
+  DB_PASSWORD      ← <span class="x">ernote-staging/db/worker : password</span>
+  DEEPGRAM_API_KEY ← <span class="x">ernote-staging/deepgram : api_key</span>
+<span class="k">logs</span>        /ecs/ernote-staging/worker</div>
+      <div class="prose">
+        <h4>Where each value comes from</h4>
+        <p>The image is the ECR address from the manifest plus the digest from the pipeline. Plain settings like <code>STT_QUEUE</code> come straight from the manifest. Secrets appear only as pointers. ECS swaps in the real values as the container starts, using the worker's execution role, so the values never pass through Terraform, GitHub or the manifest.</p>
+        <p>The API's container gets <code>AUTH_MODE=cognito</code>, the Cognito IDs, and <code>API_TLS=self-signed</code>. The migration gets only database settings.</p>
+      </div>
+    </div>
+  </article>
+
+  <!-- Guards -->
+  <article class="part" id="p-guards">
+    <div class="part-head"><span class="kind sec">guards</span><h3>Encryption guards and account guards</h3><span class="path">modules/s3-encryption-guards/ · guard.tf in every root</span></div>
+    <div class="two-col">
+      <div class="prose">
+        <h4>Bucket encryption guards</h4>
+        <p>A shared set of bucket-policy rules used on the state, deploy and audio buckets. They refuse any upload that asks for the wrong encryption type, names a different key, asks for KMS without naming a key, or brings its own key (SSE-C). Uploads that don't mention encryption at all still work, because the bucket encrypts them by default. That matters for the phone's presigned uploads. These passed live signed tests on the bootstrap buckets on 2026-10-14.</p>
+      </div>
+      <div class="prose">
+        <h4>Wrong-account guards</h4>
+        <p>Every root refuses to run against the wrong AWS account, in two independent ways. The AWS provider is told the only allowed account ID. Separately, a check asks AWS who the current credentials belong to and fails the plan before anything is created if it doesn't match.</p>
+        <p>The environment name (<code>staging</code>) is written into each root's code, not passed in, so you can't point a root at a different environment by changing a variable.</p>
+      </div>
+    </div>
+  </article>
+</section>
+
+<!-- LEVEL 4: deploy -->
+<section class="block" id="deploy">
+  <header>
+    <p class="eyebrow">Level 4 · putting it in motion</p>
+    <h2>How a deploy works</h2>
+    <p class="prose">When CI passes on <code>master</code>, <code>.github/workflows/deploy.yml</code> runs <code>scripts/deploy.py</code>. It writes a release record to the deploy bucket at every phase, so a retry or a rollback knows exactly where things stood. It has never run against AWS.</p>
+  </header>
+  <figure class="fig">
+    <div class="fig-scroll">
+      <svg viewBox="0 0 940 350" role="img" aria-label="Deploy pipeline. Publish image, plan release, run migration, apply the saved plan, verify, then smoke test. If the smoke test passes, the release is accepted. If any step fails, recovery either rolls back to the previous release when the schema is compatible, or stops services otherwise.">
+        <defs>
+          <marker id="d-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker>
+          <marker id="d-ok" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah-ok"/></marker>
+          <marker id="d-m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah-muted"/></marker>
+        </defs>
+        <rect x="20" y="30" width="135" height="70" rx="10" class="box"/>
+        <text x="87" y="56" text-anchor="middle" class="t-title">Publish image</text>
+        <text x="87" y="73" text-anchor="middle" class="t-sub">push sha-&lt;commit&gt;</text>
+        <text x="87" y="88" text-anchor="middle" class="t-sub">linux/amd64 only</text>
+        <rect x="176" y="30" width="135" height="70" rx="10" class="box"/>
+        <text x="243" y="56" text-anchor="middle" class="t-title">Plan release</text>
+        <text x="243" y="73" text-anchor="middle" class="t-sub">pins image digest</text>
+        <text x="243" y="88" text-anchor="middle" class="t-sub">+ manifest version</text>
+        <rect x="332" y="30" width="135" height="70" rx="10" class="n-dat"/>
+        <text x="399" y="56" text-anchor="middle" class="t-title c-dat">Run migration</text>
+        <text x="399" y="73" text-anchor="middle" class="t-sub">one-shot task</text>
+        <text x="399" y="88" text-anchor="middle" class="t-sub">must exit 0</text>
+        <rect x="488" y="30" width="135" height="70" rx="10" class="n-cmp"/>
+        <text x="555" y="56" text-anchor="middle" class="t-title c-cmp">Apply saved plan</text>
+        <text x="555" y="73" text-anchor="middle" class="t-sub">no re-planning</text>
+        <text x="555" y="88" text-anchor="middle" class="t-sub">rolling update</text>
+        <rect x="644" y="30" width="135" height="70" rx="10" class="box"/>
+        <text x="711" y="56" text-anchor="middle" class="t-title">Verify</text>
+        <text x="711" y="73" text-anchor="middle" class="t-sub">exact digest running</text>
+        <text x="711" y="88" text-anchor="middle" class="t-sub">right count, healthy</text>
+        <rect x="800" y="30" width="135" height="70" rx="10" class="box"/>
+        <text x="867" y="56" text-anchor="middle" class="t-title">Smoke test</text>
+        <text x="867" y="73" text-anchor="middle" class="t-sub">synthetic user</text>
+        <text x="867" y="88" text-anchor="middle" class="t-sub">+ tenant isolation</text>
+        <line x1="156" y1="65" x2="173" y2="65" class="wire" marker-end="url(#d-a)"/>
+        <line x1="312" y1="65" x2="329" y2="65" class="wire" marker-end="url(#d-a)"/>
+        <line x1="468" y1="65" x2="485" y2="65" class="wire" marker-end="url(#d-a)"/>
+        <line x1="624" y1="65" x2="641" y2="65" class="wire" marker-end="url(#d-a)"/>
+        <line x1="780" y1="65" x2="797" y2="65" class="wire" marker-end="url(#d-a)"/>
+
+        <rect x="800" y="220" width="135" height="70" rx="10" class="n-ok"/>
+        <text x="867" y="248" text-anchor="middle" class="t-title c-ok">Accepted</text>
+        <text x="867" y="265" text-anchor="middle" class="t-sub">becomes the new</text>
+        <text x="867" y="280" text-anchor="middle" class="t-sub">rollback target</text>
+        <line x1="867" y1="102" x2="867" y2="216" class="wire-ok" marker-end="url(#d-ok)"/>
+        <text x="876" y="164" class="t-label c-ok" font-weight="600">passes</text>
+
+        <rect x="488" y="220" width="135" height="70" rx="10" class="n-bad"/>
+        <text x="555" y="248" text-anchor="middle" class="t-title c-bad">Recover</text>
+        <text x="555" y="265" text-anchor="middle" class="t-sub">rollout, verify or</text>
+        <text x="555" y="280" text-anchor="middle" class="t-sub">smoke test failed</text>
+        <line x1="555" y1="102" x2="552" y2="216" class="wire-dash" marker-end="url(#d-m)"/>
+        <line x1="711" y1="102" x2="580" y2="216" class="wire-dash" marker-end="url(#d-m)"/>
+        <line x1="815" y1="102" x2="605" y2="216" class="wire-dash" marker-end="url(#d-m)"/>
+        <text x="760" y="176" text-anchor="middle" class="t-label">fails</text>
+
+        <rect x="176" y="196" width="220" height="62" rx="10" class="box"/>
+        <text x="286" y="220" text-anchor="middle" class="t-title">Roll back</text>
+        <text x="286" y="237" text-anchor="middle" class="t-sub">re-apply previous release from its</text>
+        <text x="286" y="251" text-anchor="middle" class="t-sub">own commit, then smoke test again</text>
+        <rect x="176" y="272" width="220" height="62" rx="10" class="box"/>
+        <text x="286" y="296" text-anchor="middle" class="t-title">Stop services</text>
+        <text x="286" y="313" text-anchor="middle" class="t-sub">first release or schema changed:</text>
+        <text x="286" y="327" text-anchor="middle" class="t-sub">a person fixes forward</text>
+        <line x1="486" y1="244" x2="400" y2="230" class="wire" marker-end="url(#d-a)"/>
+        <text x="443" y="226" text-anchor="middle" class="t-label">compatible</text>
+        <line x1="486" y1="270" x2="400" y2="300" class="wire" marker-end="url(#d-a)"/>
+        <text x="448" y="304" text-anchor="middle" class="t-label">otherwise</text>
+      </svg>
+    </div>
+    <figcaption>If publishing, planning or the migration fails, the running services haven't been touched yet, so recovery just reports that and stops. Migrations only ever run forward. A rollback is allowed only when the previous release understands the current database schema, either because the migration set is the same or because the pair is listed as compatible in <code>ci/release-policy.json</code>.</figcaption>
+  </figure>
+  <div class="two-col">
+    <div class="prose">
+      <h4>Why "apply the saved plan" matters</h4>
+      <p>The plan made before the migration pins three things: the image digest, the manifest version, and the state it was planned against. Applying that same saved file means what was reviewed is exactly what runs. If anything changed in between, Terraform refuses the stale plan instead of quietly doing something different.</p>
+    </div>
+    <div class="prose">
+      <h4>Separate identities per job</h4>
+      <p>The deploy and accept jobs use the <code>release</code> role. The smoke test runs in its own GitHub environment with the <code>smoke</code> role, which can only read the synthetic test login and the test audio file. A smoke test can't change the deploy, and the deploy can't read the test credentials.</p>
+    </div>
+  </div>
+</section>
+
+<!-- LEVEL 5: switches -->
+<section class="block" id="switches">
+  <header>
+    <p class="eyebrow">Level 5 · how it gets turned on</p>
+    <h2>Everything starts switched off</h2>
+    <p class="prose">Each risky piece has a switch that defaults to off. Several switches refuse to turn on until an earlier one is on, and Terraform checks that during the plan. This is the order they'd be flipped for staging.</p>
+  </header>
+  <ol class="ladder">
+    <li class="live"><div class="sw"><code>infra/bootstrap</code> applied<span class="needs">State and deploy buckets, key, five roles. Verified live on 2026-10-14.</span></div><span class="state on">on</span></li>
+    <li><div class="sw"><code>staging/foundation</code> applied<span class="needs">Network, database, bucket, queues, roles, cluster, logs. <strong>Needs:</strong> an approved budget, a chosen zone pair and address range.</span></div><span class="state off">not applied</span></li>
+    <li><div class="sw"><code>auth.enabled = true</code><span class="needs">Creates the Cognito pool. <strong>Needs:</strong> a decision on importing the old sandbox pool or starting fresh.</span></div><span class="state off">off</span></li>
+    <li><div class="sw"><code>edge = { hostname, hosted_zone_id }</code><span class="needs">Certificate, load balancer, WAF, DNS. The WAF still blocks every request at this point. <strong>Needs:</strong> a domain you control.</span></div><span class="state off">off</span></li>
+    <li><div class="sw"><code>telemetry.alarms_enabled = true</code><span class="needs">Alarm emails go out. <strong>Needs:</strong> a real delivery test.</span></div><span class="state off">off</span></li>
+    <li><div class="sw"><code>edge.ingress_enabled = true</code> + <code>client_ipv4_cidrs</code><span class="needs">Removes the block-everything rule and opens port 443 to the listed IPs only. <strong>Terraform refuses</strong> unless alarms are on and the edge exists.</span></div><span class="state off">off</span></li>
+    <li><div class="sw"><code>github_oidc_enabled</code> + <code>ci</code><span class="needs">GitHub deploy roles. <strong>Needs:</strong> protected GitHub environments and checked subject strings.</span></div><span class="state off">off</span></li>
+    <li><div class="sw"><code>services_enabled = true</code> (release)<span class="needs">The API and worker actually run. <strong>Terraform refuses</strong> unless the pinned manifest shows the alarm topic with notifications on, and an image digest and manifest version are given.</span></div><span class="state off">off</span></li>
+    <li><div class="sw"><code>enabled = true</code> (production)<span class="needs">Production exists. <strong>Needs:</strong> explicit Multi-AZ and retention choices, its own MFA policy, and the pre-PHI conditions in <code>docs/ops/deployment-contract.md</code>.</span></div><span class="state off">off</span></li>
+  </ol>
+</section>
+
+<!-- LEVEL 6: status + cost -->
+<section class="block" id="status">
+  <header>
+    <p class="eyebrow">Where it stands</p>
+    <h2>Status and cost</h2>
+  </header>
+  <div class="two-col">
+    <div class="prose">
+      <h4>What exists in AWS today</h4>
+      <p>Only the bootstrap layer: two buckets, one key and five roles. Their storage, locking, recovery and role fences were checked live on 2026-10-14.</p>
+      <h4>What's been tested without AWS</h4>
+      <p>Every root validates, and the module tests run against a mocked AWS with no credentials (<code>scripts/tf-network-check.sh</code>, <code>scripts/tf-data-check.sh</code> and others). They check things like the address split, permission documents, WAF rules and the manifest guards. A mock can't prove that real AWS accepts a setting, though.</p>
+      <h4>What's next</h4>
+      <p><code>docs/ops/step8-final-aws-live-checklist.md</code> (2026-10-31) lists the remaining live steps in order: confirm the account and budget, set up GitHub trust, apply the foundation under SSO, then turn the switches above on one at a time with evidence recorded.</p>
+    </div>
+    <div class="prose">
+      <h4>Estimated staging cost per month</h4>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Item</th><th class="nowrap" style="text-align:right">USD / month</th></tr></thead>
+          <tbody>
+            <tr><td>Fargate: 2 API + 1 worker, 0.5 vCPU / 1 GiB each</td><td class="num">54.06</td></tr>
+            <tr><td>NAT gateway + its public IP</td><td class="num">36.50</td></tr>
+            <tr><td>Load balancer, its IPs and usage</td><td class="num">29.57</td></tr>
+            <tr><td>RDS <code>db.t4g.small</code> + 50 GiB</td><td class="num">29.11</td></tr>
+            <tr><td>WAF: one ACL, three rules</td><td class="num">8.00</td></tr>
+            <tr><td>Logs, alarms, keys, secrets, DNS, ECR, S3</td><td class="num">9.08</td></tr>
+            <tr class="total"><td>Total before usage</td><td class="num">166.32</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="muted" style="font-size:0.9rem">From <code>docs/ops/staging-cost-review-2026-10-14.md</code>, Ohio list prices. It leaves out Deepgram and Bedrock usage, data transfer and tax, and the checklist says it must be repriced. It's over three times the current $50 budget, so a new budget has to be approved before the foundation is applied.</p>
+    </div>
+  </div>
+</section>
+
+<!-- Decoder -->
+<section class="block" id="decoder">
+  <header>
+    <p class="eyebrow">Reference</p>
+    <h2>Jargon decoder</h2>
+  </header>
+  <div class="table-scroll">
+    <table>
+      <thead><tr><th>Term</th><th>Plain English</th></tr></thead>
+      <tbody>
+        <tr><td class="m">Terraform</td><td>A tool that reads text files describing cloud resources and makes the cloud match them.</td></tr>
+        <tr><td class="m">plan / apply</td><td>A plan shows what would change, and apply does it. A saved plan can be applied later exactly as reviewed.</td></tr>
+        <tr><td class="m">state, backend, lock</td><td>Terraform's record of what it built (state), where that record lives (backend: the S3 bucket), and the "in use" marker that stops two people changing it at once (lock).</td></tr>
+        <tr><td class="m">root, module</td><td>A root is a folder you run Terraform in, with its own state. A module is a reusable building block that roots call.</td></tr>
+        <tr><td class="m">precondition</td><td>A rule in the code that fails the plan with a clear message if something isn't true yet.</td></tr>
+        <tr><td class="m">VPC, subnet, CIDR</td><td>A private network, a slice of it, and the notation for an address range (<code>10.40.0.0/16</code>).</td></tr>
+        <tr><td class="m">availability zone</td><td>One of several separate data centers in a region. Using two means one can fail.</td></tr>
+        <tr><td class="m">internet gateway, NAT</td><td>The two-way door to the internet, and a one-way exit that lets private machines call out without being reachable.</td></tr>
+        <tr><td class="m">security group</td><td>A firewall attached to a component, listing who may connect to it and on which port.</td></tr>
+        <tr><td class="m">VPC endpoint</td><td>A private shortcut from the VPC to an AWS service that skips the internet.</td></tr>
+        <tr><td class="m">ALB, target group</td><td>The load balancer that spreads incoming requests, and the list of tasks it sends them to.</td></tr>
+        <tr><td class="m">ACM, Route 53</td><td>AWS's certificate service and DNS service.</td></tr>
+        <tr><td class="m">WAF</td><td>A firewall that inspects each web request and blocks bad ones.</td></tr>
+        <tr><td class="m">ECS, Fargate</td><td>AWS's container runner, and the mode where AWS manages the servers underneath.</td></tr>
+        <tr><td class="m">task definition, service</td><td>The recipe for a container (image, size, settings), and the thing that keeps N copies of it running.</td></tr>
+        <tr><td class="m">ECR, digest</td><td>The image registry, and the fingerprint (<code>sha256:…</code>) that identifies an image's exact bytes.</td></tr>
+        <tr><td class="m">IAM role, policy</td><td>An identity a program can act as, and the written rules of what it may do.</td></tr>
+        <tr><td class="m">explicit deny</td><td>A rule that says no. It always wins over any rule that says yes.</td></tr>
+        <tr><td class="m">task role vs execution role</td><td>The running program's own permissions, versus the permissions ECS uses to start it (pull image, inject secrets, write logs).</td></tr>
+        <tr><td class="m">OIDC</td><td>A way for GitHub Actions to prove who it is and get short-lived AWS credentials, so no stored keys are needed.</td></tr>
+        <tr><td class="m">KMS key, SSE-KMS</td><td>An encryption key AWS guards for you, and S3 encrypting stored files with it.</td></tr>
+        <tr><td class="m">presigned URL</td><td>A temporary link that lets the phone upload one file directly to S3 using the API's permission.</td></tr>
+        <tr><td class="m">SQS, visibility timeout, DLQ</td><td>A job queue, how long a taken job stays hidden before it's retried, and the side queue where jobs go after repeated failure.</td></tr>
+        <tr><td class="m">RDS, Multi-AZ</td><td>AWS-managed PostgreSQL, and the option to keep a standby copy in a second zone (off in staging).</td></tr>
+        <tr><td class="m">Secrets Manager</td><td>Encrypted storage for passwords and API keys.</td></tr>
+        <tr><td class="m">Cognito user pool, sub</td><td>The sign-in service and the permanent user ID it assigns.</td></tr>
+        <tr><td class="m">CloudWatch, CloudTrail, SNS</td><td>Logs and alarms, the audit record of AWS actions, and the service that sends alert emails.</td></tr>
+        <tr><td class="m">Bedrock, inference profile</td><td>AWS's way to call Claude, and a named route that may send requests to several US regions.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<footer>
+  <p>Source: <code>infra/</code> (README, every module and root), <code>scripts/deploy.py</code>, <code>.github/workflows/deploy.yml</code> and <code>docs/ops/</code> as of 2026-11-17.</p>
+  <p>Account IDs, hostnames, resource suffixes and digests are placeholders. No real identifiers are shown.</p>
+</footer>
+
+</div>
+
+<script>
+(function () {
+  const svgNS = 'http://www.w3.org/2000/svg';
+  // badge anchor point for each edge
+  const anchor = {
+    'e-login': [60, 160], 'e-s3put': [540, 112], 'e-https': [198, 280], 'e-albapi': [378, 280],
+    'e-apidb': [580, 300], 'e-apis3': [700, 210], 'e-apisqs': [740, 274], 'e-wdb': [640, 388],
+    'e-ws3': [610, 414], 'e-wsqs': [690, 426], 'e-wbed': [740, 446], 'e-wnat': [350, 446],
+    'e-natdg': [200, 530], 'e-ecr': [650, 506], 'e-sec': [650, 560], 'e-logs': [650, 614]
+  };
+  const flows = [
+    { caption: 'The API also fetches Cognito’s public signing keys through the NAT to check tokens (not drawn). Only the load balancer can reach the API, and the database has no route to the internet.',
+      steps: [
+        { e: ['e-login'], t: 'The phone signs in to Cognito with a password and MFA code, and gets a token that lasts 60 minutes.' },
+        { e: ['e-https'], t: 'It sends the request over HTTPS. Route 53 points the name at the load balancer, and the WAF checks the request first.' },
+        { e: ['e-albapi'], t: 'The load balancer forwards it to one of the two API tasks over TLS on port 8443.' },
+        { e: ['e-apidb'], t: 'The API checks the token, looks up the clinician’s organization in Postgres, and saves the event.' }
+      ] },
+    { caption: 'The audio bytes go straight from the phone to S3. The API only hands out a short-lived upload link and checks the result.',
+      steps: [
+        { e: ['e-https', 'e-albapi'], t: 'The phone asks the API for an upload slot for this audio chunk.' },
+        { e: ['e-apidb'], t: 'The API records a pending chunk and signs a 15-minute upload link with its own role. Signing needs no network call.' },
+        { e: ['e-s3put'], t: 'The phone uploads the audio directly to S3. The bytes never pass through the load balancer or the API.' },
+        { e: ['e-apis3'], t: 'The phone reports it’s done. The API checks S3 that the file is there and records which version it saw.' },
+        { e: ['e-apisqs'], t: 'The API puts a TranscribeChunk job on the queue. The message holds only an ID.' }
+      ] },
+    { caption: 'Deepgram is the only call that leaves AWS, which is why the NAT exists. Bedrock is signed by the worker’s role, so there is no Anthropic API key anywhere.',
+      steps: [
+        { e: ['e-wsqs'], t: 'The worker waits on the queue and takes the job. It has 300 seconds before the job reappears for another try.' },
+        { e: ['e-ws3'], t: 'It downloads the audio through the VPC’s private S3 shortcut.' },
+        { e: ['e-wnat', 'e-natdg'], t: 'It sends the audio to Deepgram. That’s outside AWS, so the call goes out through the NAT gateway.' },
+        { e: ['e-wbed'], t: 'It removes identifiers and asks Claude on Bedrock to summarize.' },
+        { e: ['e-wdb'], t: 'It writes the transcript, the summary and a cost record to Postgres.' }
+      ] },
+    { caption: 'Only the worker is drawn. The API, migration and onboarding tasks start the same way, each with its own role, secrets and log group.',
+      steps: [
+        { e: ['e-ecr'], t: 'ECS pulls the exact image by digest from ECR, using the worker’s execution role.' },
+        { e: ['e-sec'], t: 'ECS reads the worker’s own DB login and Deepgram key and passes them in as environment variables. The program itself never calls Secrets Manager.' },
+        { e: ['e-logs'], t: 'The program writes logs to its own log group, which existed before it started.' }
+      ] }
+  ];
+
+  const svg = document.getElementById('arch');
+  const badges = document.getElementById('badges');
+  const list = document.getElementById('flowSteps');
+  const cap = document.getElementById('flowCaption');
+  const tabs = Array.from(document.querySelectorAll('.flow-tabs button'));
+
+  function show(i) {
+    const f = flows[i];
+    tabs.forEach((b, j) => b.setAttribute('aria-pressed', j === i ? 'true' : 'false'));
+    const active = new Set(f.steps.flatMap((s) => s.e));
+    svg.querySelectorAll('.edge').forEach((p) => {
+      const on = active.has(p.id);
+      p.classList.toggle('on', on);
+      p.setAttribute('marker-end', on ? 'url(#arr-on)' : 'url(#arr-off)');
+    });
+    badges.textContent = '';
+    f.steps.forEach((s, n) => {
+      const pt = anchor[s.e[0]];
+      if (!pt) return;
+      const g = document.createElementNS(svgNS, 'g');
+      g.setAttribute('class', 'badge');
+      const c = document.createElementNS(svgNS, 'circle');
+      c.setAttribute('cx', pt[0]); c.setAttribute('cy', pt[1]); c.setAttribute('r', 10);
+      const t = document.createElementNS(svgNS, 'text');
+      t.setAttribute('x', pt[0]); t.setAttribute('y', pt[1] + 4); t.setAttribute('text-anchor', 'middle');
+      t.textContent = String(n + 1);
+      g.appendChild(c); g.appendChild(t); badges.appendChild(g);
+    });
+    list.innerHTML = f.steps.map((s, n) => '<li><span class="n">' + (n + 1) + '</span><span>' + s.t + '</span></li>').join('');
+    cap.textContent = f.caption;
+  }
+  tabs.forEach((b, i) => b.addEventListener('click', () => show(i)));
+  show(0);
+})();
+</script>
+</body>
+</html>
