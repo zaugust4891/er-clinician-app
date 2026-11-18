@@ -1,0 +1,21 @@
+[package]
+name = "er-device"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[features]
+test-support = []
+
+[dependencies]
+er-domain.workspace = true
+er-store.workspace = true
+er-app = { workspace = true, default-features = false }
+chrono.workspace = true
+uuid.workspace = true
+tokio.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+rusqlite.workspace = true

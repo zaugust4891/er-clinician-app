@@ -109,7 +109,7 @@ def assert_production(generated, libraries):
 
 
 def dependencies():
-    forbidden = {"er-server", "er-ai", "axum", "sqlx", "uniffi_bindgen", "clap"}
+    forbidden = {"er-server", "er-ai", "axum", "sqlx", "uniffi_bindgen", "clap", "reqwest"}
     for target in TARGETS:
         graph = cargo("tree", "--locked", "-p", "er-ffi", "--no-default-features",
                       "--target", target, "-e", "normal", "--prefix", "none",
@@ -119,7 +119,7 @@ def dependencies():
             if name in forbidden or name.startswith(("aws-", "sqlx-")):
                 raise SystemExit(f"Forbidden device runtime dependency: {name}")
             features = line.split("features=[", 1)[1].split("]", 1)[0].split(",")
-            if (name == "er-pipeline" and "cloud-stt" in features) or (
+            if (name == "er-device" and "test-support" in features) or (name == "er-app" and "local-generation" in features) or (name == "er-pipeline" and "cloud-stt" in features) or (
                     name.startswith("uniffi") and "ffi-trace" in features):
                 raise SystemExit(f"Forbidden device feature in {name}")
         print(f"Device runtime graph passed: {target}")

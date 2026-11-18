@@ -14,3 +14,7 @@ ffi-test = []
 [dependencies]
 uniffi.workspace = true
 thiserror.workspace = true
+
+er-device.workspace = true
+er-domain.workspace = true
+uuid.workspace = true

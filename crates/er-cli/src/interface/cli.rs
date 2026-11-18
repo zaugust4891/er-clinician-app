@@ -7,7 +7,6 @@ use std::{
 
 use uuid::Uuid;
 
-use er_ai::summarizer::Summarizer;
 use er_api::client::ServerApi;
 use er_app::conversions::diagnosis::parse_diagnosis;
 use er_app::conversions::disposition::{format_disposition_for_cli, parse_disposition};
@@ -311,7 +310,11 @@ fn unavailable_reason(error: &StoreError) -> ObservationUnavailableReason {
             429 | 500..=599 => ObservationUnavailableReason::TemporarilyUnavailable,
             status => ObservationUnavailableReason::Rejected(status),
         },
-        StoreError::Backend(_)
+        StoreError::Conflict
+        | StoreError::Schema
+        | StoreError::Scope
+        | StoreError::Integrity
+        | StoreError::Backend(_)
         | StoreError::Db(_)
         | StoreError::Serialization(_)
         | StoreError::Parse { .. } => ObservationUnavailableReason::TemporarilyUnavailable,
@@ -630,7 +633,7 @@ pub fn handle_command<A, T, S>(
 where
     A: AudioCapture,
     T: Transcriber,
-    S: Summarizer,
+    S: er_app::generation::GenerationPolicy,
 {
     match command_wrapper.commands {
         Command::New { chief_complaint } => {
@@ -1082,7 +1085,7 @@ mod tests {
             repo,
             MockSummarizer::new(),
             runtime,
-            false,
+            er_app::generation::GenerationOwnership::Local,
         )
     }
 

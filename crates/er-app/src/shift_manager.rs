@@ -4,11 +4,10 @@ use crate::encounter_driver::EncounterDriver;
 use crate::error::AppError::PatientNotFound;
 use crate::error::{AppError, AppResult};
 use crate::export::format_note;
+use crate::generation::{GenerationOwnership, GenerationPolicy};
 use crate::load::PatientNoteStore;
 use crate::objective_data::assemble_objective_data;
 use crate::shift_snapshot::ShiftSnapshot;
-use er_ai::deidentify::Deidentifier;
-use er_ai::summarizer::Summarizer;
 use er_domain::NoteEvent;
 use er_domain::NoteSections;
 use er_domain::replay::{apply_event, replay};
@@ -30,7 +29,7 @@ pub struct ShiftManager<A, T, S>
 where
     A: AudioCapture,
     T: Transcriber,
-    S: Summarizer,
+    S: GenerationPolicy,
 {
     shift: Shift,
     patients: HashMap<PatientId, PatientRecord>,
@@ -41,16 +40,15 @@ where
     repo: Arc<dyn Repository>,
     summarizer: S,
     runtime: Arc<Runtime>,
-    deidentifier: Deidentifier,
     server_stt_encounters: HashSet<EncounterId>,
-    generation_is_remote: bool,
+    generation_ownership: GenerationOwnership,
 }
 
 impl<A, T, S> ShiftManager<A, T, S>
 where
     A: AudioCapture,
     T: Transcriber,
-    S: Summarizer,
+    S: GenerationPolicy,
 {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -62,7 +60,7 @@ where
         repo: Arc<dyn Repository>,
         summarizer: S,
         runtime: Arc<Runtime>,
-        generation_is_remote: bool,
+        generation_ownership: GenerationOwnership,
     ) -> Self {
         Self {
             shift,
@@ -74,9 +72,8 @@ where
             repo,
             summarizer,
             runtime,
-            deidentifier: Deidentifier::new(),
             server_stt_encounters: HashSet::new(),
-            generation_is_remote,
+            generation_ownership,
         }
     }
 
@@ -111,10 +108,18 @@ where
     }
 
     pub fn start_encounter(&mut self, mode: CaptureMode) -> AppResult<EncounterId> {
+        if !self.shift.is_active() {
+            return Err(AppError::NoActiveShift);
+        }
         let patient_id = self.active_patient_id.ok_or_else(|| {
             AppError::Audio("No active patient. Please register and select one first.".to_string())
         })?;
 
+        crate::validation::capture_phase(
+            &self
+                .get_note(patient_id)
+                .ok_or(PatientNotFound(patient_id))?,
+        )?;
         self.runtime
             .block_on(self.driver.start_encounter(patient_id, mode))
     }
@@ -142,7 +147,7 @@ where
     }
 
     fn generates_locally(&self) -> bool {
-        !self.generation_is_remote
+        self.generation_ownership == GenerationOwnership::Local
     }
 
     /// The active patient/encounter pair that an upload intent must name.
@@ -203,7 +208,7 @@ where
             .get(&patient_id)
             .cloned()
             .ok_or(PatientNotFound(patient_id))?;
-        let safe_transcript = self.deidentifier.deidentify(&transcript, &patient);
+        let safe_transcript = self.summarizer.deidentify(&transcript, &patient);
 
         // Bridge sync -> async
         let generated = self.runtime.block_on(self.summarizer.summarize_encounter(
@@ -269,6 +274,11 @@ where
             ))?;
         }
 
+        crate::validation::editable(
+            &self
+                .get_note(patient_id)
+                .ok_or(PatientNotFound(patient_id))?,
+        )?;
         let lab_result_event = NoteEvent::result_received(patient_id, result, clinical_occurred_at);
 
         self.runtime
@@ -279,6 +289,11 @@ where
 
     pub fn set_disposition(&mut self, disposition: Disposition) -> AppResult<()> {
         let patient_id = self.check_active_patient_id()?;
+        crate::validation::editable(
+            &self
+                .get_note(patient_id)
+                .ok_or(PatientNotFound(patient_id))?,
+        )?;
         self.runtime.block_on(self.bus.publish(
             NoteEvent::disposition_set(patient_id, disposition),
             &self.store,
@@ -295,6 +310,11 @@ where
     ) -> AppResult<()> {
         let patient_id = self.check_active_patient_id()?;
 
+        crate::validation::editable(
+            &self
+                .get_note(patient_id)
+                .ok_or(PatientNotFound(patient_id))?,
+        )?;
         let medication = Medication {
             id: Uuid::now_v7(),
             patient_id,
@@ -322,6 +342,11 @@ where
     ) -> AppResult<()> {
         let patient_id = self.check_active_patient_id()?;
 
+        crate::validation::editable(
+            &self
+                .get_note(patient_id)
+                .ok_or(PatientNotFound(patient_id))?,
+        )?;
         let diagnosis = Diagnosis {
             id: Uuid::now_v7(),
             patient_id,
@@ -339,6 +364,11 @@ where
 
     pub fn record_data_reviewed(&mut self, physician_review: String) -> AppResult<()> {
         let patient_id = self.check_active_patient_id()?;
+        crate::validation::editable(
+            &self
+                .get_note(patient_id)
+                .ok_or(PatientNotFound(patient_id))?,
+        )?;
         self.runtime.block_on(self.bus.publish(
             NoteEvent::data_reviewed(patient_id, physician_review),
             &self.store,
@@ -348,9 +378,7 @@ where
 
     pub fn trigger_mdm(&mut self) -> AppResult<()> {
         if !self.generates_locally() {
-            return Err(AppError::CliError(
-                "remote mode generates MDM through the server job API".to_string(),
-            ));
+            return Err(AppError::Unsupported);
         }
         let patient_id = self.check_active_patient_id()?;
         self.ensure_no_active_encounter("trigger MDM")?;
@@ -398,8 +426,8 @@ where
             .get(&patient_id)
             .cloned()
             .ok_or(PatientNotFound(patient_id))?;
-        let safe_objective_data = self.deidentifier.deidentify(&objective_data, &patient);
-        let safe_disposition = self.deidentifier.deidentify(&disposition_str, &patient);
+        let safe_objective_data = self.summarizer.deidentify(&objective_data, &patient);
+        let safe_disposition = self.summarizer.deidentify(&disposition_str, &patient);
 
         // 3. Generate (sync → async bridge).
         let generated = self.runtime.block_on(self.summarizer.generate_mdm(
@@ -555,7 +583,10 @@ where
     }
 
     pub fn end_shift(&mut self) -> AppResult<()> {
-        if self.shift.is_active() {
+        if !self.shift.is_active() {
+            return Ok(());
+        }
+        if self.driver.has_active_encounter() {
             self.stop_encounter()?;
         }
 
@@ -611,7 +642,7 @@ where
             .driver
             .active_encounter()
             .ok_or_else(|| AppError::Audio("no encounter in progress".to_string()))?;
-        let server_owns_transcript = self.server_stt_encounters.remove(&encounter_id);
+        let server_owns_transcript = self.server_stt_encounters.contains(&encounter_id);
 
         let stopped_id = if server_owns_transcript {
             self.runtime
@@ -620,6 +651,7 @@ where
             self.runtime.block_on(self.driver.stop_encounter())?
         };
 
+        self.server_stt_encounters.remove(&encounter_id);
         Ok((stopped_id, server_owns_transcript))
     }
 }
@@ -663,9 +695,10 @@ fn results_text(note: &PatientNote) -> Option<String> {
 /// The test should construct a ShiftManager with MockSummarizer,
 /// use its runtime to block_on a summarize_encounter call,
 /// and assert the mock HPI comes back.
-#[cfg(test)]
+#[cfg(all(test, feature = "local-generation"))]
 mod tests {
     use super::*;
+    use er_ai::summarizer::Summarizer;
 
     struct PanicSummarizer;
 
@@ -726,12 +759,13 @@ mod tests {
             sql_lite_repo.clone(),
             summarizer,
             rt.clone(),
-            false,
+            GenerationOwnership::Local,
         );
 
         let result = shift_manager
             .runtime
-            .block_on(shift_manager.summarizer.summarize_encounter(
+            .block_on(GenerationPolicy::summarize_encounter(
+                &shift_manager.summarizer,
                 "test transcript",
                 &NoteSections::default(),
                 1,
@@ -766,7 +800,7 @@ mod tests {
             repo,
             PanicSummarizer,
             Arc::new(tokio::runtime::Runtime::new().unwrap()),
-            true,
+            GenerationOwnership::Remote,
         );
         let patient_id = manager.register_patient("synthetic chest pain");
         manager.set_active_patient(patient_id).unwrap();
@@ -803,7 +837,7 @@ mod tests {
             repo,
             er_ai::summarizer::MockSummarizer::new(),
             Arc::new(tokio::runtime::Runtime::new().unwrap()),
-            false,
+            GenerationOwnership::Local,
         );
 
         let server_side_id = Uuid::now_v7();
@@ -849,7 +883,7 @@ mod tests {
             repo.clone(),
             er_ai::summarizer::MockSummarizer::new(),
             Arc::new(tokio::runtime::Runtime::new().unwrap()),
-            false,
+            GenerationOwnership::Local,
         );
 
         let patient_id = manager.register_patient("chest pain");
@@ -898,7 +932,7 @@ mod tests {
             repo.clone(),
             er_ai::summarizer::MockSummarizer::new(),
             Arc::new(tokio::runtime::Runtime::new().unwrap()),
-            false,
+            GenerationOwnership::Local,
         );
 
         let switched_patient = manager.register_patient("chest pain");

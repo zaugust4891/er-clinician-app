@@ -18,8 +18,8 @@ final class WorkspaceModelTests: XCTestCase {
         let service = FailingNoteService(backing: fixture)
         let model = WorkspaceModel(service: service)
 
-        model.updateNote("Unsaved revision", for: first)
-        model.selectPatient(second)
+        await model.updateNote("Unsaved revision", for: first)
+        await model.selectPatient(second)
         model.refresh()
         XCTAssertEqual(model.noteText(for: first), "Unsaved revision")
         XCTAssertEqual(model.noteText(for: second), "")
@@ -27,19 +27,19 @@ final class WorkspaceModelTests: XCTestCase {
         XCTAssertNotNil(model.noteErrors[first])
 
         service.failNotes = false
-        model.retryNoteSave(for: first)
+        await model.retryNoteSave(for: first)
         XCTAssertEqual(fixture.snapshot.patients[0].note, "Unsaved revision")
         XCTAssertNil(model.noteErrors[first])
 
         service.failNotes = true
-        model.updateNote("", for: first)
+        await model.updateNote("", for: first)
         try fixture.preview(.staleMdm, for: first)
         model.refresh()
         XCTAssertEqual(model.noteText(for: first), "")
         XCTAssertEqual(fixture.snapshot.patients[0].note, "Unsaved revision")
 
         service.failNotes = false
-        model.retryNoteSave(for: first)
+        await model.retryNoteSave(for: first)
         XCTAssertEqual(fixture.snapshot.patients[0].note, "")
         XCTAssertNil(model.noteErrors[first])
     }
@@ -51,13 +51,13 @@ final class WorkspaceModelTests: XCTestCase {
             displayLabel: "Synthetic patient", chiefComplaint: ""
         )
         let model = WorkspaceModel(service: fixture)
-        model.updateNote("Manual note", for: patient)
+        await model.updateNote("Manual note", for: patient)
 
         for scenario in FixtureDeviceService.PreviewScenario.allCases {
             let previous = model.noteText(for: patient)
             model.preview(scenario, for: patient)
             XCTAssertEqual(model.noteText(for: patient), previous)
-            model.updateNote("Edited after \(scenario)", for: patient)
+            await model.updateNote("Edited after \(scenario)", for: patient)
             XCTAssertEqual(
                 fixture.snapshot.patients[0].note, "Edited after \(scenario)"
             )

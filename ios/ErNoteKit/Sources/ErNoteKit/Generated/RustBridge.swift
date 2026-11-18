@@ -460,7 +460,101 @@ fileprivate final class UniffiHandleMap<T>: @unchecked Sendable {
 
 
 // Public interface members begin here.
+// Magic number for the Rust proxy to call using the same mechanism as every other method,
+// to free the callback once it's dropped by Rust.
+private let IDX_CALLBACK_FREE: Int32 = 0
+// Callback return codes
+private let UNIFFI_CALLBACK_SUCCESS: Int32 = 0
+private let UNIFFI_CALLBACK_ERROR: Int32 = 1
+private let UNIFFI_CALLBACK_UNEXPECTED_ERROR: Int32 = 2
 
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterUInt32: FfiConverterPrimitive {
+    typealias FfiType = UInt32
+    typealias SwiftType = UInt32
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UInt32 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterUInt64: FfiConverterPrimitive {
+    typealias FfiType = UInt64
+    typealias SwiftType = UInt64
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UInt64 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterInt64: FfiConverterPrimitive {
+    typealias FfiType = Int64
+    typealias SwiftType = Int64
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Int64 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: Int64, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterDouble: FfiConverterPrimitive {
+    typealias FfiType = Double
+    typealias SwiftType = Double
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Double {
+        return try lift(readDouble(&buf))
+    }
+
+    public static func write(_ value: Double, into buf: inout [UInt8]) {
+        writeDouble(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterBool : FfiConverter {
+    typealias FfiType = Int8
+    typealias SwiftType = Bool
+
+    public static func lift(_ value: Int8) throws -> Bool {
+        return value != 0
+    }
+
+    public static func lower(_ value: Bool) -> Int8 {
+        return value ? 1 : 0
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Bool {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: Bool, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -506,6 +600,670 @@ fileprivate struct FfiConverterString: FfiConverter {
         writeInt(&buf, len)
         writeBytes(&buf, value.utf8)
     }
+}
+
+
+
+
+public protocol ErDeviceProtocol: AnyObject, Sendable {
+
+    func addPatient(complaint: String, room: String?, atMs: Int64) throws  -> String
+
+    func chartContext(patientId: String) throws  -> [ChartContextDto]
+
+    func close() throws
+
+    func definitionVersions(definitionId: String) throws  -> [DefinitionDto]
+
+    func duplicateDefinition(definitionId: String, name: String) throws  -> String
+
+    func endShift(atMs: Int64) throws
+
+    func exportNote(patientId: String) throws  -> String
+
+    func note(patientId: String) throws  -> NoteDto
+
+    func recordDataReviewed(patientId: String, text: String, atMs: Int64) throws
+
+    func recordDiagnosis(patientId: String, text: String, icd10Code: String?, primary: Bool, atMs: Int64) throws
+
+    func recordMedication(patientId: String, input: MedicationInput, atMs: Int64) throws
+
+    func recordObjective(patientId: String, input: ObjectiveInput, atMs: Int64) throws
+
+    func restoreDefinition(definitionId: String, version: UInt64, expectedVersion: UInt64) throws
+
+    func reviewReady(patientId: String, atMs: Int64) throws
+
+    func saveContext(input: ChartContextDto, expectedVersion: UInt64) throws  -> String
+
+    func saveDefinition(input: DefinitionDto, expectedVersion: UInt64) throws  -> String
+
+    func saveManualDraft(patientId: String, text: String, expectedRevision: UInt64) throws
+
+    func selectPatient(patientId: String?, atMs: Int64) throws
+
+    func setConsent(patientId: String, status: ConsentChoice, policyVersion: String, expectedRevision: UInt64, atMs: Int64) throws
+
+    func setDisposition(patientId: String, input: DispositionInput, atMs: Int64) throws
+
+    func setListener(listener: DeviceChangeListener?) throws
+
+    func setMode(patientId: String, solo: Bool) throws
+
+    func shifts() throws  -> [ShiftDto]
+
+    func sign(patientId: String, atMs: Int64) throws
+
+    func snapshot() throws  -> DeviceSnapshotDto
+
+    func startShift(atMs: Int64) throws  -> String
+
+}
+open class ErDevice: ErDeviceProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_er_ffi_fn_clone_erdevice(self.handle, $0) }
+    }
+public convenience init(config: DeviceConfig)throws  {
+    let handle =
+        try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_er_ffi_fn_constructor_erdevice_new(
+        FfiConverterTypeDeviceConfig_lower(config),uniffiCallStatus
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_er_ffi_fn_free_erdevice(handle, $0) }
+    }
+
+
+
+
+open func addPatient(complaint: String, room: String?, atMs: Int64)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_er_ffi_fn_method_erdevice_add_patient(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(complaint),
+        FfiConverterOptionString.lower(room),
+        FfiConverterInt64.lower(atMs),uniffiCallStatus
+    )
+})
+}
+
+open func chartContext(patientId: String)throws  -> [ChartContextDto]  {
+    return try  FfiConverterSequenceTypeChartContextDto.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_er_ffi_fn_method_erdevice_chart_context(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(patientId),uniffiCallStatus
+    )
+})
+}
+
+open func close()throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_er_ffi_fn_method_erdevice_close(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+
+open func definitionVersions(definitionId: String)throws  -> [DefinitionDto]  {
+    return try  FfiConverterSequenceTypeDefinitionDto.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_er_ffi_fn_method_erdevice_definition_versions(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(definitionId),uniffiCallStatus
+    )
+})
+}
+
+open func duplicateDefinition(definitionId: String, name: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_er_ffi_fn_method_erdevice_duplicate_definition(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(definitionId),
+        FfiConverterString.lower(name),uniffiCallStatus
+    )
+})
+}
+
+open func endShift(atMs: Int64)throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_er_ffi_fn_method_erdevice_end_shift(
+            self.uniffiCloneHandle(),
+        FfiConverterInt64.lower(atMs),uniffiCallStatus
+    )
+}
+}
+
+open func exportNote(patientId: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_er_ffi_fn_method_erdevice_export_note(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(patientId),uniffiCallStatus
+    )
+})
+}
+
+open func note(patientId: String)throws  -> NoteDto  {
+    return try  FfiConverterTypeNoteDto_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_er_ffi_fn_method_erdevice_note(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(patientId),uniffiCallStatus
+    )
+})
+}
+
+open func recordDataReviewed(patientId: String, text: String, atMs: Int64)throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_er_ffi_fn_method_erdevice_record_data_reviewed(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(patientId),
+        FfiConverterString.lower(text),
+        FfiConverterInt64.lower(atMs),uniffiCallStatus
+    )
+}
+}
+
+open func recordDiagnosis(patientId: String, text: String, icd10Code: String?, primary: Bool, atMs: Int64)throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_er_ffi_fn_method_erdevice_record_diagnosis(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(patientId),
+        FfiConverterString.lower(text),
+        FfiConverterOptionString.lower(icd10Code),
+        FfiConverterBool.lower(primary),
+        FfiConverterInt64.lower(atMs),uniffiCallStatus
+    )
+}
+}
+
+open func recordMedication(patientId: String, input: MedicationInput, atMs: Int64)throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_er_ffi_fn_method_erdevice_record_medication(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(patientId),
+        FfiConverterTypeMedicationInput_lower(input),
+        FfiConverterInt64.lower(atMs),uniffiCallStatus
+    )
+}
+}
+
+open func recordObjective(patientId: String, input: ObjectiveInput, atMs: Int64)throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_er_ffi_fn_method_erdevice_record_objective(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(patientId),
+        FfiConverterTypeObjectiveInput_lower(input),
+        FfiConverterInt64.lower(atMs),uniffiCallStatus
+    )
+}
+}
+
+open func restoreDefinition(definitionId: String, version: UInt64, expectedVersion: UInt64)throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_er_ffi_fn_method_erdevice_restore_definition(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(definitionId),
+        FfiConverterUInt64.lower(version),
+        FfiConverterUInt64.lower(expectedVersion),uniffiCallStatus
+    )
+}
+}
+
+open func reviewReady(patientId: String, atMs: Int64)throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_er_ffi_fn_method_erdevice_review_ready(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(patientId),
+        FfiConverterInt64.lower(atMs),uniffiCallStatus
+    )
+}
+}
+
+open func saveContext(input: ChartContextDto, expectedVersion: UInt64)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_er_ffi_fn_method_erdevice_save_context(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeChartContextDto_lower(input),
+        FfiConverterUInt64.lower(expectedVersion),uniffiCallStatus
+    )
+})
+}
+
+open func saveDefinition(input: DefinitionDto, expectedVersion: UInt64)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_er_ffi_fn_method_erdevice_save_definition(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeDefinitionDto_lower(input),
+        FfiConverterUInt64.lower(expectedVersion),uniffiCallStatus
+    )
+})
+}
+
+open func saveManualDraft(patientId: String, text: String, expectedRevision: UInt64)throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_er_ffi_fn_method_erdevice_save_manual_draft(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(patientId),
+        FfiConverterString.lower(text),
+        FfiConverterUInt64.lower(expectedRevision),uniffiCallStatus
+    )
+}
+}
+
+open func selectPatient(patientId: String?, atMs: Int64)throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_er_ffi_fn_method_erdevice_select_patient(
+            self.uniffiCloneHandle(),
+        FfiConverterOptionString.lower(patientId),
+        FfiConverterInt64.lower(atMs),uniffiCallStatus
+    )
+}
+}
+
+open func setConsent(patientId: String, status: ConsentChoice, policyVersion: String, expectedRevision: UInt64, atMs: Int64)throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_er_ffi_fn_method_erdevice_set_consent(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(patientId),
+        FfiConverterTypeConsentChoice_lower(status),
+        FfiConverterString.lower(policyVersion),
+        FfiConverterUInt64.lower(expectedRevision),
+        FfiConverterInt64.lower(atMs),uniffiCallStatus
+    )
+}
+}
+
+open func setDisposition(patientId: String, input: DispositionInput, atMs: Int64)throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_er_ffi_fn_method_erdevice_set_disposition(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(patientId),
+        FfiConverterTypeDispositionInput_lower(input),
+        FfiConverterInt64.lower(atMs),uniffiCallStatus
+    )
+}
+}
+
+open func setListener(listener: DeviceChangeListener?)throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_er_ffi_fn_method_erdevice_set_listener(
+            self.uniffiCloneHandle(),
+        FfiConverterOptionCallbackInterfaceDeviceChangeListener.lower(listener),uniffiCallStatus
+    )
+}
+}
+
+open func setMode(patientId: String, solo: Bool)throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_er_ffi_fn_method_erdevice_set_mode(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(patientId),
+        FfiConverterBool.lower(solo),uniffiCallStatus
+    )
+}
+}
+
+open func shifts()throws  -> [ShiftDto]  {
+    return try  FfiConverterSequenceTypeShiftDto.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_er_ffi_fn_method_erdevice_shifts(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
+open func sign(patientId: String, atMs: Int64)throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_er_ffi_fn_method_erdevice_sign(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(patientId),
+        FfiConverterInt64.lower(atMs),uniffiCallStatus
+    )
+}
+}
+
+open func snapshot()throws  -> DeviceSnapshotDto  {
+    return try  FfiConverterTypeDeviceSnapshotDto_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_er_ffi_fn_method_erdevice_snapshot(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
+open func startShift(atMs: Int64)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_er_ffi_fn_method_erdevice_start_shift(
+            self.uniffiCloneHandle(),
+        FfiConverterInt64.lower(atMs),uniffiCallStatus
+    )
+})
+}
+
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeErDevice: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = ErDevice
+
+    public static func lift(_ handle: UInt64) throws -> ErDevice {
+        return ErDevice(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: ErDevice) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ErDevice {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: ErDevice, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeErDevice_lift(_ handle: UInt64) throws -> ErDevice {
+    return try FfiConverterTypeErDevice.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeErDevice_lower(_ value: ErDevice) -> UInt64 {
+    return FfiConverterTypeErDevice.lower(value)
+}
+
+
+
+
+public struct ChartContextDto: Equatable, Hashable {
+    public let id: String
+    public let patientId: String
+    public let version: UInt64
+    public let category: ChartCategory
+    public let text: String
+    public let source: String
+    public let clinicalAtMs: Int64?
+    public let enteredAtMs: Int64
+    public let reviewed: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, patientId: String, version: UInt64, category: ChartCategory, text: String, source: String, clinicalAtMs: Int64?, enteredAtMs: Int64, reviewed: Bool) {
+        self.id = id
+        self.patientId = patientId
+        self.version = version
+        self.category = category
+        self.text = text
+        self.source = source
+        self.clinicalAtMs = clinicalAtMs
+        self.enteredAtMs = enteredAtMs
+        self.reviewed = reviewed
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ChartContextDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeChartContextDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ChartContextDto {
+        return
+            try ChartContextDto(
+                id: FfiConverterString.read(from: &buf),
+                patientId: FfiConverterString.read(from: &buf),
+                version: FfiConverterUInt64.read(from: &buf),
+                category: FfiConverterTypeChartCategory.read(from: &buf),
+                text: FfiConverterString.read(from: &buf),
+                source: FfiConverterString.read(from: &buf),
+                clinicalAtMs: FfiConverterOptionInt64.read(from: &buf),
+                enteredAtMs: FfiConverterInt64.read(from: &buf),
+                reviewed: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ChartContextDto, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.patientId, into: &buf)
+        FfiConverterUInt64.write(value.version, into: &buf)
+        FfiConverterTypeChartCategory.write(value.category, into: &buf)
+        FfiConverterString.write(value.text, into: &buf)
+        FfiConverterString.write(value.source, into: &buf)
+        FfiConverterOptionInt64.write(value.clinicalAtMs, into: &buf)
+        FfiConverterInt64.write(value.enteredAtMs, into: &buf)
+        FfiConverterBool.write(value.reviewed, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeChartContextDto_lift(_ buf: RustBuffer) throws -> ChartContextDto {
+    return try FfiConverterTypeChartContextDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeChartContextDto_lower(_ value: ChartContextDto) -> RustBuffer {
+    return FfiConverterTypeChartContextDto.lower(value)
+}
+
+
+public struct ConsentDto: Equatable, Hashable {
+    public let patientId: String
+    public let status: ConsentChoice
+    public let recordedAtMs: Int64?
+    public let policyVersion: String?
+    public let revision: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(patientId: String, status: ConsentChoice, recordedAtMs: Int64?, policyVersion: String?, revision: UInt64) {
+        self.patientId = patientId
+        self.status = status
+        self.recordedAtMs = recordedAtMs
+        self.policyVersion = policyVersion
+        self.revision = revision
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ConsentDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeConsentDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ConsentDto {
+        return
+            try ConsentDto(
+                patientId: FfiConverterString.read(from: &buf),
+                status: FfiConverterTypeConsentChoice.read(from: &buf),
+                recordedAtMs: FfiConverterOptionInt64.read(from: &buf),
+                policyVersion: FfiConverterOptionString.read(from: &buf),
+                revision: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ConsentDto, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.patientId, into: &buf)
+        FfiConverterTypeConsentChoice.write(value.status, into: &buf)
+        FfiConverterOptionInt64.write(value.recordedAtMs, into: &buf)
+        FfiConverterOptionString.write(value.policyVersion, into: &buf)
+        FfiConverterUInt64.write(value.revision, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeConsentDto_lift(_ buf: RustBuffer) throws -> ConsentDto {
+    return try FfiConverterTypeConsentDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeConsentDto_lower(_ value: ConsentDto) -> RustBuffer {
+    return FfiConverterTypeConsentDto.lower(value)
+}
+
+
+public struct DefinitionDto: Equatable, Hashable {
+    public let id: String
+    public let version: UInt64
+    public let name: String
+    public let kind: DefinitionKindDto
+    public let instructions: String
+    public let sections: [SectionPreferenceDto]
+    public let archived: Bool
+    public let isDefault: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, version: UInt64, name: String, kind: DefinitionKindDto, instructions: String, sections: [SectionPreferenceDto], archived: Bool, isDefault: Bool) {
+        self.id = id
+        self.version = version
+        self.name = name
+        self.kind = kind
+        self.instructions = instructions
+        self.sections = sections
+        self.archived = archived
+        self.isDefault = isDefault
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension DefinitionDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDefinitionDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DefinitionDto {
+        return
+            try DefinitionDto(
+                id: FfiConverterString.read(from: &buf),
+                version: FfiConverterUInt64.read(from: &buf),
+                name: FfiConverterString.read(from: &buf),
+                kind: FfiConverterTypeDefinitionKindDto.read(from: &buf),
+                instructions: FfiConverterString.read(from: &buf),
+                sections: FfiConverterSequenceTypeSectionPreferenceDto.read(from: &buf),
+                archived: FfiConverterBool.read(from: &buf),
+                isDefault: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: DefinitionDto, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterUInt64.write(value.version, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterTypeDefinitionKindDto.write(value.kind, into: &buf)
+        FfiConverterString.write(value.instructions, into: &buf)
+        FfiConverterSequenceTypeSectionPreferenceDto.write(value.sections, into: &buf)
+        FfiConverterBool.write(value.archived, into: &buf)
+        FfiConverterBool.write(value.isDefault, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDefinitionDto_lift(_ buf: RustBuffer) throws -> DefinitionDto {
+    return try FfiConverterTypeDefinitionDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDefinitionDto_lower(_ value: DefinitionDto) -> RustBuffer {
+    return FfiConverterTypeDefinitionDto.lower(value)
 }
 
 
@@ -568,6 +1326,1056 @@ public func FfiConverterTypeDeviceConfig_lower(_ value: DeviceConfig) -> RustBuf
 }
 
 
+public struct DeviceSnapshotDto: Equatable, Hashable {
+    public let revision: UInt64
+    public let shift: ShiftDto?
+    public let patients: [PatientDto]
+    public let definitions: [DefinitionDto]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(revision: UInt64, shift: ShiftDto?, patients: [PatientDto], definitions: [DefinitionDto]) {
+        self.revision = revision
+        self.shift = shift
+        self.patients = patients
+        self.definitions = definitions
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension DeviceSnapshotDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDeviceSnapshotDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DeviceSnapshotDto {
+        return
+            try DeviceSnapshotDto(
+                revision: FfiConverterUInt64.read(from: &buf),
+                shift: FfiConverterOptionTypeShiftDto.read(from: &buf),
+                patients: FfiConverterSequenceTypePatientDto.read(from: &buf),
+                definitions: FfiConverterSequenceTypeDefinitionDto.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: DeviceSnapshotDto, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.revision, into: &buf)
+        FfiConverterOptionTypeShiftDto.write(value.shift, into: &buf)
+        FfiConverterSequenceTypePatientDto.write(value.patients, into: &buf)
+        FfiConverterSequenceTypeDefinitionDto.write(value.definitions, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDeviceSnapshotDto_lift(_ buf: RustBuffer) throws -> DeviceSnapshotDto {
+    return try FfiConverterTypeDeviceSnapshotDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDeviceSnapshotDto_lower(_ value: DeviceSnapshotDto) -> RustBuffer {
+    return FfiConverterTypeDeviceSnapshotDto.lower(value)
+}
+
+
+public struct MedicationInput: Equatable, Hashable {
+    public let name: String
+    public let dose: String
+    public let route: String?
+    public let kind: MedicationKindDto
+    public let frequency: String
+    public let administeredAtMs: Int64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(name: String, dose: String, route: String?, kind: MedicationKindDto, frequency: String, administeredAtMs: Int64) {
+        self.name = name
+        self.dose = dose
+        self.route = route
+        self.kind = kind
+        self.frequency = frequency
+        self.administeredAtMs = administeredAtMs
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MedicationInput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMedicationInput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MedicationInput {
+        return
+            try MedicationInput(
+                name: FfiConverterString.read(from: &buf),
+                dose: FfiConverterString.read(from: &buf),
+                route: FfiConverterOptionString.read(from: &buf),
+                kind: FfiConverterTypeMedicationKindDto.read(from: &buf),
+                frequency: FfiConverterString.read(from: &buf),
+                administeredAtMs: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MedicationInput, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.dose, into: &buf)
+        FfiConverterOptionString.write(value.route, into: &buf)
+        FfiConverterTypeMedicationKindDto.write(value.kind, into: &buf)
+        FfiConverterString.write(value.frequency, into: &buf)
+        FfiConverterInt64.write(value.administeredAtMs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMedicationInput_lift(_ buf: RustBuffer) throws -> MedicationInput {
+    return try FfiConverterTypeMedicationInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMedicationInput_lower(_ value: MedicationInput) -> RustBuffer {
+    return FfiConverterTypeMedicationInput.lower(value)
+}
+
+
+public struct NoteDto: Equatable, Hashable {
+    public let patientId: String
+    public let phase: ClinicalPhaseDto
+    public let hpi: String?
+    public let ros: String?
+    public let exam: String?
+    public let mdm: String?
+    public let disposition: String?
+    public let dispositionText: String?
+    public let objectiveItems: [ObjectiveDto]
+    public let results: [String]
+    public let medications: [String]
+    public let diagnoses: [String]
+    public let dataReviewed: [String]
+    public let encounterCount: UInt32
+    public let auditCount: UInt64
+    public let projectionVersion: UInt64
+    public let recoveryRequired: Bool
+    public let manualDraft: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(patientId: String, phase: ClinicalPhaseDto, hpi: String?, ros: String?, exam: String?, mdm: String?, disposition: String?, dispositionText: String?, objectiveItems: [ObjectiveDto], results: [String], medications: [String], diagnoses: [String], dataReviewed: [String], encounterCount: UInt32, auditCount: UInt64, projectionVersion: UInt64, recoveryRequired: Bool, manualDraft: String?) {
+        self.patientId = patientId
+        self.phase = phase
+        self.hpi = hpi
+        self.ros = ros
+        self.exam = exam
+        self.mdm = mdm
+        self.disposition = disposition
+        self.dispositionText = dispositionText
+        self.objectiveItems = objectiveItems
+        self.results = results
+        self.medications = medications
+        self.diagnoses = diagnoses
+        self.dataReviewed = dataReviewed
+        self.encounterCount = encounterCount
+        self.auditCount = auditCount
+        self.projectionVersion = projectionVersion
+        self.recoveryRequired = recoveryRequired
+        self.manualDraft = manualDraft
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension NoteDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNoteDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NoteDto {
+        return
+            try NoteDto(
+                patientId: FfiConverterString.read(from: &buf),
+                phase: FfiConverterTypeClinicalPhaseDto.read(from: &buf),
+                hpi: FfiConverterOptionString.read(from: &buf),
+                ros: FfiConverterOptionString.read(from: &buf),
+                exam: FfiConverterOptionString.read(from: &buf),
+                mdm: FfiConverterOptionString.read(from: &buf),
+                disposition: FfiConverterOptionString.read(from: &buf),
+                dispositionText: FfiConverterOptionString.read(from: &buf),
+                objectiveItems: FfiConverterSequenceTypeObjectiveDto.read(from: &buf),
+                results: FfiConverterSequenceString.read(from: &buf),
+                medications: FfiConverterSequenceString.read(from: &buf),
+                diagnoses: FfiConverterSequenceString.read(from: &buf),
+                dataReviewed: FfiConverterSequenceString.read(from: &buf),
+                encounterCount: FfiConverterUInt32.read(from: &buf),
+                auditCount: FfiConverterUInt64.read(from: &buf),
+                projectionVersion: FfiConverterUInt64.read(from: &buf),
+                recoveryRequired: FfiConverterBool.read(from: &buf),
+                manualDraft: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: NoteDto, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.patientId, into: &buf)
+        FfiConverterTypeClinicalPhaseDto.write(value.phase, into: &buf)
+        FfiConverterOptionString.write(value.hpi, into: &buf)
+        FfiConverterOptionString.write(value.ros, into: &buf)
+        FfiConverterOptionString.write(value.exam, into: &buf)
+        FfiConverterOptionString.write(value.mdm, into: &buf)
+        FfiConverterOptionString.write(value.disposition, into: &buf)
+        FfiConverterOptionString.write(value.dispositionText, into: &buf)
+        FfiConverterSequenceTypeObjectiveDto.write(value.objectiveItems, into: &buf)
+        FfiConverterSequenceString.write(value.results, into: &buf)
+        FfiConverterSequenceString.write(value.medications, into: &buf)
+        FfiConverterSequenceString.write(value.diagnoses, into: &buf)
+        FfiConverterSequenceString.write(value.dataReviewed, into: &buf)
+        FfiConverterUInt32.write(value.encounterCount, into: &buf)
+        FfiConverterUInt64.write(value.auditCount, into: &buf)
+        FfiConverterUInt64.write(value.projectionVersion, into: &buf)
+        FfiConverterBool.write(value.recoveryRequired, into: &buf)
+        FfiConverterOptionString.write(value.manualDraft, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNoteDto_lift(_ buf: RustBuffer) throws -> NoteDto {
+    return try FfiConverterTypeNoteDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNoteDto_lower(_ value: NoteDto) -> RustBuffer {
+    return FfiConverterTypeNoteDto.lower(value)
+}
+
+
+public struct ObjectiveDto: Equatable, Hashable {
+    public let id: String
+    public let category: ChartCategory
+    public let summary: String
+    public let source: String
+    public let clinicalAtMs: Int64?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, category: ChartCategory, summary: String, source: String, clinicalAtMs: Int64?) {
+        self.id = id
+        self.category = category
+        self.summary = summary
+        self.source = source
+        self.clinicalAtMs = clinicalAtMs
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ObjectiveDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeObjectiveDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ObjectiveDto {
+        return
+            try ObjectiveDto(
+                id: FfiConverterString.read(from: &buf),
+                category: FfiConverterTypeChartCategory.read(from: &buf),
+                summary: FfiConverterString.read(from: &buf),
+                source: FfiConverterString.read(from: &buf),
+                clinicalAtMs: FfiConverterOptionInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ObjectiveDto, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterTypeChartCategory.write(value.category, into: &buf)
+        FfiConverterString.write(value.summary, into: &buf)
+        FfiConverterString.write(value.source, into: &buf)
+        FfiConverterOptionInt64.write(value.clinicalAtMs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeObjectiveDto_lift(_ buf: RustBuffer) throws -> ObjectiveDto {
+    return try FfiConverterTypeObjectiveDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeObjectiveDto_lower(_ value: ObjectiveDto) -> RustBuffer {
+    return FfiConverterTypeObjectiveDto.lower(value)
+}
+
+
+public struct PatientDto: Equatable, Hashable {
+    public let id: String
+    public let complaint: String
+    public let room: String?
+    public let phase: ClinicalPhaseDto
+    public let position: UInt32
+    public let ambientEligible: Bool
+    public let soloEligible: Bool
+    public let consent: ConsentDto
+    public let recording: RecordingStateDto
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, complaint: String, room: String?, phase: ClinicalPhaseDto, position: UInt32, ambientEligible: Bool, soloEligible: Bool, consent: ConsentDto, recording: RecordingStateDto) {
+        self.id = id
+        self.complaint = complaint
+        self.room = room
+        self.phase = phase
+        self.position = position
+        self.ambientEligible = ambientEligible
+        self.soloEligible = soloEligible
+        self.consent = consent
+        self.recording = recording
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension PatientDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePatientDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PatientDto {
+        return
+            try PatientDto(
+                id: FfiConverterString.read(from: &buf),
+                complaint: FfiConverterString.read(from: &buf),
+                room: FfiConverterOptionString.read(from: &buf),
+                phase: FfiConverterTypeClinicalPhaseDto.read(from: &buf),
+                position: FfiConverterUInt32.read(from: &buf),
+                ambientEligible: FfiConverterBool.read(from: &buf),
+                soloEligible: FfiConverterBool.read(from: &buf),
+                consent: FfiConverterTypeConsentDto.read(from: &buf),
+                recording: FfiConverterTypeRecordingStateDto.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PatientDto, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.complaint, into: &buf)
+        FfiConverterOptionString.write(value.room, into: &buf)
+        FfiConverterTypeClinicalPhaseDto.write(value.phase, into: &buf)
+        FfiConverterUInt32.write(value.position, into: &buf)
+        FfiConverterBool.write(value.ambientEligible, into: &buf)
+        FfiConverterBool.write(value.soloEligible, into: &buf)
+        FfiConverterTypeConsentDto.write(value.consent, into: &buf)
+        FfiConverterTypeRecordingStateDto.write(value.recording, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePatientDto_lift(_ buf: RustBuffer) throws -> PatientDto {
+    return try FfiConverterTypePatientDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePatientDto_lower(_ value: PatientDto) -> RustBuffer {
+    return FfiConverterTypePatientDto.lower(value)
+}
+
+
+public struct RecordingStateDto: Equatable, Hashable {
+    public let patientId: String
+    public let solo: Bool
+    public let source: String
+    public let segmentId: String?
+    public let status: RecorderPhase
+    public let boundaryAtMs: Int64?
+    public let reason: String?
+    public let hardwareAvailable: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(patientId: String, solo: Bool, source: String, segmentId: String?, status: RecorderPhase, boundaryAtMs: Int64?, reason: String?, hardwareAvailable: Bool) {
+        self.patientId = patientId
+        self.solo = solo
+        self.source = source
+        self.segmentId = segmentId
+        self.status = status
+        self.boundaryAtMs = boundaryAtMs
+        self.reason = reason
+        self.hardwareAvailable = hardwareAvailable
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RecordingStateDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRecordingStateDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RecordingStateDto {
+        return
+            try RecordingStateDto(
+                patientId: FfiConverterString.read(from: &buf),
+                solo: FfiConverterBool.read(from: &buf),
+                source: FfiConverterString.read(from: &buf),
+                segmentId: FfiConverterOptionString.read(from: &buf),
+                status: FfiConverterTypeRecorderPhase.read(from: &buf),
+                boundaryAtMs: FfiConverterOptionInt64.read(from: &buf),
+                reason: FfiConverterOptionString.read(from: &buf),
+                hardwareAvailable: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: RecordingStateDto, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.patientId, into: &buf)
+        FfiConverterBool.write(value.solo, into: &buf)
+        FfiConverterString.write(value.source, into: &buf)
+        FfiConverterOptionString.write(value.segmentId, into: &buf)
+        FfiConverterTypeRecorderPhase.write(value.status, into: &buf)
+        FfiConverterOptionInt64.write(value.boundaryAtMs, into: &buf)
+        FfiConverterOptionString.write(value.reason, into: &buf)
+        FfiConverterBool.write(value.hardwareAvailable, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRecordingStateDto_lift(_ buf: RustBuffer) throws -> RecordingStateDto {
+    return try FfiConverterTypeRecordingStateDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRecordingStateDto_lower(_ value: RecordingStateDto) -> RustBuffer {
+    return FfiConverterTypeRecordingStateDto.lower(value)
+}
+
+
+public struct SectionPreferenceDto: Equatable, Hashable {
+    public let section: String
+    public let instructions: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(section: String, instructions: String) {
+        self.section = section
+        self.instructions = instructions
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension SectionPreferenceDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSectionPreferenceDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SectionPreferenceDto {
+        return
+            try SectionPreferenceDto(
+                section: FfiConverterString.read(from: &buf),
+                instructions: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SectionPreferenceDto, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.section, into: &buf)
+        FfiConverterString.write(value.instructions, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSectionPreferenceDto_lift(_ buf: RustBuffer) throws -> SectionPreferenceDto {
+    return try FfiConverterTypeSectionPreferenceDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSectionPreferenceDto_lower(_ value: SectionPreferenceDto) -> RustBuffer {
+    return FfiConverterTypeSectionPreferenceDto.lower(value)
+}
+
+
+public struct ShiftDto: Equatable, Hashable {
+    public let id: String
+    public let startedAtMs: Int64
+    public let endedAtMs: Int64?
+    public let selectedPatientId: String?
+    public let isOpen: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, startedAtMs: Int64, endedAtMs: Int64?, selectedPatientId: String?, isOpen: Bool) {
+        self.id = id
+        self.startedAtMs = startedAtMs
+        self.endedAtMs = endedAtMs
+        self.selectedPatientId = selectedPatientId
+        self.isOpen = isOpen
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ShiftDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeShiftDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ShiftDto {
+        return
+            try ShiftDto(
+                id: FfiConverterString.read(from: &buf),
+                startedAtMs: FfiConverterInt64.read(from: &buf),
+                endedAtMs: FfiConverterOptionInt64.read(from: &buf),
+                selectedPatientId: FfiConverterOptionString.read(from: &buf),
+                isOpen: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ShiftDto, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterInt64.write(value.startedAtMs, into: &buf)
+        FfiConverterOptionInt64.write(value.endedAtMs, into: &buf)
+        FfiConverterOptionString.write(value.selectedPatientId, into: &buf)
+        FfiConverterBool.write(value.isOpen, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeShiftDto_lift(_ buf: RustBuffer) throws -> ShiftDto {
+    return try FfiConverterTypeShiftDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeShiftDto_lower(_ value: ShiftDto) -> RustBuffer {
+    return FfiConverterTypeShiftDto.lower(value)
+}
+
+
+
+public enum ChartCategory: Equatable, Hashable {
+
+    case history
+    case medication
+    case vital
+    case lab
+    case imaging
+    case treatment
+    case diagnosis
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ChartCategory: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeChartCategory: FfiConverterRustBuffer {
+    typealias SwiftType = ChartCategory
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ChartCategory {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .history
+
+        case 2: return .medication
+
+        case 3: return .vital
+
+        case 4: return .lab
+
+        case 5: return .imaging
+
+        case 6: return .treatment
+
+        case 7: return .diagnosis
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ChartCategory, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .history:
+            writeInt(&buf, Int32(1))
+
+
+        case .medication:
+            writeInt(&buf, Int32(2))
+
+
+        case .vital:
+            writeInt(&buf, Int32(3))
+
+
+        case .lab:
+            writeInt(&buf, Int32(4))
+
+
+        case .imaging:
+            writeInt(&buf, Int32(5))
+
+
+        case .treatment:
+            writeInt(&buf, Int32(6))
+
+
+        case .diagnosis:
+            writeInt(&buf, Int32(7))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeChartCategory_lift(_ buf: RustBuffer) throws -> ChartCategory {
+    return try FfiConverterTypeChartCategory.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeChartCategory_lower(_ value: ChartCategory) -> RustBuffer {
+    return FfiConverterTypeChartCategory.lower(value)
+}
+
+
+
+
+public enum ClinicalPhaseDto: Equatable, Hashable {
+
+    case registered
+    case encountering
+    case idle
+    case finalizing
+    case pendingSignOff
+    case signed
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClinicalPhaseDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClinicalPhaseDto: FfiConverterRustBuffer {
+    typealias SwiftType = ClinicalPhaseDto
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClinicalPhaseDto {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .registered
+
+        case 2: return .encountering
+
+        case 3: return .idle
+
+        case 4: return .finalizing
+
+        case 5: return .pendingSignOff
+
+        case 6: return .signed
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ClinicalPhaseDto, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .registered:
+            writeInt(&buf, Int32(1))
+
+
+        case .encountering:
+            writeInt(&buf, Int32(2))
+
+
+        case .idle:
+            writeInt(&buf, Int32(3))
+
+
+        case .finalizing:
+            writeInt(&buf, Int32(4))
+
+
+        case .pendingSignOff:
+            writeInt(&buf, Int32(5))
+
+
+        case .signed:
+            writeInt(&buf, Int32(6))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClinicalPhaseDto_lift(_ buf: RustBuffer) throws -> ClinicalPhaseDto {
+    return try FfiConverterTypeClinicalPhaseDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClinicalPhaseDto_lower(_ value: ClinicalPhaseDto) -> RustBuffer {
+    return FfiConverterTypeClinicalPhaseDto.lower(value)
+}
+
+
+
+
+public enum ConsentChoice: Equatable, Hashable {
+
+    case unknown
+    case granted
+    case declined
+    case revoked
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ConsentChoice: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeConsentChoice: FfiConverterRustBuffer {
+    typealias SwiftType = ConsentChoice
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ConsentChoice {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .unknown
+
+        case 2: return .granted
+
+        case 3: return .declined
+
+        case 4: return .revoked
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ConsentChoice, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .unknown:
+            writeInt(&buf, Int32(1))
+
+
+        case .granted:
+            writeInt(&buf, Int32(2))
+
+
+        case .declined:
+            writeInt(&buf, Int32(3))
+
+
+        case .revoked:
+            writeInt(&buf, Int32(4))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeConsentChoice_lift(_ buf: RustBuffer) throws -> ConsentChoice {
+    return try FfiConverterTypeConsentChoice.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeConsentChoice_lower(_ value: ConsentChoice) -> RustBuffer {
+    return FfiConverterTypeConsentChoice.lower(value)
+}
+
+
+
+
+public enum DefinitionKindDto: Equatable, Hashable {
+
+    case template
+    case admissionMessage
+    case dischargeInstructions
+    case custom
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension DefinitionKindDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDefinitionKindDto: FfiConverterRustBuffer {
+    typealias SwiftType = DefinitionKindDto
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DefinitionKindDto {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .template
+
+        case 2: return .admissionMessage
+
+        case 3: return .dischargeInstructions
+
+        case 4: return .custom
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: DefinitionKindDto, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .template:
+            writeInt(&buf, Int32(1))
+
+
+        case .admissionMessage:
+            writeInt(&buf, Int32(2))
+
+
+        case .dischargeInstructions:
+            writeInt(&buf, Int32(3))
+
+
+        case .custom:
+            writeInt(&buf, Int32(4))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDefinitionKindDto_lift(_ buf: RustBuffer) throws -> DefinitionKindDto {
+    return try FfiConverterTypeDefinitionKindDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDefinitionKindDto_lower(_ value: DefinitionKindDto) -> RustBuffer {
+    return FfiConverterTypeDefinitionKindDto.lower(value)
+}
+
+
+
+
+public enum DispositionInput: Equatable, Hashable {
+
+    case discharge(instructions: String, followUp: String?
+    )
+    case admit(service: String, bed: String?
+    )
+    case transfer(destination: String, reason: String?
+    )
+    case ama
+    case lwbs
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension DispositionInput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDispositionInput: FfiConverterRustBuffer {
+    typealias SwiftType = DispositionInput
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DispositionInput {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .discharge(instructions: try FfiConverterString.read(from: &buf), followUp: try FfiConverterOptionString.read(from: &buf)
+        )
+
+        case 2: return .admit(service: try FfiConverterString.read(from: &buf), bed: try FfiConverterOptionString.read(from: &buf)
+        )
+
+        case 3: return .transfer(destination: try FfiConverterString.read(from: &buf), reason: try FfiConverterOptionString.read(from: &buf)
+        )
+
+        case 4: return .ama
+
+        case 5: return .lwbs
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: DispositionInput, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case let .discharge(instructions,followUp):
+            writeInt(&buf, Int32(1))
+            FfiConverterString.write(instructions, into: &buf)
+            FfiConverterOptionString.write(followUp, into: &buf)
+
+
+        case let .admit(service,bed):
+            writeInt(&buf, Int32(2))
+            FfiConverterString.write(service, into: &buf)
+            FfiConverterOptionString.write(bed, into: &buf)
+
+
+        case let .transfer(destination,reason):
+            writeInt(&buf, Int32(3))
+            FfiConverterString.write(destination, into: &buf)
+            FfiConverterOptionString.write(reason, into: &buf)
+
+
+        case .ama:
+            writeInt(&buf, Int32(4))
+
+
+        case .lwbs:
+            writeInt(&buf, Int32(5))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDispositionInput_lift(_ buf: RustBuffer) throws -> DispositionInput {
+    return try FfiConverterTypeDispositionInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDispositionInput_lower(_ value: DispositionInput) -> RustBuffer {
+    return FfiConverterTypeDispositionInput.lower(value)
+}
+
+
+
 /**
  * Stable categories only: never carry arbitrary implementation error strings.
  */
@@ -579,6 +2387,9 @@ enum FfiError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
     case InvalidInput
     case InvalidState
     case NotFound
+    case Conflict
+    case Scope
+    case Recovery
     case Storage
     case Closed
     case Busy
@@ -615,10 +2426,13 @@ public struct FfiConverterTypeFfiError: FfiConverterRustBuffer {
         case 1: return .InvalidInput
         case 2: return .InvalidState
         case 3: return .NotFound
-        case 4: return .Storage
-        case 5: return .Closed
-        case 6: return .Busy
-        case 7: return .Internal
+        case 4: return .Conflict
+        case 5: return .Scope
+        case 6: return .Recovery
+        case 7: return .Storage
+        case 8: return .Closed
+        case 9: return .Busy
+        case 10: return .Internal
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -643,20 +2457,32 @@ public struct FfiConverterTypeFfiError: FfiConverterRustBuffer {
             writeInt(&buf, Int32(3))
 
 
-        case .Storage:
+        case .Conflict:
             writeInt(&buf, Int32(4))
 
 
-        case .Closed:
+        case .Scope:
             writeInt(&buf, Int32(5))
 
 
-        case .Busy:
+        case .Recovery:
             writeInt(&buf, Int32(6))
 
 
-        case .Internal:
+        case .Storage:
             writeInt(&buf, Int32(7))
+
+
+        case .Closed:
+            writeInt(&buf, Int32(8))
+
+
+        case .Busy:
+            writeInt(&buf, Int32(9))
+
+
+        case .Internal:
+            writeInt(&buf, Int32(10))
 
         }
     }
@@ -676,6 +2502,763 @@ public func FfiConverterTypeFfiError_lift(_ buf: RustBuffer) throws -> FfiError 
 public func FfiConverterTypeFfiError_lower(_ value: FfiError) -> RustBuffer {
     return FfiConverterTypeFfiError.lower(value)
 }
+
+
+
+public enum MedicationKindDto: Equatable, Hashable {
+
+    case home
+    case administeredInEd
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MedicationKindDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMedicationKindDto: FfiConverterRustBuffer {
+    typealias SwiftType = MedicationKindDto
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MedicationKindDto {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .home
+
+        case 2: return .administeredInEd
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MedicationKindDto, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .home:
+            writeInt(&buf, Int32(1))
+
+
+        case .administeredInEd:
+            writeInt(&buf, Int32(2))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMedicationKindDto_lift(_ buf: RustBuffer) throws -> MedicationKindDto {
+    return try FfiConverterTypeMedicationKindDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMedicationKindDto_lower(_ value: MedicationKindDto) -> RustBuffer {
+    return FfiConverterTypeMedicationKindDto.lower(value)
+}
+
+
+
+
+public enum ObjectiveInput: Equatable, Hashable {
+
+    case lab(name: String, value: Double, unit: String, abnormal: Bool
+    )
+    case imaging(modality: String, bodyPart: String, impression: String, critical: Bool
+    )
+    case vital(kind: VitalKind, value: Double, unit: String
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ObjectiveInput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeObjectiveInput: FfiConverterRustBuffer {
+    typealias SwiftType = ObjectiveInput
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ObjectiveInput {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .lab(name: try FfiConverterString.read(from: &buf), value: try FfiConverterDouble.read(from: &buf), unit: try FfiConverterString.read(from: &buf), abnormal: try FfiConverterBool.read(from: &buf)
+        )
+
+        case 2: return .imaging(modality: try FfiConverterString.read(from: &buf), bodyPart: try FfiConverterString.read(from: &buf), impression: try FfiConverterString.read(from: &buf), critical: try FfiConverterBool.read(from: &buf)
+        )
+
+        case 3: return .vital(kind: try FfiConverterTypeVitalKind.read(from: &buf), value: try FfiConverterDouble.read(from: &buf), unit: try FfiConverterString.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ObjectiveInput, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case let .lab(name,value,unit,abnormal):
+            writeInt(&buf, Int32(1))
+            FfiConverterString.write(name, into: &buf)
+            FfiConverterDouble.write(value, into: &buf)
+            FfiConverterString.write(unit, into: &buf)
+            FfiConverterBool.write(abnormal, into: &buf)
+
+
+        case let .imaging(modality,bodyPart,impression,critical):
+            writeInt(&buf, Int32(2))
+            FfiConverterString.write(modality, into: &buf)
+            FfiConverterString.write(bodyPart, into: &buf)
+            FfiConverterString.write(impression, into: &buf)
+            FfiConverterBool.write(critical, into: &buf)
+
+
+        case let .vital(kind,value,unit):
+            writeInt(&buf, Int32(3))
+            FfiConverterTypeVitalKind.write(kind, into: &buf)
+            FfiConverterDouble.write(value, into: &buf)
+            FfiConverterString.write(unit, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeObjectiveInput_lift(_ buf: RustBuffer) throws -> ObjectiveInput {
+    return try FfiConverterTypeObjectiveInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeObjectiveInput_lower(_ value: ObjectiveInput) -> RustBuffer {
+    return FfiConverterTypeObjectiveInput.lower(value)
+}
+
+
+
+
+public enum RecorderPhase: Equatable, Hashable {
+
+    case unavailable
+    case ready
+    case recording
+    case paused
+    case interrupted
+    case pendingStop
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RecorderPhase: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRecorderPhase: FfiConverterRustBuffer {
+    typealias SwiftType = RecorderPhase
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RecorderPhase {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .unavailable
+
+        case 2: return .ready
+
+        case 3: return .recording
+
+        case 4: return .paused
+
+        case 5: return .interrupted
+
+        case 6: return .pendingStop
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: RecorderPhase, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .unavailable:
+            writeInt(&buf, Int32(1))
+
+
+        case .ready:
+            writeInt(&buf, Int32(2))
+
+
+        case .recording:
+            writeInt(&buf, Int32(3))
+
+
+        case .paused:
+            writeInt(&buf, Int32(4))
+
+
+        case .interrupted:
+            writeInt(&buf, Int32(5))
+
+
+        case .pendingStop:
+            writeInt(&buf, Int32(6))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRecorderPhase_lift(_ buf: RustBuffer) throws -> RecorderPhase {
+    return try FfiConverterTypeRecorderPhase.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRecorderPhase_lower(_ value: RecorderPhase) -> RustBuffer {
+    return FfiConverterTypeRecorderPhase.lower(value)
+}
+
+
+
+
+public enum VitalKind: Equatable, Hashable {
+
+    case heartRate
+    case systolic
+    case diastolic
+    case respiratoryRate
+    case temperature
+    case spO2
+    case pain
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension VitalKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeVitalKind: FfiConverterRustBuffer {
+    typealias SwiftType = VitalKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VitalKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .heartRate
+
+        case 2: return .systolic
+
+        case 3: return .diastolic
+
+        case 4: return .respiratoryRate
+
+        case 5: return .temperature
+
+        case 6: return .spO2
+
+        case 7: return .pain
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: VitalKind, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .heartRate:
+            writeInt(&buf, Int32(1))
+
+
+        case .systolic:
+            writeInt(&buf, Int32(2))
+
+
+        case .diastolic:
+            writeInt(&buf, Int32(3))
+
+
+        case .respiratoryRate:
+            writeInt(&buf, Int32(4))
+
+
+        case .temperature:
+            writeInt(&buf, Int32(5))
+
+
+        case .spO2:
+            writeInt(&buf, Int32(6))
+
+
+        case .pain:
+            writeInt(&buf, Int32(7))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVitalKind_lift(_ buf: RustBuffer) throws -> VitalKind {
+    return try FfiConverterTypeVitalKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVitalKind_lower(_ value: VitalKind) -> RustBuffer {
+    return FfiConverterTypeVitalKind.lower(value)
+}
+
+
+
+
+
+public protocol DeviceChangeListener: AnyObject, Sendable {
+
+    func invalidated(revision: UInt64)
+
+}
+
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+fileprivate struct UniffiCallbackInterfaceDeviceChangeListener {
+
+    // Create the VTable using a series of closures.
+    // Swift automatically converts these into C callback functions.
+    //
+    // Store the vtable directly.
+    static let vtable: UniffiVTableCallbackInterfaceDeviceChangeListener = UniffiVTableCallbackInterfaceDeviceChangeListener(
+        uniffiFree: { (uniffiHandle: UInt64) -> () in
+            do {
+                try FfiConverterCallbackInterfaceDeviceChangeListener.handleMap.remove(handle: uniffiHandle)
+            } catch {
+                print("Uniffi callback interface DeviceChangeListener: handle missing in uniffiFree")
+            }
+        },
+        uniffiClone: { (uniffiHandle: UInt64) -> UInt64 in
+            do {
+                return try FfiConverterCallbackInterfaceDeviceChangeListener.handleMap.clone(handle: uniffiHandle)
+            } catch {
+                fatalError("Uniffi callback interface DeviceChangeListener: handle missing in uniffiClone")
+            }
+        },
+        invalidated: { (
+            uniffiHandle: UInt64,
+            revision: UInt64,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterCallbackInterfaceDeviceChangeListener.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.invalidated(
+                     revision: try FfiConverterUInt64.lift(revision)
+                )
+            }
+
+
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        }
+    )
+
+    // Rust stores this pointer for future callback invocations, so it must live
+    // for the process lifetime (not just for the init function call).
+    //
+    // `nonisolated(unsafe)` is needed under Swift 6 strict concurrency.
+    // This is safe because the pointee is initialized once during static init
+    // and never mutated by either side of the FFI.  Its fields are C function pointers.
+    nonisolated(unsafe) static let vtablePtr: UnsafePointer<UniffiVTableCallbackInterfaceDeviceChangeListener> = {
+        let ptr = UnsafeMutablePointer<UniffiVTableCallbackInterfaceDeviceChangeListener>.allocate(capacity: 1)
+        ptr.initialize(to: vtable)
+        return UnsafePointer(ptr)
+    }()
+}
+
+private func uniffiCallbackInitDeviceChangeListener() {
+    uniffi_er_ffi_fn_init_callback_vtable_devicechangelistener(UniffiCallbackInterfaceDeviceChangeListener.vtablePtr)
+}
+
+// FfiConverter protocol for callback interfaces
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterCallbackInterfaceDeviceChangeListener {
+    fileprivate static let handleMap = UniffiHandleMap<DeviceChangeListener>()
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+extension FfiConverterCallbackInterfaceDeviceChangeListener : FfiConverter {
+    typealias SwiftType = DeviceChangeListener
+    typealias FfiType = UInt64
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func lift(_ handle: UInt64) throws -> SwiftType {
+        try handleMap.get(handle: handle)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func lower(_ v: SwiftType) -> UInt64 {
+        return handleMap.insert(obj: v)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func write(_ v: SwiftType, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(v))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterCallbackInterfaceDeviceChangeListener_lift(_ handle: UInt64) throws -> DeviceChangeListener {
+    return try FfiConverterCallbackInterfaceDeviceChangeListener.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterCallbackInterfaceDeviceChangeListener_lower(_ v: DeviceChangeListener) -> UInt64 {
+    return FfiConverterCallbackInterfaceDeviceChangeListener.lower(v)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionInt64: FfiConverterRustBuffer {
+    typealias SwiftType = Int64?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterInt64.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterInt64.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionString: FfiConverterRustBuffer {
+    typealias SwiftType = String?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterString.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterString.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeShiftDto: FfiConverterRustBuffer {
+    typealias SwiftType = ShiftDto?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeShiftDto.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeShiftDto.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionCallbackInterfaceDeviceChangeListener: FfiConverterRustBuffer {
+    typealias SwiftType = DeviceChangeListener?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterCallbackInterfaceDeviceChangeListener.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterCallbackInterfaceDeviceChangeListener.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
+    typealias SwiftType = [String]
+
+    public static func write(_ value: [String], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterString.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [String] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [String]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterString.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeChartContextDto: FfiConverterRustBuffer {
+    typealias SwiftType = [ChartContextDto]
+
+    public static func write(_ value: [ChartContextDto], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeChartContextDto.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ChartContextDto] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ChartContextDto]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeChartContextDto.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeDefinitionDto: FfiConverterRustBuffer {
+    typealias SwiftType = [DefinitionDto]
+
+    public static func write(_ value: [DefinitionDto], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeDefinitionDto.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [DefinitionDto] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [DefinitionDto]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeDefinitionDto.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeObjectiveDto: FfiConverterRustBuffer {
+    typealias SwiftType = [ObjectiveDto]
+
+    public static func write(_ value: [ObjectiveDto], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeObjectiveDto.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ObjectiveDto] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ObjectiveDto]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeObjectiveDto.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypePatientDto: FfiConverterRustBuffer {
+    typealias SwiftType = [PatientDto]
+
+    public static func write(_ value: [PatientDto], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypePatientDto.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [PatientDto] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [PatientDto]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypePatientDto.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeSectionPreferenceDto: FfiConverterRustBuffer {
+    typealias SwiftType = [SectionPreferenceDto]
+
+    public static func write(_ value: [SectionPreferenceDto], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeSectionPreferenceDto.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [SectionPreferenceDto] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [SectionPreferenceDto]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeSectionPreferenceDto.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeShiftDto: FfiConverterRustBuffer {
+    typealias SwiftType = [ShiftDto]
+
+    public static func write(_ value: [ShiftDto], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeShiftDto.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ShiftDto] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ShiftDto]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeShiftDto.read(from: &buf))
+        }
+        return seq
+    }
+}
 public func ping()throws  -> String  {
     return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
         uniffiCallStatus in
@@ -691,6 +3274,13 @@ public func validateConfig(config: DeviceConfig)throws  -> DeviceConfig  {
         uniffiCallStatus in
     uniffi_er_ffi_fn_func_validate_config(
         FfiConverterTypeDeviceConfig_lower(config),uniffiCallStatus
+    )
+})
+}
+public func deviceInterfaceVersion()throws  -> UInt32  {
+    return try  FfiConverterUInt32.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_er_ffi_fn_func_device_interface_version(uniffiCallStatus
     )
 })
 }
@@ -716,7 +3306,95 @@ private let initializationResult: InitializationResult = {
     if (uniffi_er_ffi_checksum_func_validate_config() != 62443) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_er_ffi_checksum_func_device_interface_version() != 14505) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_er_ffi_checksum_method_erdevice_add_patient() != 1645) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_er_ffi_checksum_method_erdevice_chart_context() != 12675) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_er_ffi_checksum_method_erdevice_close() != 2595) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_er_ffi_checksum_method_erdevice_definition_versions() != 30026) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_er_ffi_checksum_method_erdevice_duplicate_definition() != 13419) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_er_ffi_checksum_method_erdevice_end_shift() != 20334) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_er_ffi_checksum_method_erdevice_export_note() != 26102) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_er_ffi_checksum_method_erdevice_note() != 49484) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_er_ffi_checksum_method_erdevice_record_data_reviewed() != 14814) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_er_ffi_checksum_method_erdevice_record_diagnosis() != 45141) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_er_ffi_checksum_method_erdevice_record_medication() != 13396) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_er_ffi_checksum_method_erdevice_record_objective() != 63429) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_er_ffi_checksum_method_erdevice_restore_definition() != 51502) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_er_ffi_checksum_method_erdevice_review_ready() != 48126) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_er_ffi_checksum_method_erdevice_save_context() != 31324) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_er_ffi_checksum_method_erdevice_save_definition() != 48648) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_er_ffi_checksum_method_erdevice_save_manual_draft() != 38796) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_er_ffi_checksum_method_erdevice_select_patient() != 48150) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_er_ffi_checksum_method_erdevice_set_consent() != 23705) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_er_ffi_checksum_method_erdevice_set_disposition() != 44163) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_er_ffi_checksum_method_erdevice_set_listener() != 33686) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_er_ffi_checksum_method_erdevice_set_mode() != 27294) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_er_ffi_checksum_method_erdevice_shifts() != 18331) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_er_ffi_checksum_method_erdevice_sign() != 64157) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_er_ffi_checksum_method_erdevice_snapshot() != 23906) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_er_ffi_checksum_method_erdevice_start_shift() != 33229) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_er_ffi_checksum_constructor_erdevice_new() != 63341) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_er_ffi_checksum_method_devicechangelistener_invalidated() != 38753) {
+        return InitializationResult.apiChecksumMismatch
+    }
 
+    uniffiCallbackInitDeviceChangeListener()
     return InitializationResult.ok
 }()
 

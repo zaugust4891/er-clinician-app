@@ -6,39 +6,23 @@ import ErNoteKit
 struct ErNoteApp: App {
     @StateObject private var model: WorkspaceModel
     private let storageError: String?
-    private let bridgeError: String?
 
     init() {
-        #if DEBUG
-        let service: any DeviceService = FixtureDeviceService()
-        #else
-        let service: any DeviceService = UnavailableDeviceService()
-        #endif
-        _model = StateObject(wrappedValue: WorkspaceModel(service: service))
+        let service: any DeviceService
         do {
-            try BridgeHealth.check()
-            bridgeError = nil
-        } catch {
-            bridgeError = "The local core could not be initialized."
-        }
-        do {
-            _ = try ProtectedStorage.databaseURL()
+            let url = try ProtectedStorage.databaseURL()
+            service = RustDeviceService(databaseURL: url, accountScope: "synthetic-development")
             storageError = nil
         } catch {
-            storageError =
-                "Protected storage could not be prepared. Persistent saving is unavailable."
+            service = UnavailableDeviceService()
+            storageError = "Protected storage could not be prepared. Persistent saving is unavailable."
         }
+        _model = StateObject(wrappedValue: WorkspaceModel(service: service))
     }
 
     var body: some Scene {
         WindowGroup {
             VStack(spacing: 0) {
-                if let bridgeError {
-                    Text(bridgeError)
-                        .foregroundStyle(.red)
-                        .padding()
-                        .accessibilityIdentifier("bridgeBootstrapError")
-                }
                 if let storageError {
                     Text(storageError)
                         .foregroundStyle(.red)

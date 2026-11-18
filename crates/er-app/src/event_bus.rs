@@ -67,13 +67,8 @@ impl EventBus {
             // which then drops the read lock before save_snapshot is called.
             if let Some(snapshot) = store.get(&patient_id).map(|r| r.clone()) {
                 // Best-effort — a snapshot failure should not kill the publish path. Log it and move on.
-                if let Err(e) = repo.save_snapshot(patient_id, seq_id, &snapshot).await {
-                    tracing::warn!(
-                        patient_id = %patient_id,
-                        sequence_id = %seq_id,
-                        error = ?e,
-                        "snapshot save failed - continuing without"
-                    );
+                if let Err(_e) = repo.save_snapshot(patient_id, seq_id, &snapshot).await {
+                    tracing::warn!("snapshot save failed - continuing without");
                 }
             }
         }
@@ -81,6 +76,25 @@ impl EventBus {
         // 4. Broadcast (notifications only).
         let _ = self.sender.send(event);
         Ok(seq_id)
+    }
+    /// Stable-ID retry path for an already stopped capture. Rebuild rather than
+    /// applying a duplicate event twice. The repository validates duplicate bodies.
+    pub async fn publish_with_id(
+        &self,
+        id: Uuid,
+        event: NoteEvent,
+        store: &PatientNoteStore,
+    ) -> AppResult<u64> {
+        let patient = event.extract_patient_id();
+        let Some(repo) = &self.repository else {
+            return self.publish(event, store).await;
+        };
+        let sequence = repo.append_event(patient, id, event.clone()).await?;
+        if let Some(note) = crate::load_patient_note(repo.as_ref(), patient).await? {
+            store.insert(patient, note);
+        }
+        let _ = self.sender.send(event);
+        Ok(sequence)
     }
     // ***NOTE***
     /// Subscribers get notified, but they're explicitly not responsible for state updates.

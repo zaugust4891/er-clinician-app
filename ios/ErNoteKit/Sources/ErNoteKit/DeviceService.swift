@@ -1,7 +1,7 @@
 import Foundation
 
 public enum ConsentStatus: String, Sendable {
-    case unknown, granted, declined
+    case unknown, granted, declined, revoked
 }
 
 public enum CaptureMode: String, Sendable {
@@ -11,12 +11,13 @@ public enum CaptureMode: String, Sendable {
 
 /// Recorder presentation is separate from the Rust note phase.
 public enum RecorderStatus: String, Sendable {
-    case unavailable, paused, interrupted, waiting
+    case unavailable, paused, interrupted, waiting, pendingStop
 }
 
 public enum ServiceAvailability: Sendable {
     case syntheticPreview
     case coreUnavailable
+    case localCore
 }
 
 public enum ContextCategory: String, CaseIterable, Sendable {
@@ -28,13 +29,15 @@ public struct ContextItem: Identifiable, Equatable, Sendable {
     public let category: ContextCategory
     public let text: String
     public let source: String
-    public let observedAt: Date
+    public let observedAt: Date?
+    public let enteredAt: Date
+    public let version: UInt64
     public let needsReview: Bool
     public let isStale: Bool
 
     public init(
         id: UUID = UUID(), category: ContextCategory, text: String,
-        source: String, observedAt: Date,
+        source: String, observedAt: Date?, enteredAt: Date = Date(), version: UInt64 = 0,
         needsReview: Bool = false, isStale: Bool = false
     ) {
         self.id = id
@@ -42,6 +45,8 @@ public struct ContextItem: Identifiable, Equatable, Sendable {
         self.text = text
         self.source = source
         self.observedAt = observedAt
+        self.enteredAt = enteredAt
+        self.version = version
         self.needsReview = needsReview
         self.isStale = isStale
     }
@@ -58,6 +63,8 @@ public struct PatientView: Identifiable, Equatable, Sendable {
     public var note: String
     public var mdmIsStale: Bool
     public var separateDraft: String?
+    public var generatedSections: [String]
+    public var objectiveLines: [String]
 
     public init(
         id: UUID, displayLabel: String, chiefComplaint: String,
@@ -65,7 +72,7 @@ public struct PatientView: Identifiable, Equatable, Sendable {
         captureMode: CaptureMode = .ambient,
         recorder: RecorderStatus = .unavailable,
         context: [ContextItem] = [], note: String = "",
-        mdmIsStale: Bool = false, separateDraft: String? = nil
+        mdmIsStale: Bool = false, separateDraft: String? = nil, generatedSections: [String] = [], objectiveLines: [String] = []
     ) {
         self.id = id
         self.displayLabel = displayLabel
@@ -77,23 +84,33 @@ public struct PatientView: Identifiable, Equatable, Sendable {
         self.note = note
         self.mdmIsStale = mdmIsStale
         self.separateDraft = separateDraft
+        self.generatedSections = generatedSections
+        self.objectiveLines = objectiveLines
     }
 }
+
+public enum PreferenceKind: String, CaseIterable, Sendable { case template, admissionMessage, dischargeInstructions, custom }
 
 public struct SavedPreference: Identifiable, Equatable, Sendable {
     public let id: UUID
     public let section: String
     public let instructions: String
     public let isDefault: Bool
+    public let version: UInt64
+    public let kind: PreferenceKind
+    public let archived: Bool
 
     public init(
         id: UUID = UUID(), section: String, instructions: String,
-        isDefault: Bool = false
+        isDefault: Bool = false, version: UInt64 = 0, kind: PreferenceKind = .template, archived: Bool = false
     ) {
         self.id = id
         self.section = section
         self.instructions = instructions
         self.isDefault = isDefault
+        self.version = version
+        self.kind = kind
+        self.archived = archived
     }
 }
 
@@ -102,15 +119,17 @@ public struct DeviceSnapshot: Equatable, Sendable {
     public var selectedPatientID: UUID?
     public var patients: [PatientView]
     public var preferences: [SavedPreference]
+    public var revision: UInt64
 
     public init(
         shiftID: UUID? = nil, selectedPatientID: UUID? = nil,
-        patients: [PatientView] = [], preferences: [SavedPreference] = []
+        patients: [PatientView] = [], preferences: [SavedPreference] = [], revision: UInt64 = 0
     ) {
         self.shiftID = shiftID
         self.selectedPatientID = selectedPatientID
         self.patients = patients
         self.preferences = preferences
+        self.revision = revision
     }
 }
 
@@ -128,14 +147,30 @@ public protocol DeviceService: AnyObject {
     var supportsGeneration: Bool { get }
     var snapshot: DeviceSnapshot { get }
 
-    func startShift() throws
-    func createPatient(displayLabel: String, chiefComplaint: String) throws -> UUID
-    func selectPatient(_ id: UUID) throws
-    func setConsent(_ consent: ConsentStatus, for id: UUID) throws
-    func setCaptureMode(_ mode: CaptureMode, for id: UUID) throws
-    func replaceContext(_ context: [ContextItem], for id: UUID) throws
+    var onChange: (() -> Void)? { get set }
+    func load() async throws
+    func close() async throws
+    func recordObjective(_ input: ObjectiveInput, for id: UUID) async throws
+    func endShift() async throws
+    func clearSelection() async throws
+    func startShift() async throws
+    func createPatient(displayLabel: String, chiefComplaint: String) async throws -> UUID
+    func selectPatient(_ id: UUID) async throws
+    func setConsent(_ consent: ConsentStatus, for id: UUID) async throws
+    func setCaptureMode(_ mode: CaptureMode, for id: UUID) async throws
+    func replaceContext(_ context: [ContextItem], for id: UUID) async throws
     /// Manual editing remains available independently of recording, consent,
     /// and generation. The future Rust adapter must preserve manual revisions.
-    func updateNote(_ text: String, for id: UUID) throws
-    func savePreference(_ preference: SavedPreference) throws
+    func updateNote(_ text: String, for id: UUID) async throws
+    func savePreference(_ preference: SavedPreference) async throws
+}
+
+@MainActor
+public extension DeviceService {
+    var onChange: (() -> Void)? { get { nil } set {} }
+    func load() async throws {}
+    func close() async throws {}
+    func recordObjective(_ input: ObjectiveInput, for id: UUID) async throws { throw DeviceServiceError.unavailable }
+    func endShift() async throws { throw DeviceServiceError.unavailable }
+    func clearSelection() async throws { throw DeviceServiceError.unavailable }
 }

@@ -11,3 +11,6 @@ pub mod shift_snapshot;
 pub use error::{AppError, AppResult};
 pub use event_bus::EventBus;
 pub use load::{PatientNoteStore, load_patient_note, new_store};
+
+pub mod generation;
+pub mod validation;

@@ -10,16 +10,25 @@ use chrono::Utc;
 use std::sync::Arc;
 use uuid::Uuid;
 
+#[derive(Clone)]
 pub struct ActiveEncounter {
     patient_id: PatientId,
     encounter_id: EncounterId,
 }
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum TranscriptionOwnership {
+    Local,
+    Server,
+}
+
 pub struct EncounterDriver<A: AudioCapture, T: Transcriber> {
     audio: A,
     transcriber: T,
     bus: Arc<EventBus>,
     store: PatientNoteStore,
     active_encounter: Option<ActiveEncounter>,
+    transcription: TranscriptionOwnership,
+    pending_stop: Option<(Uuid, NoteEvent, Vec<u8>, bool)>,
 }
 
 impl<A: AudioCapture, T: Transcriber> EncounterDriver<A, T> {
@@ -30,6 +39,8 @@ impl<A: AudioCapture, T: Transcriber> EncounterDriver<A, T> {
             bus,
             store,
             active_encounter: None,
+            transcription: TranscriptionOwnership::Local,
+            pending_stop: None,
         }
     }
     /// this method's purpose is to begin recording audio for a patient and publish the 'AudioStarted' event
@@ -51,12 +62,17 @@ impl<A: AudioCapture, T: Transcriber> EncounterDriver<A, T> {
 
         self.audio.start(patient_id, encounter_id, mode.clone())?;
 
-        self.bus
+        if let Err(error) = self
+            .bus
             .publish(
                 NoteEvent::audio_started(patient_id, encounter_id, mode),
                 &self.store,
             )
-            .await?;
+            .await
+        {
+            let _ = self.audio.stop();
+            return Err(error);
+        }
 
         self.active_encounter = Some(ActiveEncounter {
             patient_id,
@@ -66,73 +82,64 @@ impl<A: AudioCapture, T: Transcriber> EncounterDriver<A, T> {
         Ok(encounter_id)
     }
 
-    /// Purpose:
-    /// Stop recording,
-    /// Run speech-to-text on the captured audio,
-    /// Publish both 'AudioStopped' and TranscriptReady events
-    ///
-    /// Note:
-    /// AudioStopped should publish BEFORE transcription
-    /// Transcription takes time - Whisper will take seconds,
-    /// The state machine should transition to 'Idle' the moment the clinician stops talking, not after transcription finishes
-    /// (This is triggered on the UI by a 'stop-tap' or a 'direct switch', meaning a voice activated command switch or tapping a different patients button.
-    ///   e.g, the doctor switches through  voice)
+    /// Server ownership applies before any upload, including switch and shutdown.
+    pub fn with_transcription(mut self, ownership: TranscriptionOwnership) -> Self {
+        self.transcription = ownership;
+        self
+    }
+
     pub async fn stop_encounter(&mut self) -> AppResult<EncounterId> {
+        self.stop_with_policy(self.transcription == TranscriptionOwnership::Local)
+            .await
+    }
+
+    pub async fn stop_encounter_audio_only(&mut self) -> AppResult<EncounterId> {
+        self.stop_with_policy(false).await
+    }
+
+    async fn stop_with_policy(&mut self, transcribe: bool) -> AppResult<EncounterId> {
         let active = self
             .active_encounter
-            .take()
-            .ok_or_else(|| AppError::Audio("no encounter in progress".to_string()))?;
-
-        let pcm_bytes = self.audio.stop()?;
-
-        self.bus
-            .publish(
+            .clone()
+            .ok_or_else(|| AppError::Audio("no encounter in progress".into()))?;
+        if self.pending_stop.is_none() {
+            let bytes = self.audio.stop()?;
+            self.pending_stop = Some((
+                Uuid::now_v7(),
                 NoteEvent::audio_stopped(active.patient_id, active.encounter_id),
-                &self.store,
-            )
-            .await?;
-
-        let transcript_result = self.transcriber.transcribe(&pcm_bytes)?;
-
+                bytes,
+                transcribe,
+            ));
+        }
+        let (id, event, bytes, transcribe) = self.pending_stop.as_ref().unwrap();
         self.bus
-            .publish(
-                NoteEvent::transcript_ready(
-                    active.patient_id,
-                    active.encounter_id,
-                    transcript_result.text,
-                    Utc::now(),
-                ),
-                &self.store,
-            )
+            .publish_with_id(*id, event.clone(), &self.store)
             .await?;
-
+        // The microphone is stopped and its boundary is now durable. A local STT
+        // failure must not claim that the resource is still recording.
+        let bytes = bytes.clone();
+        let transcribe = *transcribe;
+        self.pending_stop = None;
+        self.active_encounter = None;
+        if transcribe {
+            let result = self.transcriber.transcribe(&bytes)?;
+            self.bus
+                .publish(
+                    NoteEvent::transcript_ready(
+                        active.patient_id,
+                        active.encounter_id,
+                        result.text,
+                        Utc::now(),
+                    ),
+                    &self.store,
+                )
+                .await?;
+        }
         Ok(active.encounter_id)
     }
 
-    /// Stop capture and publish AudioStopped while leaving transcription to the
-    /// server-side worker.
-    ///
-    /// Once a completed upload has queued server work, publishing the device
-    /// mock as well would create two TranscriptReady events whose replay order
-    /// decides which clinical text wins. The server-owned path still calls
-    /// AudioCapture::stop so capture resources are released, but intentionally
-    /// discards those local bytes.
-    pub async fn stop_encounter_audio_only(&mut self) -> AppResult<EncounterId> {
-        let active = self
-            .active_encounter
-            .take()
-            .ok_or_else(|| AppError::Audio("no encounter in progress".to_string()))?;
-
-        let _ = self.audio.stop()?;
-
-        self.bus
-            .publish(
-                NoteEvent::audio_stopped(active.patient_id, active.encounter_id),
-                &self.store,
-            )
-            .await?;
-
-        Ok(active.encounter_id)
+    pub fn has_pending_stop(&self) -> bool {
+        self.pending_stop.is_some()
     }
 
     /// This will be used for Active patient context + 'switch_patient`

@@ -89,7 +89,7 @@ fn setup_generation_stack() -> GenerationSetup {
         repo.clone(),
         MockSummarizer::new(),
         runtime,
-        false,
+        er_app::generation::GenerationOwnership::Local,
     );
 
     GenerationSetup { manager, repo }
@@ -399,7 +399,7 @@ fn trigger_mdm_rejected_when_note_is_empty() {
         repo,
         MockSummarizer::new(),
         runtime,
-        false,
+        er_app::generation::GenerationOwnership::Local,
     );
 
     let patient_id = manager.register_patient("chest pain");

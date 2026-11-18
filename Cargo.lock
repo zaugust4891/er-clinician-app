@@ -1278,6 +1278,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "er-device"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "er-app",
+ "er-domain",
+ "er-store",
+ "rusqlite",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "er-domain"
 version = "0.1.0"
 dependencies = [
@@ -1293,8 +1308,11 @@ dependencies = [
 name = "er-ffi"
 version = "0.1.0"
 dependencies = [
+ "er-device",
+ "er-domain",
  "thiserror",
  "uniffi",
+ "uuid",
 ]
 
 [[package]]
@@ -1356,9 +1374,11 @@ dependencies = [
  "chrono",
  "er-domain",
  "rusqlite",
+ "serde",
  "serde_json",
  "sha2 0.10.9",
  "thiserror",
+ "tokio",
  "tracing",
  "uuid",
 ]

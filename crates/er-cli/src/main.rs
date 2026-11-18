@@ -224,7 +224,11 @@ fn main() -> AppResult<()> {
         }
     }
 
-    let generation_is_remote = server.is_some();
+    let generation_ownership = if server.is_some() {
+        er_app::generation::GenerationOwnership::Remote
+    } else {
+        er_app::generation::GenerationOwnership::Local
+    };
     let mut manager = ShiftManager::new(
         shift,
         patients,
@@ -234,7 +238,7 @@ fn main() -> AppResult<()> {
         repo.clone(),
         summarizer,
         threaded_rt.clone(),
-        generation_is_remote,
+        generation_ownership,
     );
     let patient_record_count = manager.list_patients().len();
 

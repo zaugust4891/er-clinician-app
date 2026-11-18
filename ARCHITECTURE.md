@@ -5,6 +5,13 @@ state and event replay. `er-store` defines persistence; `er-app` orchestrates th
 local pipeline; `er-ai` and `er-pipeline` supply provider seams; `er-api` owns shared
 wire types and the optional remote client; `er-server` implements HTTP, storage,
 workers and operator binaries; `er-cli` drives either SQLite or the remote API.
+`er-device` composes the scoped offline SQLite core and its serialized command owner;
+`er-ffi` exposes that owner through flat UniFFI DTOs to the Swift phone service.
+`er-app/local-generation` gates the AI adapter/provider dependency; CLI/server opt
+in and the device opts out. Actual phone sync and microphone capture remain later
+Phase 5 steps. See the [Step 2 implementation](docs/ops/phase5-step2-implementation.md)
+for durability, consent, recovery, threading and the Step 3 handoff.
+
 `schema` is an optional documentation build feature on domain/API crates. It
 adds JSON Schema derivation without adding schema generation to shipped binaries.
 
@@ -57,4 +64,4 @@ entrypoints. Terraform foundation owns durable infrastructure; release owns task
 revisions/services through a non-secret manifest. Production remains gated. See
 [the runbook](docs/ops/runbook.md) for compatible rollback and isolated restore,
 [the load profile](load/README.md) for Step 10 evidence requirements, and
-[Phase 5 handoff](docs/planning/phase5-handoff.md) for device obligations.
+[Phase 5 handoff](docs/planning/phase5/phase5-handoff.md) for device obligations.

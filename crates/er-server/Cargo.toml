@@ -11,7 +11,7 @@ axum = "0.8.9"
 base64 = "0.22"
 chrono.workspace = true
 dotenvy.workspace = true
-er-app = { version = "0.1.0", path = "../er-app" }
+er-app = { workspace = true, features = ["local-generation"] }
 er-api.workspace = true
 hmac = "0.12"
 jsonwebtoken = { version = "10.4.0", features = ["aws_lc_rs"] }

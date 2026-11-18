@@ -266,6 +266,10 @@ pub fn error_kind(error: &anyhow::Error) -> &'static str {
                 er_store::StoreError::Serialization(error) => return json_kind(error),
                 er_store::StoreError::Parse { .. } => return "store_parse",
                 er_store::StoreError::Remote { .. } => return "store_remote",
+                er_store::StoreError::Conflict
+                | er_store::StoreError::Schema
+                | er_store::StoreError::Scope
+                | er_store::StoreError::Integrity => return "store_metadata",
             }
         }
     }

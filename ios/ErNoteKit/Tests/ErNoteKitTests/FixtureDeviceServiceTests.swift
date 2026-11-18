@@ -42,20 +42,20 @@ final class FixtureDeviceServiceTests: XCTestCase {
     func testNoteRemainsEditableThroughoutEveryPreview() async throws {
         let fixture = FixtureDeviceService()
         let service: any DeviceService = fixture
-        let patient = try service.createPatient(
+        let patient = try await service.createPatient(
             displayLabel: "Synthetic room", chiefComplaint: "Synthetic complaint"
         )
-        try service.updateNote("Manual text before consent", for: patient)
+        try await service.updateNote("Manual text before consent", for: patient)
         for scenario in FixtureDeviceService.PreviewScenario.allCases {
             let before = service.snapshot.patients[0].note
             try fixture.preview(scenario, for: patient)
             XCTAssertEqual(service.snapshot.patients[0].note, before)
-            try service.updateNote("Manual revision: \(scenario)", for: patient)
+            try await service.updateNote("Manual revision: \(scenario)", for: patient)
             XCTAssertEqual(
                 service.snapshot.patients[0].note, "Manual revision: \(scenario)"
             )
         }
-        try service.updateNote("", for: patient)
+        try await service.updateNote("", for: patient)
         try fixture.preview(.staleMdm, for: patient)
         XCTAssertEqual(service.snapshot.patients[0].note, "")
     }

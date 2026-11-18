@@ -96,7 +96,59 @@ except er_ffi.FfiError.Internal as error:
 else:
     raise AssertionError("panic did not return declared error")
 assert er_ffi.ping() == "pong"
-print("Optimized generated FFI smoke passed")
+import tempfile
+from pathlib import Path
+with tempfile.TemporaryDirectory() as directory:
+    config = er_ffi.DeviceConfig(database_path=str(Path(directory) / "device.sqlite"), account_scope="synthetic-account")
+    device = er_ffi.ErDevice(config)
+    shift = device.start_shift(1)
+    first = device.add_patient("Synthetic complaint — 简洁", "Room 4", 2)
+    second = device.add_patient("Synthetic second", "Hall 3", 3)
+    device.select_patient(first, 4)
+    device.set_consent(first, er_ffi.ConsentChoice.DECLINED, "synthetic-policy", 0, 5)
+    device.set_mode(first, True)
+    device.record_objective(first, er_ffi.ObjectiveInput.LAB(name="Synthetic potassium", value=4.2, unit="mmol/L", abnormal=False), 6)
+    device.record_objective(first, er_ffi.ObjectiveInput.IMAGING(modality="XR", body_part="Chest", impression="Synthetic report", critical=False), 6)
+    device.record_objective(first, er_ffi.ObjectiveInput.VITAL(kind=er_ffi.VitalKind.HEART_RATE, value=80.0, unit="bpm"), 6)
+    device.record_medication(first, er_ffi.MedicationInput(name="Synthetic medication", dose="1 mg", route=None, kind=er_ffi.MedicationKindDto.HOME, frequency="daily", administered_at_ms=6), 6)
+    device.record_diagnosis(first, "Synthetic diagnosis", None, True, 6)
+    device.record_data_reviewed(first, "Synthetic data reviewed", 6)
+    device.set_disposition(first, er_ffi.DispositionInput.DISCHARGE(instructions="Synthetic instructions", follow_up=None), 6)
+    device.save_context(er_ffi.ChartContextDto(id="", patient_id=first, version=0, category=er_ffi.ChartCategory.HISTORY, text="ER_FFI_PRIVATE_SENTINEL", source="Clinician supplied", clinical_at_ms=None, entered_at_ms=7, reviewed=False), 0)
+    definition = device.save_definition(er_ffi.DefinitionDto(id="", version=0, name="Synthetic template", kind=er_ffi.DefinitionKindDto.TEMPLATE, instructions="", sections=[er_ffi.SectionPreferenceDto(section="hpi", instructions="Brief prose")], archived=False, is_default=True), 0)
+    assert device.note(first).hpi is None
+    assert len(device.note(first).results) == 3
+    assert len(device.note(first).medications) == 1
+    assert len(device.note(first).diagnoses) == 1
+    assert device.note(first).ros is None
+    device.close()
+    device = er_ffi.ErDevice(config)
+    state = device.snapshot()
+    assert state.shift.id == shift
+    assert [p.id for p in state.patients] == [first, second]
+    assert state.patients[0].consent.status == er_ffi.ConsentChoice.DECLINED
+    assert state.patients[0].recording.solo
+    assert not state.patients[0].recording.hardware_available
+    assert device.chart_context(first)[0].clinical_at_ms is None
+    assert device.definition_versions(definition)[0].version == 1
+    try:
+        device.panic_device_for_test()
+    except er_ffi.FfiError.Internal:
+        pass
+    else:
+        raise AssertionError("stateful panic was not typed")
+    try:
+        device.snapshot()
+    except er_ffi.FfiError.Internal:
+        pass
+    else:
+        raise AssertionError("faulted handle remained available")
+    device.close()
+    device = er_ffi.ErDevice(config)
+    assert device.snapshot().shift.id == shift
+    device.close()
+assert er_ffi.device_interface_version() == 2
+print("Optimized generated FFI lifecycle smoke passed")
 '''
         result = subprocess.run([sys.executable, "-c", script], cwd=output,
                                 capture_output=True, text=True,

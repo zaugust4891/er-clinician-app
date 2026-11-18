@@ -2,8 +2,7 @@
 
 ## Current status
 
-Step 1 bridge sources, generated bindings, packaging, and CI wiring are now
-implemented. See the [Step 1 implementation record](phase5-step1-implementation.md)
+Step 1/2 bridge sources, the durable local core, real Swift adapter, generated bindings, packaging, and CI wiring are implemented. See the [Step 2 implementation record](phase5-step2-implementation.md) for durable commands, decisions, Linux evidence, and the Step 3 handoff. See the [Step 1 implementation record](phase5-step1-implementation.md)
 for the API, build commands, verified Linux results, and outstanding Apple gates.
 Build the ignored XCFramework before opening the phone project from a clean checkout.
 
@@ -40,8 +39,9 @@ confirmed business team before provisioning.
 | Files | Responsibility |
 | --- | --- |
 | `ios/ErNoteKit/Sources/ErNoteKit/DeviceService.swift` | Presentation records and explicit-patient commands. |
+| `ios/ErNoteKit/Sources/ErNoteKit/RustDeviceService.swift` | Dedicated background FFI queue, durable commands, weak listener, and MainActor view delivery. |
 | `ios/ErNoteKit/Sources/ErNoteKit/FixtureDeviceService.swift` | Debug-only, in-memory synthetic data and preview states. |
-| `ios/ErNoteKit/Sources/ErNoteKit/UnavailableDeviceService.swift` | Release fallback; commands throw unavailable instead of simulating persistence. |
+| `ios/ErNoteKit/Sources/ErNoteKit/UnavailableDeviceService.swift` | Storage-bootstrap failure service; commands throw unavailable instead of simulating persistence. |
 | `ios/ErNote/ErNoteApp.swift` | Selects the service and prepares the protected storage directory. |
 | `ios/ErNote/WorkspaceModel.swift` | Publishes snapshots, handles commands, and retains failed note edits per patient. |
 | `ios/ErNote/WorkspaceView.swift` | Shift/patient navigation, Record/Note/Chart surfaces, manual context, and Debug preview controls. |
@@ -73,12 +73,9 @@ draft. Empty text is an intentional edit, not a missing draft.
 
 Consent, recording, generation previews, and stale results never disable
 the note editor. Separate discharge previews do not replace note text.
-All fixture data and retained drafts disappear when the process ends.
-Step 2 must supply durable storage and manual revision preservation.
+Fixture data still disappears when the process ends. The real adapter persists acknowledged scratch drafts separately from generated sections/export; failed unsaved edits remain in memory until retry.
 
-Preferences currently reuse the existing presentation record for both
-section instructions and named saved prompts. They have no versioned
-storage, generation execution, or enforced default-selection policy.
+Preferences retain expected versions and explicit template/prompt kinds. Rust persists immutable versions and default/archive choices. Generation execution remains unavailable.
 
 ## Storage boundary
 
@@ -87,10 +84,9 @@ The phone prepares `Application Support/ClinicalData` with
 before returning `device.sqlite`. Directory setup errors propagate to the
 app, which displays a generic failure without exposing paths.
 
-This bootstrap creates no database. Future SQLite WAL/SHM siblings must
+The helper itself creates no database; Step 2 opens/migrates SQLite on the service queue. SQLite WAL/SHM siblings must
 remain in the same directory. The clinical database is not in an App
-Group; neither extension opens it. Step 2 must handle file creation and
-migrations. Step 9 must verify actual files, backup behavior, and locked
+Group; neither extension opens it. Step 9 must verify actual files, backup behavior, and locked
 device behavior on hardware.
 
 The background-audio declaration and microphone purpose text do not
@@ -106,7 +102,7 @@ The privacy manifest is copied into all three shipping bundles.
 Shared schemes are ErNote, ErNoteWatch, ErNoteWidget, and ErNoteSmoke.
 ErNoteSmoke runs WorkspaceModelTests inside the phone app. The widget
 scheme is for building the extension; it does not launch a standalone app.
-Debug enables fixtures; Release compiles the unavailable service path.
+Both Debug and Release open the real local core with a synthetic development scope. Debug fixture code remains separate and fixture previews cannot mutate the real store.
 
 On the M1, explicitly set DEVELOPER_DIR to the selected Xcode Developer
 directory. Read its version/build using xcodebuild -version and record
@@ -120,7 +116,7 @@ IOS_SIMULATOR_UDID. Then run:
 The script rejects unsupported hosts, mismatched Xcode versions, and
 missing Rust targets. It reads the existing Rust pin and iOS deployment
 floor, builds separate device and arm64 simulator static-library probes,
-builds the real Step 1 XCFramework, builds Debug and Release simulator shells,
+builds the real Step 2 XCFramework with bundled SQLite, builds Debug and Release simulator shells,
 and runs app-hosted tests (including the fixture package tests). ErNoteKit now
 contains iOS-only binary slices, so host macOS `swift test` is unsupported.
 Output goes to ignored target/apple-probe, target/apple-bridge,
@@ -129,8 +125,7 @@ ios/ErNoteKit/Artifacts, SwiftPM build directories, and ios/DerivedData.
 The Rust probe is not linked into the phone and proves no application
 dependency compatibility. The Step 1 bridge is linked into the phone;
 run `scripts/check-bridge-apple.sh` to additionally check production Release
-linking and the isolated optimized panic artifact. Step 2 repeats the Apple
-build with the full device graph and bundled SQLite.
+linking and the isolated optimized panic artifact. The expanded Step 2 Apple build and hosted persistence/stateful panic tests now need to be executed with the full device graph and bundled SQLite.
 
 The Mac toolchain pin remains an external setup gate until actual values
 are recorded; requiring explicit expected inputs does not establish which

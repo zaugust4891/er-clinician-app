@@ -5,6 +5,7 @@
 //! here unchanged. Domain state-machine errors (`InvalidTransition`,
 //! `NoteImmutable`) now live in [`er_domain::DomainError`] and arrive via
 //! `AppError::Domain`.
+#[cfg(feature = "local-generation")]
 use er_ai::AiError;
 use er_domain::DomainError;
 use er_pipeline::PipelineError;
@@ -12,12 +13,15 @@ use er_store::StoreError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
+    #[error("operation is server owned")]
+    Unsupported,
     #[error(transparent)]
     Domain(#[from] DomainError),
 
     #[error(transparent)]
     Store(#[from] StoreError),
 
+    #[cfg(feature = "local-generation")]
     #[error(transparent)]
     Ai(#[from] AiError),
 

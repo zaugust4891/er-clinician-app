@@ -40,7 +40,7 @@ pub trait Repository: Send + Sync {
 }
 
 pub struct SqliteRepository {
-    conn: std::sync::Mutex<rusqlite::Connection>,
+    pub(crate) conn: std::sync::Mutex<rusqlite::Connection>,
 }
 
 impl SqliteRepository {
@@ -153,11 +153,14 @@ impl Repository for SqliteRepository {
             // still points at whatever this connection last inserted, not at the
             // existing row. So look the original up by its event_id and return that —
             // a duplicate append now returns the SAME sequence_id as the first call
-            let seq: i64 = conn.query_row(
-                "SELECT sequence_id FROM events WHERE event_id = ?1",
+            let (seq, existing_patient, existing_payload): (i64, String, String) = conn.query_row(
+                "SELECT sequence_id, patient_id, payload FROM events WHERE event_id = ?1",
                 rusqlite::params![event_id_text],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )?;
+            if existing_patient != patient_id_text || existing_payload != payload_json {
+                return Err(StoreError::Conflict);
+            }
             Ok(seq as u64)
         }
     }
@@ -252,10 +255,7 @@ impl Repository for SqliteRepository {
         let computed = format!("{:x}", Sha256::digest(snapshot_json.as_bytes()));
         if computed != stored_checksum {
             tracing::warn!(
-                patient_id = %patient_id,
                 sequence_id = seq_id,
-                expected = %stored_checksum,
-                computed = %computed,
                 "snapshot checksum mismatch — falling back to full replay"
             );
             return Ok(None);
@@ -265,7 +265,12 @@ impl Repository for SqliteRepository {
         // (PatientNote::state is #[serde(skip)], so it comes back as None
         // and must be reconstructed from the phase enum before the note is
         // usable for any state-machine call).
-        let mut note: PatientNote = serde_json::from_str(&snapshot_json)?;
+        let Ok(mut note) = serde_json::from_str::<PatientNote>(&snapshot_json) else {
+            return Ok(None);
+        };
+        if note.patient_id != patient_id || seq_id < 0 {
+            return Ok(None);
+        }
         note.hydrate();
 
         Ok(Some((seq_id as u64, note)))

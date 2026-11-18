@@ -1,6 +1,6 @@
 import Foundation
 
-/// Used until the persistent Rust service is connected in Step 2.
+/// Storage-bootstrap failure service. Never substitutes synthetic success.
 @MainActor
 public final class UnavailableDeviceService: DeviceService {
     public let availability = ServiceAvailability.coreUnavailable

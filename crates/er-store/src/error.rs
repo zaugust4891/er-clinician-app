@@ -1,6 +1,14 @@
 //! Persistence-layer errors. Wrap the SQLite driver and (de)serialization.
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
+    #[error("metadata conflict")]
+    Conflict,
+    #[error("unsupported schema")]
+    Schema,
+    #[error("store scope mismatch")]
+    Scope,
+    #[error("invalid authoritative metadata")]
+    Integrity,
     #[error("database error: {0}")]
     Db(#[from] rusqlite::Error),
 

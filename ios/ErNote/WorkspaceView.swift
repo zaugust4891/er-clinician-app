@@ -17,6 +17,8 @@ struct WorkspaceView: View {
                         Text("Synthetic preview • changes are lost on restart")
                     case .coreUnavailable:
                         Text("Local storage is unavailable in this build.")
+                    case .localCore:
+                        Text("Local core • saved on this device • synthetic data only")
                     }
                     Text("Recording, generation, and EMR connections are unavailable.")
                         .font(.footnote)
@@ -27,20 +29,24 @@ struct WorkspaceView: View {
 
                 Section("Shift") {
                     if model.snapshot.shiftID == nil {
-                        Button("Start shift") { model.startShift() }
+                        Button("Start shift") { Task { await model.startShift() } }
                     } else {
                         Text("Shift open")
+                        Button("End shift") { Task { await model.endShift() } }
+                        Button("Clear patient selection") { Task { await model.clearSelection() } }
                         TextField("Patient label", text: $patientLabel)
                         TextField("Chief complaint", text: $complaint)
                         Button("Add patient") {
-                            let count = model.snapshot.patients.count
-                            model.createPatient(
-                                displayLabel: patientLabel,
-                                chiefComplaint: complaint
-                            )
-                            if model.snapshot.patients.count > count {
-                                patientLabel = ""
-                                complaint = ""
+                            Task {
+                                let count = model.snapshot.patients.count
+                                await model.createPatient(
+                                    displayLabel: patientLabel,
+                                    chiefComplaint: complaint
+                                )
+                                if model.snapshot.patients.count > count {
+                                    patientLabel = ""
+                                    complaint = ""
+                                }
                             }
                         }
                         .disabled(
@@ -49,7 +55,7 @@ struct WorkspaceView: View {
                             ).isEmpty
                         )
                     }
-                }
+                }.disabled(model.isWorking)
 
                 Section("Patients") {
                     if model.snapshot.patients.isEmpty {
@@ -57,7 +63,7 @@ struct WorkspaceView: View {
                     }
                     ForEach(model.snapshot.patients) { patient in
                         Button {
-                            model.selectPatient(patient.id)
+                            Task { await model.selectPatient(patient.id) }
                         } label: {
                             HStack {
                                 VStack(alignment: .leading) {
@@ -82,6 +88,7 @@ struct WorkspaceView: View {
                         .id(patient.id)
                 }
             }
+            .task { await model.load() }
             .navigationTitle("ER Note")
             .toolbar {
                 NavigationLink("Preferences") {
@@ -118,15 +125,16 @@ private struct PatientWorkspace: View {
             Section("Recording") {
                 Picker("Ambient consent", selection: Binding(
                     get: { patient.consent },
-                    set: { model.setConsent($0, for: patient.id) }
+                    set: { value in Task { await model.setConsent(value, for: patient.id) } }
                 )) {
                     Text("Unknown").tag(ConsentStatus.unknown)
                     Text("Granted").tag(ConsentStatus.granted)
                     Text("Declined").tag(ConsentStatus.declined)
+                    Text("Revoked").tag(ConsentStatus.revoked)
                 }
                 Picker("Mode", selection: Binding(
                     get: { patient.captureMode },
-                    set: { model.setCaptureMode($0, for: patient.id) }
+                    set: { value in Task { await model.setCaptureMode(value, for: patient.id) } }
                 )) {
                     Text("Ambient").tag(CaptureMode.ambient)
                     Text("Solo dictation").tag(CaptureMode.soloDictation)
@@ -145,12 +153,14 @@ private struct PatientWorkspace: View {
         case "Chart":
             Section("Chart context") {
                 Text("EMR disconnected • manual and synthetic context only")
+                ForEach(patient.objectiveLines, id: \.self) { Text($0) }
+                ObjectiveEntry(model: model, patientID: patient.id)
                 ForEach(patient.context) { item in
                     VStack(alignment: .leading, spacing: 4) {
                         Text(item.category.rawValue.capitalized).font(.headline)
                         Text(item.text)
                         Text(item.source).font(.caption)
-                        Text(item.observedAt, style: .date).font(.caption)
+                        if let observed = item.observedAt { Text(observed, style: .date).font(.caption) } else { Text("Clinical time unverified").font(.caption) }
                         if item.isStale { Text("Stale context") }
                         if item.needsReview { Text("Needs review") }
                     }
@@ -166,14 +176,16 @@ private struct PatientWorkspace: View {
                         category: category,
                         text: contextText,
                         source: "Clinician supplied — entered now; clinical time unverified",
-                        observedAt: Date(),
+                        observedAt: nil,
                         needsReview: true
                     )
-                    model.replaceContext(patient.context + [item], for: patient.id)
-                    if model.snapshot.patients.first(where: {
-                        $0.id == patient.id
-                    })?.context.contains(where: { $0.id == item.id }) == true {
-                        contextText = ""
+                    Task {
+                        await model.replaceContext(patient.context + [item], for: patient.id)
+                        if model.snapshot.patients.first(where: {
+                            $0.id == patient.id
+                        })?.context.contains(where: { $0.id == item.id }) == true {
+                            contextText = ""
+                        }
                     }
                 }
                 .disabled(
@@ -183,6 +195,11 @@ private struct PatientWorkspace: View {
         default:
             Section {
                 NoteEditor(model: model, patientID: patient.id)
+                if !patient.generatedSections.isEmpty {
+                    DisclosureGroup("Generated sections") {
+                        ForEach(patient.generatedSections, id: \.self) { Text($0) }
+                    }
+                }
                 if patient.mdmIsStale {
                     Text("New context needs review. Existing note text is preserved.")
                 }
@@ -199,43 +216,66 @@ private struct PatientWorkspace: View {
         }
 
         #if DEBUG
-        Section("Synthetic previews") {
-            Text("These controls change preview data only.")
-            Menu("Preview patient state") {
-                Button("Consent declined → solo") {
-                    model.preview(.consentDeclinedSolo, for: patient.id)
+        if model.availability == .syntheticPreview {
+            Section("Synthetic previews") {
+                Text("These controls change preview data only.")
+                Menu("Preview patient state") {
+                    Button("Consent declined → solo") {
+                        model.preview(.consentDeclinedSolo, for: patient.id)
+                    }
+                    Button("Paused") { model.preview(.paused, for: patient.id) }
+                    Button("Interrupted") { model.preview(.interrupted, for: patient.id) }
+                    Button("Waiting") { model.preview(.waiting, for: patient.id) }
+                    Button("Corrected result") {
+                        model.preview(.correctedResult, for: patient.id)
+                    }
+                    Button("Stale MDM") { model.preview(.staleMdm, for: patient.id) }
+                    Button("Separate discharge draft") {
+                        model.preview(.dischargeDraft, for: patient.id)
+                    }
                 }
-                Button("Paused") { model.preview(.paused, for: patient.id) }
-                Button("Interrupted") { model.preview(.interrupted, for: patient.id) }
-                Button("Waiting") { model.preview(.waiting, for: patient.id) }
-                Button("Corrected result") {
-                    model.preview(.correctedResult, for: patient.id)
+                Button("Append synthetic chart categories") {
+                    let items = ContextCategory.allCases.map {
+                        ContextItem(
+                            category: $0,
+                            text: "Synthetic \($0.rawValue) example — not clinical data",
+                            source: "Synthetic fixture — EMR disconnected",
+                            observedAt: Date(timeIntervalSince1970: 0),
+                            needsReview: true,
+                            isStale: true
+                        )
+                    }
+                    Task { await model.replaceContext(patient.context + items, for: patient.id) }
                 }
-                Button("Stale MDM") { model.preview(.staleMdm, for: patient.id) }
-                Button("Separate discharge draft") {
-                    model.preview(.dischargeDraft, for: patient.id)
+                Picker("Generation preview", selection: $generationPreview) {
+                    Text("Unavailable").tag("Unavailable")
+                    Text("Offline").tag("Offline")
+                    Text("Failed").tag("Failed")
                 }
+                Text("Synthetic generation status: \(generationPreview). Note remains editable.")
             }
-            Button("Append synthetic chart categories") {
-                let items = ContextCategory.allCases.map {
-                    ContextItem(
-                        category: $0,
-                        text: "Synthetic \($0.rawValue) example — not clinical data",
-                        source: "Synthetic fixture — EMR disconnected",
-                        observedAt: Date(timeIntervalSince1970: 0),
-                        needsReview: true,
-                        isStale: true
-                    )
-                }
-                model.replaceContext(patient.context + items, for: patient.id)
-            }
-            Picker("Generation preview", selection: $generationPreview) {
-                Text("Unavailable").tag("Unavailable")
-                Text("Offline").tag("Offline")
-                Text("Failed").tag("Failed")
-            }
-            Text("Synthetic generation status: \(generationPreview). Note remains editable.")
         }
         #endif
+    }
+}
+
+@MainActor
+private struct ObjectiveEntry: View {
+    @ObservedObject var model: WorkspaceModel
+    let patientID: UUID
+    @State private var name = ""
+    @State private var value = ""
+    @State private var unit = ""
+    var body: some View {
+        DisclosureGroup("Add manual lab") {
+            TextField("Lab name", text: $name)
+            TextField("Value", text: $value).keyboardType(.numbersAndPunctuation)
+            TextField("Unit", text: $unit)
+            Button("Save lab") {
+                guard let number = Double(value) else { return }
+                Task { await model.recordObjective(.lab(name: name, value: number, unit: unit, abnormal: false), for: patientID) }
+            }
+            .disabled(name.isEmpty || value.isEmpty || unit.isEmpty)
+        }
     }
 }

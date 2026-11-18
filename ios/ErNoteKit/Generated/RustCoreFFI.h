@@ -243,6 +243,172 @@ typedef void (*UniffiForeignFutureCompleteVoid)(uint64_t, UniffiForeignFutureRes
     );
 
 #endif
+#ifndef UNIFFI_FFIDEF_CALLBACK_INTERFACE_DEVICE_CHANGE_LISTENER_METHOD0
+#define UNIFFI_FFIDEF_CALLBACK_INTERFACE_DEVICE_CHANGE_LISTENER_METHOD0
+typedef void (*UniffiCallbackInterfaceDeviceChangeListenerMethod0)(uint64_t, uint64_t, void* _Nonnull,
+        RustCallStatus *_Nonnull uniffiCallStatus
+    );
+
+#endif
+#ifndef UNIFFI_FFIDEF_V_TABLE_CALLBACK_INTERFACE_DEVICE_CHANGE_LISTENER
+#define UNIFFI_FFIDEF_V_TABLE_CALLBACK_INTERFACE_DEVICE_CHANGE_LISTENER
+typedef struct UniffiVTableCallbackInterfaceDeviceChangeListener {
+    UniffiCallbackInterfaceFree _Nonnull uniffiFree;
+    UniffiCallbackInterfaceClone _Nonnull uniffiClone;
+    UniffiCallbackInterfaceDeviceChangeListenerMethod0 _Nonnull invalidated;
+} UniffiVTableCallbackInterfaceDeviceChangeListener;
+
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_CLONE_ERDEVICE
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_CLONE_ERDEVICE
+uint64_t uniffi_er_ffi_fn_clone_erdevice(uint64_t handle, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_FREE_ERDEVICE
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_FREE_ERDEVICE
+void uniffi_er_ffi_fn_free_erdevice(uint64_t handle, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_CONSTRUCTOR_ERDEVICE_NEW
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_CONSTRUCTOR_ERDEVICE_NEW
+uint64_t uniffi_er_ffi_fn_constructor_erdevice_new(RustBuffer config, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_ADD_PATIENT
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_ADD_PATIENT
+RustBuffer uniffi_er_ffi_fn_method_erdevice_add_patient(uint64_t ptr, RustBuffer complaint, RustBuffer room, int64_t at_ms, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_CHART_CONTEXT
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_CHART_CONTEXT
+RustBuffer uniffi_er_ffi_fn_method_erdevice_chart_context(uint64_t ptr, RustBuffer patient_id, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_CLOSE
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_CLOSE
+void uniffi_er_ffi_fn_method_erdevice_close(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_DEFINITION_VERSIONS
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_DEFINITION_VERSIONS
+RustBuffer uniffi_er_ffi_fn_method_erdevice_definition_versions(uint64_t ptr, RustBuffer definition_id, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_DUPLICATE_DEFINITION
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_DUPLICATE_DEFINITION
+RustBuffer uniffi_er_ffi_fn_method_erdevice_duplicate_definition(uint64_t ptr, RustBuffer definition_id, RustBuffer name, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_END_SHIFT
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_END_SHIFT
+void uniffi_er_ffi_fn_method_erdevice_end_shift(uint64_t ptr, int64_t at_ms, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_EXPORT_NOTE
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_EXPORT_NOTE
+RustBuffer uniffi_er_ffi_fn_method_erdevice_export_note(uint64_t ptr, RustBuffer patient_id, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_NOTE
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_NOTE
+RustBuffer uniffi_er_ffi_fn_method_erdevice_note(uint64_t ptr, RustBuffer patient_id, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_RECORD_DATA_REVIEWED
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_RECORD_DATA_REVIEWED
+void uniffi_er_ffi_fn_method_erdevice_record_data_reviewed(uint64_t ptr, RustBuffer patient_id, RustBuffer text, int64_t at_ms, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_RECORD_DIAGNOSIS
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_RECORD_DIAGNOSIS
+void uniffi_er_ffi_fn_method_erdevice_record_diagnosis(uint64_t ptr, RustBuffer patient_id, RustBuffer text, RustBuffer icd10_code, int8_t primary, int64_t at_ms, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_RECORD_MEDICATION
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_RECORD_MEDICATION
+void uniffi_er_ffi_fn_method_erdevice_record_medication(uint64_t ptr, RustBuffer patient_id, RustBuffer input, int64_t at_ms, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_RECORD_OBJECTIVE
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_RECORD_OBJECTIVE
+void uniffi_er_ffi_fn_method_erdevice_record_objective(uint64_t ptr, RustBuffer patient_id, RustBuffer input, int64_t at_ms, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_RESTORE_DEFINITION
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_RESTORE_DEFINITION
+void uniffi_er_ffi_fn_method_erdevice_restore_definition(uint64_t ptr, RustBuffer definition_id, uint64_t version, uint64_t expected_version, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_REVIEW_READY
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_REVIEW_READY
+void uniffi_er_ffi_fn_method_erdevice_review_ready(uint64_t ptr, RustBuffer patient_id, int64_t at_ms, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_SAVE_CONTEXT
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_SAVE_CONTEXT
+RustBuffer uniffi_er_ffi_fn_method_erdevice_save_context(uint64_t ptr, RustBuffer input, uint64_t expected_version, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_SAVE_DEFINITION
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_SAVE_DEFINITION
+RustBuffer uniffi_er_ffi_fn_method_erdevice_save_definition(uint64_t ptr, RustBuffer input, uint64_t expected_version, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_SAVE_MANUAL_DRAFT
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_SAVE_MANUAL_DRAFT
+void uniffi_er_ffi_fn_method_erdevice_save_manual_draft(uint64_t ptr, RustBuffer patient_id, RustBuffer text, uint64_t expected_revision, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_SELECT_PATIENT
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_SELECT_PATIENT
+void uniffi_er_ffi_fn_method_erdevice_select_patient(uint64_t ptr, RustBuffer patient_id, int64_t at_ms, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_SET_CONSENT
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_SET_CONSENT
+void uniffi_er_ffi_fn_method_erdevice_set_consent(uint64_t ptr, RustBuffer patient_id, RustBuffer status, RustBuffer policy_version, uint64_t expected_revision, int64_t at_ms, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_SET_DISPOSITION
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_SET_DISPOSITION
+void uniffi_er_ffi_fn_method_erdevice_set_disposition(uint64_t ptr, RustBuffer patient_id, RustBuffer input, int64_t at_ms, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_SET_LISTENER
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_SET_LISTENER
+void uniffi_er_ffi_fn_method_erdevice_set_listener(uint64_t ptr, RustBuffer listener, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_SET_MODE
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_SET_MODE
+void uniffi_er_ffi_fn_method_erdevice_set_mode(uint64_t ptr, RustBuffer patient_id, int8_t solo, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_SHIFTS
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_SHIFTS
+RustBuffer uniffi_er_ffi_fn_method_erdevice_shifts(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_SIGN
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_SIGN
+void uniffi_er_ffi_fn_method_erdevice_sign(uint64_t ptr, RustBuffer patient_id, int64_t at_ms, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_SNAPSHOT
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_SNAPSHOT
+RustBuffer uniffi_er_ffi_fn_method_erdevice_snapshot(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_START_SHIFT
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_METHOD_ERDEVICE_START_SHIFT
+RustBuffer uniffi_er_ffi_fn_method_erdevice_start_shift(uint64_t ptr, int64_t at_ms, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_INIT_CALLBACK_VTABLE_DEVICECHANGELISTENER
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_INIT_CALLBACK_VTABLE_DEVICECHANGELISTENER
+void uniffi_er_ffi_fn_init_callback_vtable_devicechangelistener(const UniffiVTableCallbackInterfaceDeviceChangeListener* _Nonnull vtable
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_FUNC_PING
 #define UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_FUNC_PING
 RustBuffer uniffi_er_ffi_fn_func_ping(RustCallStatus *_Nonnull out_status
@@ -252,6 +418,12 @@ RustBuffer uniffi_er_ffi_fn_func_ping(RustCallStatus *_Nonnull out_status
 #ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_FUNC_VALIDATE_CONFIG
 #define UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_FUNC_VALIDATE_CONFIG
 RustBuffer uniffi_er_ffi_fn_func_validate_config(RustBuffer config, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_FUNC_DEVICE_INTERFACE_VERSION
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_FN_FUNC_DEVICE_INTERFACE_VERSION
+uint32_t uniffi_er_ffi_fn_func_device_interface_version(RustCallStatus *_Nonnull out_status
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_FFI_ER_FFI_RUSTBUFFER_ALLOC
@@ -523,6 +695,180 @@ uint16_t uniffi_er_ffi_checksum_func_ping(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_FUNC_VALIDATE_CONFIG
 #define UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_FUNC_VALIDATE_CONFIG
 uint16_t uniffi_er_ffi_checksum_func_validate_config(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_FUNC_DEVICE_INTERFACE_VERSION
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_FUNC_DEVICE_INTERFACE_VERSION
+uint16_t uniffi_er_ffi_checksum_func_device_interface_version(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_ADD_PATIENT
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_ADD_PATIENT
+uint16_t uniffi_er_ffi_checksum_method_erdevice_add_patient(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_CHART_CONTEXT
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_CHART_CONTEXT
+uint16_t uniffi_er_ffi_checksum_method_erdevice_chart_context(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_CLOSE
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_CLOSE
+uint16_t uniffi_er_ffi_checksum_method_erdevice_close(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_DEFINITION_VERSIONS
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_DEFINITION_VERSIONS
+uint16_t uniffi_er_ffi_checksum_method_erdevice_definition_versions(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_DUPLICATE_DEFINITION
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_DUPLICATE_DEFINITION
+uint16_t uniffi_er_ffi_checksum_method_erdevice_duplicate_definition(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_END_SHIFT
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_END_SHIFT
+uint16_t uniffi_er_ffi_checksum_method_erdevice_end_shift(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_EXPORT_NOTE
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_EXPORT_NOTE
+uint16_t uniffi_er_ffi_checksum_method_erdevice_export_note(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_NOTE
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_NOTE
+uint16_t uniffi_er_ffi_checksum_method_erdevice_note(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_RECORD_DATA_REVIEWED
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_RECORD_DATA_REVIEWED
+uint16_t uniffi_er_ffi_checksum_method_erdevice_record_data_reviewed(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_RECORD_DIAGNOSIS
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_RECORD_DIAGNOSIS
+uint16_t uniffi_er_ffi_checksum_method_erdevice_record_diagnosis(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_RECORD_MEDICATION
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_RECORD_MEDICATION
+uint16_t uniffi_er_ffi_checksum_method_erdevice_record_medication(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_RECORD_OBJECTIVE
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_RECORD_OBJECTIVE
+uint16_t uniffi_er_ffi_checksum_method_erdevice_record_objective(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_RESTORE_DEFINITION
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_RESTORE_DEFINITION
+uint16_t uniffi_er_ffi_checksum_method_erdevice_restore_definition(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_REVIEW_READY
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_REVIEW_READY
+uint16_t uniffi_er_ffi_checksum_method_erdevice_review_ready(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_SAVE_CONTEXT
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_SAVE_CONTEXT
+uint16_t uniffi_er_ffi_checksum_method_erdevice_save_context(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_SAVE_DEFINITION
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_SAVE_DEFINITION
+uint16_t uniffi_er_ffi_checksum_method_erdevice_save_definition(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_SAVE_MANUAL_DRAFT
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_SAVE_MANUAL_DRAFT
+uint16_t uniffi_er_ffi_checksum_method_erdevice_save_manual_draft(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_SELECT_PATIENT
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_SELECT_PATIENT
+uint16_t uniffi_er_ffi_checksum_method_erdevice_select_patient(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_SET_CONSENT
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_SET_CONSENT
+uint16_t uniffi_er_ffi_checksum_method_erdevice_set_consent(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_SET_DISPOSITION
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_SET_DISPOSITION
+uint16_t uniffi_er_ffi_checksum_method_erdevice_set_disposition(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_SET_LISTENER
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_SET_LISTENER
+uint16_t uniffi_er_ffi_checksum_method_erdevice_set_listener(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_SET_MODE
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_SET_MODE
+uint16_t uniffi_er_ffi_checksum_method_erdevice_set_mode(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_SHIFTS
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_SHIFTS
+uint16_t uniffi_er_ffi_checksum_method_erdevice_shifts(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_SIGN
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_SIGN
+uint16_t uniffi_er_ffi_checksum_method_erdevice_sign(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_SNAPSHOT
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_SNAPSHOT
+uint16_t uniffi_er_ffi_checksum_method_erdevice_snapshot(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_START_SHIFT
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_ERDEVICE_START_SHIFT
+uint16_t uniffi_er_ffi_checksum_method_erdevice_start_shift(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_CONSTRUCTOR_ERDEVICE_NEW
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_CONSTRUCTOR_ERDEVICE_NEW
+uint16_t uniffi_er_ffi_checksum_constructor_erdevice_new(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_DEVICECHANGELISTENER_INVALIDATED
+#define UNIFFI_FFIDEF_UNIFFI_ER_FFI_CHECKSUM_METHOD_DEVICECHANGELISTENER_INVALIDATED
+uint16_t uniffi_er_ffi_checksum_method_devicechangelistener_invalidated(void
 
 );
 #endif

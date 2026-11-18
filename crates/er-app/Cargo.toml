@@ -5,10 +5,18 @@ version.workspace = true
 
 # Application/orchestration: EventBus, ShiftManager, EncounterDriver, load,
 # conversions, note export. Composes the inner layers.
+[features]
+default = ["local-generation"]
+local-generation = ["dep:er-ai"]
+
+[[test]]
+name = "generation_integration"
+required-features = ["local-generation"]
+
 [dependencies]
 er-domain.workspace = true
 er-store.workspace = true
-er-ai.workspace = true
+er-ai = { workspace = true, optional = true }
 er-pipeline.workspace = true
 dashmap.workspace = true
 tokio.workspace = true

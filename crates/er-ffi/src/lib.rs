@@ -1,4 +1,4 @@
-//! Minimal phone boundary. No database, network, capture, or generation yet.
+//! Durable local phone boundary. Network, hardware capture and generation are later steps.
 //!
 //! Every handwritten export enters `ffi_guard`. Step 2 must additionally fault
 //! stateful handles on panic and require close/reopen/replay; catching unwind is
@@ -22,6 +22,12 @@ pub enum FfiError {
     InvalidState,
     #[error("ER_NOT_FOUND")]
     NotFound,
+    #[error("ER_CONFLICT")]
+    Conflict,
+    #[error("ER_SCOPE")]
+    Scope,
+    #[error("ER_RECOVERY")]
+    Recovery,
     #[error("ER_STORAGE")]
     Storage,
     #[error("ER_CLOSED")]
@@ -94,6 +100,12 @@ pub fn panic_for_test() -> Result<(), FfiError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stateful_handle_is_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<ErDevice>();
+    }
 
     #[test]
     fn normal_and_typed_error_paths() {
@@ -187,3 +199,6 @@ mod tests {
         }
     }
 }
+
+mod device;
+pub use device::*;

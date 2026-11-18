@@ -9,7 +9,7 @@ struct PreferencesView: View {
 
     var body: some View {
         List {
-            Text("Preview definitions only. Changes are not retained after restart.")
+            Text(model.availability == .localCore ? "Definitions are versioned and saved on this device. Generation is unavailable." : "Synthetic preview definitions; changes are lost on restart.")
                 .font(.footnote)
             ForEach(model.snapshot.preferences) { preference in
                 Button {
@@ -38,6 +38,8 @@ private struct PreferenceEditor: View {
     @ObservedObject var model: WorkspaceModel
     @Environment(\.dismiss) private var dismiss
     private let preferenceID: UUID
+    private let version: UInt64
+    @State private var kind: PreferenceKind
     @State private var section: String
     @State private var instructions: String
     @State private var isDefault: Bool
@@ -45,6 +47,8 @@ private struct PreferenceEditor: View {
     init(model: WorkspaceModel, preference: SavedPreference) {
         self.model = model
         preferenceID = preference.id
+        version = preference.version
+        _kind = State(initialValue: preference.kind)
         _section = State(initialValue: preference.section)
         _instructions = State(initialValue: preference.instructions)
         _isDefault = State(initialValue: preference.isDefault)
@@ -53,7 +57,14 @@ private struct PreferenceEditor: View {
     var body: some View {
         NavigationStack {
             Form {
-                TextField("Section or prompt name", text: $section)
+                Picker("Definition type", selection: $kind) {
+                    ForEach(PreferenceKind.allCases, id: \.self) { value in Text(value.rawValue).tag(value) }
+                }.disabled(version > 0)
+                if kind == .template {
+                    Picker("Section", selection: $section) {
+                        ForEach(["HPI", "ROS", "Exam", "MDM", "Disposition"], id: \.self) { Text($0).tag($0) }
+                    }
+                } else { TextField("Prompt name", text: $section) }
                 Text("Examples: HPI, MDM, Admission message, Discharge instructions.")
                     .font(.footnote)
                 TextEditor(text: $instructions)
@@ -75,11 +86,13 @@ private struct PreferenceEditor: View {
                     Button("Save") {
                         let preference = SavedPreference(
                             id: preferenceID, section: section,
-                            instructions: instructions, isDefault: isDefault
+                            instructions: instructions, isDefault: isDefault, version: version, kind: kind
                         )
-                        model.savePreference(preference)
-                        if model.snapshot.preferences.contains(preference) {
-                            dismiss()
+                        Task {
+                            await model.savePreference(preference)
+                            if model.commandError == nil {
+                                dismiss()
+                            }
                         }
                     }
                     .disabled(

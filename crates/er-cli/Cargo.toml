@@ -11,7 +11,7 @@ er-domain.workspace = true
 er-store.workspace = true
 er-ai.workspace = true
 er-pipeline.workspace = true
-er-app.workspace = true
+er-app = { workspace = true, features = ["local-generation"] }
 # The client half of the wire contract (S9). This is the crate that makes the CLI
 # the API's first consumer: ER_SERVER_URL + ER_TOKEN swap SQLite for the server.
 er-api = { workspace = true, features = ["client"] }
