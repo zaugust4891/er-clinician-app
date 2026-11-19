@@ -4,7 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <!-- Standalone copy of a claude.ai artifact. Opens directly in a browser. -->
-<title>Durable Device Core</title>
+<title>Phase 5 Device Core</title>
+<meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
@@ -272,6 +273,96 @@ td.term { font-family: var(--mono); font-size: 0.85rem; white-space: nowrap; }
 .json-card .name { color: var(--swift); }
 
 footer { border-top: 1px solid var(--line); padding-top: 24px; font-size: 0.85rem; color: var(--muted); display: grid; gap: 6px; }
+
+/* ---------- Phase 5 additions ---------- */
+/* Progress matrix: one row per step, one column per place the work has been proven. */
+.matrix td, .matrix th { vertical-align: middle; }
+.matrix td.what { min-width: 220px; color: var(--muted); font-size: 0.88rem; }
+.matrix td.stepname { min-width: 170px; }
+.matrix td.stepname strong { display: block; font-family: var(--display); font-weight: 600; font-size: 0.98rem; }
+.matrix td.stepname span { font: 500 0.72rem var(--mono); color: var(--muted); letter-spacing: 0.04em; }
+.matrix tr.group td { background: var(--bg); font: 600 0.7rem var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); padding-block: 7px; }
+.st { display: inline-flex; align-items: center; gap: 6px; font: 600 0.74rem/1.3 var(--mono); padding: 3px 8px; border-radius: 6px; white-space: nowrap; }
+.st::before { font-weight: 700; }
+.st.done { background: var(--ok-tint); color: var(--ok); }
+.st.done::before { content: "✓"; }
+.st.half { background: var(--meta-tint); color: var(--meta); }
+.st.half::before { content: "◐"; }
+.st.fail { background: var(--bad-tint); color: var(--bad); }
+.st.fail::before { content: "✗"; }
+.st.todo { background: var(--sunk); color: var(--muted); }
+.st.todo::before { content: "○"; }
+.st.na { background: transparent; color: var(--muted); font-weight: 500; }
+.st small { font-weight: 400; }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 14px; font-size: 0.85rem; color: var(--muted); align-items: center; }
+
+/* Extra hop layers for the sync path */
+.hop.net .layer { background: var(--core-tint); color: var(--core); border: 1px solid var(--core); }
+.hop.server .layer { background: var(--sunk); color: var(--ink); }
+
+/* Chunk file name anatomy */
+.anatomy { display: flex; flex-wrap: wrap; gap: 4px; font: 600 0.9rem var(--mono); }
+.anatomy span { display: grid; gap: 4px; padding: 8px 10px; border-radius: 8px; background: var(--surface); border: 1px solid var(--line); min-width: 0; }
+.anatomy span i { font: 400 0.72rem var(--body); color: var(--muted); font-style: normal; }
+.anatomy .sep { background: none; border: none; padding: 8px 0; color: var(--muted); }
+.anatomy .a-seg { border-color: var(--clin); color: var(--clin); }
+.anatomy .a-pos { border-color: var(--meta); color: var(--meta); }
+.anatomy .a-time { border-color: var(--swift); color: var(--swift); }
+.anatomy .a-ext { border-color: var(--core); color: var(--core); }
+.anatomy-wrap { background: var(--sunk); border-radius: 12px; padding: 16px; display: grid; gap: 10px; overflow-x: auto; }
+
+/* Second stepper panels: folder, ledger, server */
+.store.folder .store-head { background: var(--swift-tint); }
+.store.folder .name { color: var(--swift); }
+.store.folder .rev { background: var(--surface); color: var(--swift); }
+.store.ledger .store-head { background: var(--meta-tint); }
+.store.ledger .name { color: var(--meta); }
+.store.ledger .rev { background: var(--surface); color: var(--meta); }
+.store.server .store-head { background: var(--sunk); }
+.store.server .rev { background: var(--surface); color: var(--ink); }
+.mini { width: 100%; font: 0.76rem var(--mono); }
+.mini td, .mini th { padding: 6px 12px; white-space: nowrap; }
+.mini tr.new td { background: var(--meta-tint); }
+.mini tr.new td:first-child { box-shadow: inset 3px 0 0 var(--meta); }
+.store.folder .mini tr.new td { background: var(--swift-tint); }
+.store.folder .mini tr.new td:first-child { box-shadow: inset 3px 0 0 var(--swift); }
+.store.server .mini tr.new td { background: var(--clin-tint); }
+.store.server .mini tr.new td:first-child { box-shadow: inset 3px 0 0 var(--clin); }
+.fstate { font: 600 0.68rem var(--mono); padding: 1px 6px; border-radius: 4px; }
+.fstate.writing { background: var(--sunk); color: var(--muted); }
+.fstate.held { background: var(--swift-tint); color: var(--swift); }
+.fstate.queued { background: var(--sunk); color: var(--ink); }
+.fstate.completed { background: var(--ok-tint); color: var(--ok); }
+.fstate.processed { background: var(--clin-tint); color: var(--clin); }
+.fstate.final { background: var(--meta-tint); color: var(--meta); }
+.calls { list-style: none; padding: 0; display: grid; gap: 6px; font-size: 0.9rem; counter-reset: call; }
+.calls li { counter-increment: call; display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 8px; }
+.calls li::before { content: counter(call); font: 600 0.72rem var(--mono); width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; background: var(--core-tint); color: var(--core); }
+@media (prefers-reduced-motion: no-preference) {
+  .mini tr.new td { animation: flash 900ms ease-out; }
+}
+
+/* Cards: which step a card belongs to */
+.card-top > div { display: grid; gap: 6px; }
+.card-top .step-tag { justify-self: start; }
+
+/* Roadmap of remaining steps */
+.roadmap { list-style: none; padding: 0; display: grid; gap: 10px; }
+.road { display: grid; grid-template-columns: 92px minmax(0, 1fr) minmax(0, 0.9fr); gap: 16px; padding: 14px 16px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; align-items: start; }
+.road .num { font: 600 0.78rem var(--mono); color: var(--muted); display: grid; gap: 6px; justify-items: start; }
+.road h3 { font-size: 1rem; }
+.road .body { display: grid; gap: 6px; min-width: 0; }
+.road .body p { font-size: 0.92rem; }
+.road .gate { font-size: 0.84rem; color: var(--muted); border-left: 2px solid var(--line); padding-left: 12px; min-width: 0; }
+.road .gate strong { color: var(--ink); font-weight: 600; display: block; font-size: 0.78rem; font-family: var(--mono); text-transform: uppercase; letter-spacing: 0.06em; padding-bottom: 2px; }
+.road.next { border-color: var(--swift); background: var(--swift-tint); }
+.road.next .gate { border-color: var(--swift); }
+@media (max-width: 760px) { .road { grid-template-columns: minmax(0, 1fr); gap: 8px; } .road .gate { border-left: none; padding-left: 0; } }
+.decide { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+@media (max-width: 760px) { .decide { grid-template-columns: minmax(0, 1fr); } }
+.decide .card { grid-template-rows: auto 1fr; }
+.callout { background: var(--meta-tint); border-radius: 10px; padding: 12px 16px; font-size: 0.94rem; max-width: 80ch; }
+.callout strong { color: var(--meta); }
 </style>
 <style>body { margin: 0; } img { max-width: 100%; } [hidden] { display: none !important; }</style>
 </head>
@@ -279,102 +370,221 @@ footer { border-top: 1px solid var(--line); padding-top: 24px; font-size: 0.85re
 <div class="wrap">
 
 <header class="hero">
-  <p class="eyebrow">Phase 5 · Step 2 · implemented 2026-11-17</p>
-  <h1>The phone now keeps its own records</h1>
-  <p class="lede">Before this step, the iPhone app's screens ran on a demo service that held fake patients in memory and forgot everything when the app closed. Step 2 replaces it with real Rust code that saves every action to a database file on the phone. It waits for the disk to confirm the save, and only then tells the screen it worked. Close the app, reopen it, and the shift is still there. No internet, login, or server is involved.</p>
+  <p class="eyebrow">Phase 5 · progress through Step 4 · updated 2026-11-18</p>
+  <h1>The phone now keeps, syncs and uploads its own records</h1>
+  <p class="lede">Phase 5 builds the iPhone app. Its Rust core now does four things. It saves every action to a database on the phone (Step 2). It trades those records with the server and survives lost connections (Step 3). And it checks, uploads and cleans up the audio files a recorder hands it (Step 4). All of it is tested on Linux, including against a real local server and worker. On Apple hardware, CI now builds the app and runs its simulator tests, and two of the ten fail. Nothing has run on a physical iPhone. The microphone, the full screens, the watch and the AI request flow are still ahead.</p>
   <div class="chips">
-    <span class="chip ok">Rust core built and tested on Linux</span>
-    <span class="chip warn">Not yet built in Xcode or run on an iPhone</span>
-    <span class="chip off">No audio, sync, or AI on the phone yet</span>
+    <span class="chip ok">Rust core, Steps 1–4: tests pass on Linux</span>
+    <span class="chip warn">Mac CI: app builds, 8 of 10 simulator tests pass</span>
+    <span class="chip off">No real microphone or iPhone run yet</span>
   </div>
   <nav class="toc" aria-label="Sections">
-    <a href="#change">What changed</a>
+    <a href="#progress">Progress map</a>
+    <a href="#change">The pieces</a>
     <a href="#path">Path of one tap</a>
     <a href="#file">The file</a>
     <a href="#walk">Walk through a shift</a>
     <a href="#recording">Recording rules</a>
+    <a href="#sync">Sync</a>
+    <a href="#audio">Audio</a>
     <a href="#failures">Failures</a>
     <a href="#screen">What the screen gets</a>
-    <a href="#open">Still open</a>
+    <a href="#open">What's left</a>
     <a href="#decoder">Jargon decoder</a>
   </nav>
 </header>
 
-<!-- 1. Before / after -->
+<!-- 0. Progress map -->
+<section class="block" id="progress">
+  <header>
+    <p class="eyebrow">Status</p>
+    <h2>Phase 5 at a glance</h2>
+    <p class="prose">Each step is proven in three places, and they are different claims. Linux tests show the Rust logic works. The Mac CI job shows the code builds for Apple and runs in the iPhone simulator. Only a signed install on a real iPhone shows it works on the hardware a clinician carries.</p>
+  </header>
+  <div class="table-scroll">
+    <table class="matrix">
+      <thead><tr><th>Step</th><th>What it gives you</th><th>Status</th><th>Linux tests</th><th>Mac CI (simulator)</th><th>Real iPhone</th></tr></thead>
+      <tbody>
+        <tr class="group"><td colspan="6">Built so far</td></tr>
+        <tr>
+          <td class="stepname"><span>PART 0</span><strong>Apple setup and Swift shell</strong></td>
+          <td class="what">The Xcode project with phone, watch and widget shells. Screens, a protected storage folder, and a demo service for previews.</td>
+          <td><span class="st half">Source done</span></td>
+          <td><span class="st na">does not apply</span></td>
+          <td><span class="st half">App builds <small>· storage-protection test fails</small></span></td>
+          <td><span class="st todo">Signing pending</span></td>
+        </tr>
+        <tr>
+          <td class="stepname"><span>STEP 1</span><strong>Swift ↔ Rust bridge</strong></td>
+          <td class="what">Generated code that lets Swift call Rust. A Rust crash comes back as a typed error instead of taking the app down.</td>
+          <td><span class="st done">Built</span></td>
+          <td><span class="st done">Pass</span></td>
+          <td><span class="st done">Smoke tests pass <small>· crash test not reached</small></span></td>
+          <td><span class="st todo">Not run</span></td>
+        </tr>
+        <tr>
+          <td class="stepname"><span>STEP 2</span><strong>Durable device core</strong></td>
+          <td class="what">Every tap is saved to SQLite on the phone before the screen hears it worked. The shift survives a force-quit.</td>
+          <td><span class="st done">Built</span></td>
+          <td><span class="st done">Pass</span></td>
+          <td><span class="st fail">Reopen test fails</span></td>
+          <td><span class="st todo">Not run</span></td>
+        </tr>
+        <tr>
+          <td class="stepname"><span>STEP 3</span><strong>Sync with the server</strong></td>
+          <td class="what">An outgoing tray, receipts and a bookmark. Work done offline uploads later, and a second phone can pick up the shift.</td>
+          <td><span class="st done">Built</span></td>
+          <td><span class="st done">Pass <small>· real local server</small></span></td>
+          <td><span class="st todo">Not exercised</span></td>
+          <td><span class="st todo">Not run</span></td>
+        </tr>
+        <tr>
+          <td class="stepname"><span>STEP 4</span><strong>Recording and upload</strong></td>
+          <td class="what">The Rust half takes finished chunk files, uploads them in order, and deletes them after the transcript comes back. The Swift recorder is the Mac half.</td>
+          <td><span class="st half">Rust half built</span></td>
+          <td><span class="st done">Pass <small>· real worker</small></span></td>
+          <td><span class="st todo">No recorder yet</span></td>
+          <td><span class="st todo">Not run</span></td>
+        </tr>
+        <tr class="group"><td colspan="6">Not started</td></tr>
+        <tr>
+          <td class="stepname"><span>STEP 5</span><strong>Full clinician screens</strong></td>
+          <td class="what">Every workflow screen, plus real sign-in. Early versions of the workspace, note and settings screens already exist.</td>
+          <td><span class="st todo">Not started</span></td>
+          <td><span class="st na">—</span></td><td><span class="st na">—</span></td><td><span class="st na">—</span></td>
+        </tr>
+        <tr>
+          <td class="stepname"><span>STEP 6</span><strong>Watch and lock screen</strong></td>
+          <td class="what">Patient list and recorder controls on the watch, a Live Activity, and a test of recording on the watch itself.</td>
+          <td><span class="st todo">Not started</span></td>
+          <td><span class="st na">—</span></td><td><span class="st na">—</span></td><td><span class="st na">—</span></td>
+        </tr>
+        <tr>
+          <td class="stepname"><span>STEP 7</span><strong>AI drafts, templates, new results</strong></td>
+          <td class="what">Ask the server for an MDM from the phone, apply templates, offer an MDM refresh when results arrive, and write admission and discharge text.</td>
+          <td><span class="st todo">Not started</span></td>
+          <td><span class="st na">—</span></td><td><span class="st na">—</span></td><td><span class="st na">—</span></td>
+        </tr>
+        <tr>
+          <td class="stepname"><span>STEP 8</span><strong>Fixing wrong-patient audio</strong></td>
+          <td class="what">Move a recording made under the wrong patient to the right one before signing.</td>
+          <td><span class="st todo">Not started</span></td>
+          <td><span class="st na">—</span></td><td><span class="st na">—</span></td><td><span class="st na">—</span></td>
+        </tr>
+        <tr>
+          <td class="stepname"><span>STEP 9</span><strong>Protection, retention, battery</strong></td>
+          <td class="what">File protection, app lock, how long audio and transcripts are kept, and an 8-hour battery soak.</td>
+          <td><span class="st todo">Not started</span></td>
+          <td><span class="st na">—</span></td><td><span class="st na">—</span></td><td><span class="st na">—</span></td>
+        </tr>
+        <tr>
+          <td class="stepname"><span>STEP 10</span><strong>TestFlight and a mock shift</strong></td>
+          <td class="what">A signed TestFlight build on accepted AWS staging, then a simulated six-patient shift with Joey.</td>
+          <td><span class="st todo">Not started</span></td>
+          <td><span class="st na">—</span></td><td><span class="st na">—</span></td><td><span class="st na">—</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="legend"><span class="st done">done</span><span class="st half">partly done</span><span class="st fail">fails</span><span class="st todo">not yet</span> The Mac CI results are from the Step 4 push on 2026-11-18. The first two Bridge Apple runs never got past compiling.</p>
+</section>
+
+<!-- 1. The pieces -->
 <section class="block" id="change">
   <header>
     <p class="eyebrow">The big picture</p>
-    <h2>What changed, in one picture</h2>
+    <h2>The pieces that exist now</h2>
+    <p class="prose">Before Phase 5 the screens ran on a demo service that held fake patients in memory and forgot them when the app closed. Now each tap crosses the bridge into Rust and is saved on the phone. A separate Rust thread trades records with the server. The one missing piece on the phone is the Swift recorder that produces audio files.</p>
   </header>
   <figure class="fig">
     <div class="fig-scroll">
-      <svg viewBox="0 0 900 280" role="img" aria-label="Before Step 2, screens talked to an in-memory demo service and nothing was saved. After Step 2, screens call a Swift service, which crosses the Swift-Rust bridge into the Rust core, which saves to device.sqlite on the phone.">
+      <svg viewBox="0 0 900 340" role="img" aria-label="Swift screens call RustDeviceService, which crosses the Swift-Rust bridge into DeviceCore. DeviceCore saves to device.sqlite and scans the device.sqlite.audio folder. A Swift recorder, not built yet, will write chunk files into that folder. A separate sync worker thread talks to the server's API and object storage. The server's worker transcribes and summarizes.">
         <defs>
           <marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrowhead"/></marker>
           <marker id="a1m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrowhead-muted"/></marker>
         </defs>
-        <text x="20" y="28" class="t-row">BEFORE STEP 2</text>
-        <rect x="20" y="45" width="160" height="60" rx="10" class="box-swift"/>
-        <text x="100" y="70" text-anchor="middle" class="t-title">SwiftUI screens</text>
-        <text x="100" y="89" text-anchor="middle" class="t-sub">the app's views</text>
-        <line x1="182" y1="75" x2="256" y2="75" class="wire" marker-end="url(#a1)"/>
-        <text x="220" y="66" text-anchor="middle" class="t-label">reads, writes</text>
-        <rect x="260" y="45" width="220" height="60" rx="10" class="box-sunk"/>
-        <text x="370" y="70" text-anchor="middle" class="t-title">Demo service</text>
-        <text x="370" y="89" text-anchor="middle" class="t-sub">fake patients, held in memory</text>
-        <line x1="482" y1="75" x2="566" y2="75" class="wire-muted" marker-end="url(#a1m)"/>
-        <text x="525" y="66" text-anchor="middle" class="t-label">app closes</text>
-        <rect x="570" y="45" width="190" height="60" rx="10" class="box-bad"/>
-        <text x="665" y="70" text-anchor="middle" class="t-title c-bad">Gone</text>
-        <text x="665" y="89" text-anchor="middle" class="t-sub">nothing was on disk</text>
+        <text x="20" y="18" class="t-row">SWIFT</text>
+        <text x="250" y="18" class="t-row">RUST</text>
+        <text x="690" y="18" class="t-row">SERVER (PHASE 4)</text>
 
-        <text x="20" y="160" class="t-row">AFTER STEP 2</text>
-        <rect x="20" y="175" width="150" height="60" rx="10" class="box-swift"/>
-        <text x="95" y="200" text-anchor="middle" class="t-title">SwiftUI screens</text>
-        <text x="95" y="219" text-anchor="middle" class="t-sub">same screens</text>
-        <line x1="172" y1="205" x2="226" y2="205" class="wire" marker-end="url(#a1)"/>
-        <text x="200" y="196" text-anchor="middle" class="t-label">calls</text>
-        <rect x="230" y="175" width="180" height="60" rx="10" class="box-swift"/>
-        <text x="320" y="200" text-anchor="middle" class="t-title">RustDeviceService</text>
-        <text x="320" y="219" text-anchor="middle" class="t-sub">Swift, background queue</text>
-        <line x1="445" y1="166" x2="445" y2="250" class="boundary"/>
-        <text x="445" y="268" text-anchor="middle" class="t-label c-swift">Swift ↔ Rust bridge</text>
-        <line x1="412" y1="205" x2="476" y2="205" class="wire" marker-end="url(#a1)"/>
-        <rect x="480" y="175" width="190" height="60" rx="10" class="box-core"/>
-        <text x="575" y="200" text-anchor="middle" class="t-title">ErDevice → DeviceCore</text>
-        <text x="575" y="219" text-anchor="middle" class="t-sub">Rust: checks, then saves</text>
-        <line x1="672" y1="205" x2="726" y2="205" class="wire" marker-end="url(#a1)"/>
-        <text x="700" y="196" text-anchor="middle" class="t-label">saves</text>
-        <rect x="730" y="175" width="150" height="60" rx="10" class="box-ok"/>
-        <text x="805" y="200" text-anchor="middle" class="t-title">device.sqlite</text>
-        <text x="805" y="219" text-anchor="middle" class="t-sub">survives relaunch</text>
+        <rect x="20" y="30" width="180" height="56" rx="10" class="box-swift"/>
+        <text x="110" y="54" text-anchor="middle" class="t-title">SwiftUI screens</text>
+        <text x="110" y="73" text-anchor="middle" class="t-sub">workspace, note, settings</text>
+        <line x1="110" y1="88" x2="110" y2="120" class="wire" marker-end="url(#a1)"/>
+
+        <rect x="20" y="124" width="180" height="56" rx="10" class="box-swift"/>
+        <text x="110" y="148" text-anchor="middle" class="t-title">RustDeviceService</text>
+        <text x="110" y="167" text-anchor="middle" class="t-sub">background lanes</text>
+
+        <line x1="225" y1="26" x2="225" y2="200" class="boundary"/>
+        <text x="225" y="218" text-anchor="middle" class="t-label c-swift">bridge</text>
+        <line x1="202" y1="152" x2="246" y2="152" class="wire" marker-end="url(#a1)"/>
+
+        <rect x="250" y="110" width="200" height="84" rx="10" class="box-core"/>
+        <text x="350" y="136" text-anchor="middle" class="t-title">DeviceCore</text>
+        <text x="350" y="156" text-anchor="middle" class="t-sub">checks, saves, rebuilds notes</text>
+        <text x="350" y="174" text-anchor="middle" class="t-sub">one owner thread</text>
+
+        <line x1="452" y1="152" x2="496" y2="152" class="wire" marker-end="url(#a1)"/>
+        <rect x="500" y="110" width="150" height="84" rx="10" class="box-core"/>
+        <text x="575" y="136" text-anchor="middle" class="t-title">Sync worker</text>
+        <text x="575" y="156" text-anchor="middle" class="t-sub">the courier</text>
+        <text x="575" y="174" text-anchor="middle" class="t-sub">its own thread</text>
+
+        <rect x="20" y="250" width="180" height="60" rx="10" class="box-ghost"/>
+        <text x="110" y="275" text-anchor="middle" class="t-title">Swift recorder</text>
+        <text x="110" y="294" text-anchor="middle" class="t-sub">not built yet · Mac work</text>
+        <line x1="202" y1="280" x2="246" y2="280" class="wire-muted" marker-end="url(#a1m)"/>
+
+        <rect x="250" y="250" width="190" height="60" rx="10" class="box-meta"/>
+        <text x="345" y="275" text-anchor="middle" class="t-mono" font-weight="600">device.sqlite.audio/</text>
+        <text x="345" y="294" text-anchor="middle" class="t-sub">finished chunk files</text>
+        <rect x="460" y="250" width="190" height="60" rx="10" class="box-ok"/>
+        <text x="555" y="275" text-anchor="middle" class="t-mono" font-weight="600">device.sqlite</text>
+        <text x="555" y="294" text-anchor="middle" class="t-sub">records and ledgers</text>
+        <line x1="310" y1="196" x2="318" y2="246" class="wire" marker-end="url(#a1)"/>
+        <text x="300" y="226" text-anchor="end" class="t-label">scans</text>
+        <line x1="420" y1="196" x2="500" y2="246" class="wire" marker-end="url(#a1)"/>
+        <text x="472" y="214" class="t-label">saves</text>
+
+        <rect x="680" y="28" width="200" height="290" rx="12" class="box-sunk"/>
+        <rect x="700" y="50" width="160" height="56" rx="8" class="box"/>
+        <text x="780" y="74" text-anchor="middle" class="t-title">API</text>
+        <text x="780" y="93" text-anchor="middle" class="t-sub">events, shifts, audio</text>
+        <rect x="700" y="128" width="160" height="56" rx="8" class="box"/>
+        <text x="780" y="152" text-anchor="middle" class="t-title">Object storage</text>
+        <text x="780" y="171" text-anchor="middle" class="t-sub">uploaded chunks</text>
+        <rect x="700" y="206" width="160" height="56" rx="8" class="box"/>
+        <text x="780" y="230" text-anchor="middle" class="t-title">Worker</text>
+        <text x="780" y="249" text-anchor="middle" class="t-sub">transcribe, summarize</text>
+        <text x="780" y="296" text-anchor="middle" class="t-sub">local in tests, not AWS</text>
+        <line x1="652" y1="134" x2="696" y2="86" class="wire" marker-start="url(#a1)" marker-end="url(#a1)"/>
+        <line x1="652" y1="168" x2="696" y2="160" class="wire" marker-end="url(#a1)"/>
       </svg>
     </div>
-    <figcaption>Before, nothing reached the disk. Now every tap crosses into Rust and is saved in <code>device.sqlite</code> before the screen hears it worked. If that file can't be opened, the app shows an error screen. It does not quietly fall back to demo data.</figcaption>
+    <figcaption>Solid boxes exist and are tested; the dashed recorder does not exist yet. The recorder hands audio to Rust as files in a folder, not through the bridge. The sync worker exchanges events and upload requests with the API and sends audio bytes straight to object storage. The server is the Phase 4 stack. In tests it runs on the Linux machine, and no AWS deployment is involved.</figcaption>
   </figure>
 
   <div class="split">
     <div class="panel-list">
-      <h3>The phone now remembers</h3>
+      <h3>The phone can now</h3>
       <ul>
-        <li>The shift: when it started, whether it's open. Ended shifts are kept.</li>
-        <li>The patient list in the order you added it, with room labels</li>
-        <li>Which patient is selected</li>
-        <li>Each patient's consent history, and the ambient or solo choice</li>
-        <li>Chart context you typed (history, meds, vitals and so on), with its source and whether it's been reviewed</li>
-        <li>Structured labs, imaging, vitals, meds, diagnoses and disposition</li>
-        <li>Templates and saved prompts, with every past version</li>
-        <li>A scratch draft per patient</li>
-        <li>Review, sign and plain-text export</li>
+        <li>Keep the shift, roster, selection, consent history, chart context, templates and drafts through a force-quit <span class="step-tag">Step 2</span></li>
+        <li>Save labs, imaging, vitals, meds, diagnoses and disposition as clinical events <span class="step-tag">Step 2</span></li>
+        <li>Upload those events when a connection appears, without duplicates, and download the server's events in the server's order <span class="step-tag">Step 3</span></li>
+        <li>Show the HPI the server worker wrote, once it arrives through sync <span class="step-tag">Step 3</span></li>
+        <li>Send consent and recording records to the server so a second phone can pick up the shift <span class="step-tag">Step 3</span></li>
+        <li>Check, upload and later delete audio chunk files, and close a crashed recording at the last chunk it holds <span class="step-tag">Step 4</span></li>
       </ul>
     </div>
     <div class="panel-list">
       <h3>It still can't</h3>
       <ul>
-        <li>Record audio <span class="step-tag">Step 4</span><br><span class="muted">The rules are written and tested with a fake microphone. The real one is switched off.</span></li>
-        <li>Sync with the server <span class="step-tag">Step 3</span><br><span class="muted">Nothing is uploaded or downloaded. Nothing claims to be synced.</span></li>
-        <li>Write the HPI or MDM with AI <span class="step-tag">Step 7</span><br><span class="muted">The phone can display those sections when they arrive from the server. It has no code to create them.</span></li>
-        <li>Prove itself on Apple hardware <span class="step-tag">needs the Mac</span><br><span class="muted">Xcode build, simulator tests and a signed iPhone run haven't happened yet.</span></li>
+        <li>Record from the microphone <span class="step-tag">Step 4, Mac half</span><br><span class="muted">The Rust side is ready for files. The Swift recorder and its bridge calls aren't written.</span></li>
+        <li>Sign in with a real account <span class="step-tag">Step 5</span><br><span class="muted">Sync works with development tokens. Cognito sign-in is part of the full screens.</span></li>
+        <li>Ask for an MDM or apply a template <span class="step-tag">Step 7</span><br><span class="muted">The phone shows server-written sections. It can't request generation yet.</span></li>
+        <li>Run on the watch or lock screen <span class="step-tag">Step 6</span></li>
+        <li>Prove itself on a real iPhone <span class="step-tag">needs the Mac</span><br><span class="muted">CI builds and runs simulator tests now. No signed install has happened.</span></li>
       </ul>
     </div>
   </div>
@@ -405,7 +615,7 @@ footer { border-top: 1px solid var(--line); padding-top: 24px; font-size: 0.85re
       </li>
       <li class="hop bridge">
         <span class="layer">Bridge</span>
-        <div class="body"><h3>Generated bridge (UniFFI)</h3><p>Generated code converts Swift values into Rust values. Nobody edits it by hand. It's regenerated whenever the Rust interface changes, which is now at version 2.</p></div>
+        <div class="body"><h3>Generated bridge (UniFFI)</h3><p>Generated code converts Swift values into Rust values. Nobody edits it by hand. It's regenerated whenever the Rust interface changes. It's at version 3 now, since Step 3 added sync.</p></div>
         <div class="data">UUID   → "0196c8e2-7a10-…"
 Double → f64 5.8
 <span class="dim">Swift and Rust versions must match</span></div>
@@ -428,9 +638,10 @@ Double → f64 5.8
       </li>
       <li class="hop disk">
         <span class="layer">Disk</span>
-        <div class="body"><h3>5. SQLite: the save</h3><p>Adds one row to the events table and waits until the disk confirms it. If this fails, nothing below happens and the app gets a <code>Storage</code> error.</p></div>
+        <div class="body"><h3>5. SQLite: the save</h3><p>Adds one row to the events table and waits until the disk confirms it. Since Step 3, the same write adds the event's delivery row, so the courier will send it later. If this fails, nothing below happens and the app gets a <code>Storage</code> error.</p></div>
         <div class="data">events #1
   ResultReceived · patient A
+delivery: E1 → waiting to send
 <span class="dim">synchronous = FULL</span></div>
       </li>
       <li class="hop rust">
@@ -468,87 +679,117 @@ Double → f64 5.8
 <section class="block" id="file">
   <header>
     <p class="eyebrow">Storage</p>
-    <h2>One file, two kinds of records</h2>
-    <p class="prose">Everything lives in one SQLite file in the app's protected storage folder. Inside it, data takes two very different shapes. Which one a tap lands in tells you whether it's part of the clinical record.</p>
+    <h2>One file, one folder</h2>
+    <p class="prose">Everything the phone keeps lives in one SQLite file in the app's protected storage folder, plus a sibling folder for audio chunks. Step 2 created the file. Steps 3 and 4 each added tables without touching the old ones. Which table a record lands in tells you whether it's part of the clinical record.</p>
   </header>
   <figure class="fig">
     <div class="fig-scroll">
-      <svg viewBox="0 0 860 345" role="img" aria-label="Clinical facts are appended to the events table. Phone bookkeeping is saved into the device_state document. Recording start and stop write to both in one transaction. The file also has snapshots and a device_scope table naming the owning account.">
+      <svg viewBox="0 0 900 540" role="img" aria-label="Inputs on the left: clinical facts go to the events table; recording start and stop write events and device_state together; phone bookkeeping goes to device_state; server replies go to the delivery and sync tables; finished chunk files from the recorder go to the device.sqlite.audio folder. The file holds events, snapshots, device_state, device_scope from Step 2, device_event_delivery and device_sync from Step 3, and device_audio_chunks from Step 4.">
         <defs>
           <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrowhead"/></marker>
         </defs>
         <!-- inputs -->
-        <rect x="20" y="30" width="250" height="120" rx="10" class="box-clin"/>
-        <text x="38" y="54" class="t-title c-clin">Clinical facts</text>
-        <text x="38" y="78" class="t-sub">labs, imaging, vitals</text>
-        <text x="38" y="98" class="t-sub">medications, diagnoses</text>
-        <text x="38" y="118" class="t-sub">disposition, data reviewed</text>
-        <text x="38" y="138" class="t-sub">ready for review, sign</text>
+        <rect x="20" y="50" width="260" height="100" rx="10" class="box-clin"/>
+        <text x="36" y="74" class="t-title c-clin">Clinical facts</text>
+        <text x="36" y="96" class="t-sub">labs, imaging, vitals, meds</text>
+        <text x="36" y="115" class="t-sub">diagnoses, disposition, review, sign</text>
+        <text x="36" y="134" class="t-sub">plus events downloaded from the server</text>
 
-        <rect x="20" y="162" width="250" height="48" rx="10" class="box"/>
-        <text x="38" y="182" class="t-title">Recording start / stop</text>
-        <text x="38" y="200" class="t-sub">writes both, in one transaction</text>
+        <rect x="20" y="164" width="260" height="50" rx="10" class="box"/>
+        <text x="36" y="185" class="t-title">Recording start / stop</text>
+        <text x="36" y="203" class="t-sub">writes both, in one transaction</text>
 
-        <rect x="20" y="222" width="250" height="108" rx="10" class="box-meta"/>
-        <text x="38" y="246" class="t-title c-meta">Phone bookkeeping</text>
-        <text x="38" y="270" class="t-sub">shift, patient list, selection</text>
-        <text x="38" y="290" class="t-sub">consent, ambient/solo, chart context</text>
-        <text x="38" y="310" class="t-sub">templates, saved prompts, drafts</text>
+        <rect x="20" y="228" width="260" height="78" rx="10" class="box-meta"/>
+        <text x="36" y="251" class="t-title c-meta">Phone bookkeeping</text>
+        <text x="36" y="273" class="t-sub">shift, roster, selection, consent</text>
+        <text x="36" y="292" class="t-sub">chart context, templates, drafts</text>
+
+        <rect x="20" y="320" width="260" height="58" rx="10" class="box"/>
+        <text x="36" y="343" class="t-title">Server replies</text>
+        <text x="36" y="362" class="t-sub">receipts, pages, roster, wait times</text>
+
+        <rect x="20" y="450" width="260" height="58" rx="10" class="box-swift"/>
+        <text x="36" y="473" class="t-title c-swift">Finished chunk files</text>
+        <text x="36" y="492" class="t-sub">renamed into place by the recorder</text>
 
         <!-- file -->
-        <rect x="330" y="20" width="510" height="310" rx="14" class="box-sunk"/>
-        <text x="350" y="46"><tspan class="t-mono" font-weight="600">device.sqlite</tspan><tspan class="t-sub" dx="8">layout version 1 (user_version)</tspan></text>
+        <rect x="320" y="20" width="560" height="392" rx="14" class="box-sunk"/>
+        <text x="340" y="46"><tspan class="t-mono" font-weight="600">device.sqlite</tspan><tspan class="t-sub" dx="8">layout version 3 (user_version)</tspan></text>
 
-        <rect x="350" y="62" width="225" height="110" rx="8" class="box-clin"/>
-        <text x="366" y="88" class="t-mono c-clin" font-weight="600">events</text>
-        <text x="366" y="110" class="t-sub">append-only clinical log</text>
-        <text x="366" y="130" class="t-sub">same types the server uses</text>
-        <text x="366" y="150" class="t-sub">uploads in Step 3</text>
+        <rect x="340" y="62" width="250" height="72" rx="8" class="box-clin"/>
+        <text x="354" y="85" class="t-mono c-clin" font-weight="600">events</text>
+        <text x="354" y="105" class="t-sub">append-only clinical log</text>
+        <text x="354" y="123" class="t-sub">same types the server stores</text>
+        <rect x="610" y="62" width="250" height="72" rx="8" class="box"/>
+        <text x="624" y="85" class="t-mono" font-weight="600">snapshots</text>
+        <text x="624" y="105" class="t-sub">checkpoint of each note</text>
+        <text x="624" y="123" class="t-sub">skipped once sync starts</text>
 
-        <rect x="595" y="62" width="225" height="110" rx="8" class="box"/>
-        <text x="611" y="88" class="t-mono" font-weight="600">snapshots</text>
-        <text x="611" y="110" class="t-sub">checkpoint of each note</text>
-        <text x="611" y="130" class="t-sub">so reopening is fast</text>
-        <text x="611" y="150" class="t-sub">damaged → rebuilt from events</text>
+        <rect x="340" y="146" width="250" height="72" rx="8" class="box-meta"/>
+        <text x="354" y="169" class="t-mono c-meta" font-weight="600">device_state</text>
+        <text x="354" y="189" class="t-sub">one JSON document</text>
+        <text x="354" y="207" class="t-sub">revision +1 on every save</text>
+        <rect x="610" y="146" width="250" height="72" rx="8" class="box-meta"/>
+        <text x="624" y="169" class="t-mono c-meta" font-weight="600">device_scope</text>
+        <text x="624" y="189" class="t-sub">which account owns the file</text>
+        <text x="624" y="207" class="t-mono t-sub">"synthetic-development"</text>
 
-        <rect x="350" y="200" width="225" height="110" rx="8" class="box-meta"/>
-        <rect x="527" y="208" width="40" height="18" rx="4" class="tag"/>
-        <text x="547" y="221" text-anchor="middle" class="tag-text">NEW</text>
-        <text x="366" y="226" class="t-mono c-meta" font-weight="600">device_state</text>
-        <text x="366" y="248" class="t-sub">one JSON document</text>
-        <text x="366" y="268" class="t-sub">revision +1 on every save</text>
-        <text x="366" y="288" class="t-sub">stays on the phone for now</text>
+        <rect x="340" y="230" width="250" height="72" rx="8" class="box"/>
+        <text x="354" y="253" class="t-mono" font-weight="600">device_event_delivery</text>
+        <text x="354" y="273" class="t-sub">one row per event: sent, receipt,</text>
+        <text x="354" y="291" class="t-sub">confirmed, or needs review</text>
+        <rect x="610" y="230" width="250" height="72" rx="8" class="box"/>
+        <text x="624" y="253" class="t-mono" font-weight="600">device_sync</text>
+        <text x="624" y="273" class="t-sub">server shift ID, bookmarks,</text>
+        <text x="624" y="291" class="t-sub">request budget, wait times</text>
 
-        <rect x="595" y="200" width="225" height="110" rx="8" class="box-meta"/>
-        <rect x="772" y="208" width="40" height="18" rx="4" class="tag"/>
-        <text x="792" y="221" text-anchor="middle" class="tag-text">NEW</text>
-        <text x="611" y="226" class="t-mono c-meta" font-weight="600">device_scope</text>
-        <text x="611" y="248" class="t-sub">which account owns</text>
-        <text x="611" y="268" class="t-sub">this file</text>
-        <text x="611" y="288" class="t-mono t-sub">"synthetic-development"</text>
+        <rect x="340" y="314" width="520" height="80" rx="8" class="box"/>
+        <text x="354" y="337" class="t-mono" font-weight="600">device_audio_chunks</text>
+        <text x="354" y="357" class="t-sub">the chunk ledger: one row per chunk with its segment, number, times, SHA-256 and state</text>
+        <text x="354" y="376" class="t-sub">no audio bytes and no upload URL are ever stored here</text>
+
+        <!-- step tags -->
+        <g>
+          <rect x="534" y="68" width="48" height="18" rx="4" class="box-sunk"/><text x="558" y="81" text-anchor="middle" class="t-label" font-size="10">STEP 2</text>
+          <rect x="804" y="68" width="48" height="18" rx="4" class="box-sunk"/><text x="828" y="81" text-anchor="middle" class="t-label" font-size="10">STEP 2</text>
+          <rect x="534" y="152" width="48" height="18" rx="4" class="box-sunk"/><text x="558" y="165" text-anchor="middle" class="t-label" font-size="10">STEP 2</text>
+          <rect x="804" y="152" width="48" height="18" rx="4" class="box-sunk"/><text x="828" y="165" text-anchor="middle" class="t-label" font-size="10">STEP 2</text>
+          <rect x="534" y="236" width="48" height="18" rx="4" class="tag"/><text x="558" y="249" text-anchor="middle" class="tag-text">STEP 3</text>
+          <rect x="804" y="236" width="48" height="18" rx="4" class="tag"/><text x="828" y="249" text-anchor="middle" class="tag-text">STEP 3</text>
+          <rect x="804" y="320" width="48" height="18" rx="4" class="tag"/><text x="828" y="333" text-anchor="middle" class="tag-text">STEP 4</text>
+        </g>
+
+        <!-- sibling folder -->
+        <rect x="340" y="440" width="520" height="80" rx="10" class="box-ghost"/>
+        <text x="354" y="465" class="t-mono" font-weight="600">device.sqlite.audio/</text>
+        <text x="354" y="485" class="t-sub">a folder beside the file, under the same file protection</text>
+        <text x="354" y="504" class="t-sub">holds the chunk files; each is deleted after the server's transcript arrives</text>
+        <rect x="804" y="446" width="48" height="18" rx="4" class="tag"/><text x="828" y="459" text-anchor="middle" class="tag-text">STEP 4</text>
+        <line x1="600" y1="396" x2="600" y2="436" class="wire" marker-start="url(#a2)"/>
+        <text x="612" y="424" class="t-label">ledger rows point to these files</text>
 
         <!-- arrows -->
-        <line x1="272" y1="90" x2="346" y2="100" class="wire" marker-end="url(#a2)"/>
-        <text x="306" y="84" text-anchor="middle" class="t-label">appends</text>
-        <line x1="272" y1="178" x2="346" y2="152" class="wire" marker-end="url(#a2)"/>
-        <line x1="272" y1="194" x2="346" y2="222" class="wire" marker-end="url(#a2)"/>
-        <line x1="272" y1="272" x2="346" y2="262" class="wire" marker-end="url(#a2)"/>
-        <text x="306" y="258" text-anchor="middle" class="t-label">saves</text>
+        <line x1="282" y1="98" x2="336" y2="98" class="wire" marker-end="url(#a2)"/>
+        <line x1="282" y1="182" x2="336" y2="126" class="wire" marker-end="url(#a2)"/>
+        <line x1="282" y1="196" x2="336" y2="180" class="wire" marker-end="url(#a2)"/>
+        <line x1="282" y1="266" x2="336" y2="196" class="wire" marker-end="url(#a2)"/>
+        <line x1="282" y1="349" x2="336" y2="272" class="wire" marker-end="url(#a2)"/>
+        <line x1="282" y1="479" x2="336" y2="479" class="wire" marker-end="url(#a2)"/>
       </svg>
     </div>
-    <figcaption>Clinical facts are appended to the events log, the same format the server already stores. Phone bookkeeping is saved as one JSON document. Starting or stopping a recording writes to both in one transaction, so an audio event and its consent details can never get out of step.</figcaption>
+    <figcaption>Clinical facts go into the events log, in the same format the server stores. Phone bookkeeping is one JSON document. Since Step 3, writing any event also adds its delivery row in the same write, so nothing saved can be forgotten by the outgoing tray. Since Step 4, the ledger knows about every chunk file the core has accepted, but the audio itself stays in the folder.</figcaption>
   </figure>
 
   <div class="two-col">
     <div class="prose">
       <h3>Why two shapes?</h3>
-      <p>The server already understands events like <code>ResultReceived</code> and <code>AudioStarted</code>, so Step 3 can upload them unchanged. Consent, chart context, templates and drafts have no server format yet. Rather than invent one now, Step 2 keeps them on the phone in <code>device_state</code>. Steps 3 and 7 will decide how they sync.</p>
+      <p>The server already understands events like <code>ResultReceived</code> and <code>AudioStarted</code>, so Step 3 uploads them unchanged. Consent and recording attribution got their own small server contract in Step 3. Chart context, templates and drafts still have no server format, so they stay in <code>device_state</code> on the phone, and the screen labels them local-only. Step 7 decides how they reach the server.</p>
       <p>Every save to <code>device_state</code> names the revision it started from. The file accepts it only if that's still the latest revision, then bumps the number by one. That's how two edits can't silently overwrite each other.</p>
     </div>
     <div class="prose">
       <h3>Upgrading an older file</h3>
-      <p>The table layout's version number is kept inside SQLite itself. A version 0 file (just events and snapshots, from earlier phases) gets the two new tables added in one transaction, and its old events are left alone. If anything about the upgrade looks wrong, such as a table with the wrong columns, the whole upgrade rolls back.</p>
-      <p>A file written by a newer app version is refused rather than guessed at. The JSON inside <code>device_state</code> has its own version number (<code>format_version: 1</code>) for the same reason.</p>
+      <p>The layout version lives inside SQLite itself. An older file is upgraded one version at a time, each in a single transaction: 0 → 1 adds the Step 2 tables, 1 → 2 adds sync and creates delivery rows for existing events with their original IDs, 2 → 3 adds the chunk ledger. Old events are never rewritten. If anything looks wrong, such as a table with the wrong columns, that upgrade rolls back.</p>
+      <p>A file written by a newer app version is refused rather than guessed at. The JSON in <code>device_state</code> and the sync bookkeeping each carry their own format version for the same reason.</p>
     </div>
   </div>
 </section>
@@ -600,8 +841,8 @@ Double → f64 5.8
 <section class="block" id="recording">
   <header>
     <p class="eyebrow">Capture and consent</p>
-    <h2>Recording: rules built, microphone off</h2>
-    <p class="prose">The production app can't record. <code>RustDeviceService</code> reports <code>supportsRecording = false</code>, never asks for microphone permission, and opens the Rust core with a mic adapter that's always unavailable. The rules for when recording is allowed are still written and tested now, using a fake microphone in Rust tests. Step 4 then only has to plug in real hardware.</p>
+    <h2>Recording: rules built, microphone still off</h2>
+    <p class="prose">The production app can't record yet. <code>RustDeviceService</code> reports <code>supportsRecording = false</code>, never asks for microphone permission, and opens the Rust core with a mic adapter that's always unavailable. The rules for when recording is allowed were written and tested in Step 2 using a fake microphone. Step 4 added everything Rust does with the files a recorder produces, tested with a fake recorder that writes real files. The Swift recorder that plugs into this is the remaining Mac work.</p>
   </header>
 
   <div class="sub">
@@ -614,7 +855,7 @@ Double → f64 5.8
       <li><span class="q">Is nothing else recording, interrupted or waiting on a stop?</span><span class="no">no → refused</span></li>
       <li class="fork"><span class="q">Ambient only: is the latest consent Granted?<small>Unknown, Declined and Revoked all fail. Solo dictation skips this check, but only if the clinician chose solo on purpose. Declining never switches modes by itself.</small></span><span class="no">no → refused</span></li>
     </ol>
-    <p class="gates-pass"><strong>All six pass:</strong> the mic starts, then <code>AudioStarted</code> and the new segment's details (mode, source, which consent revision allowed it) save together in one transaction. If that save fails, the mic is released immediately.</p>
+    <p class="gates-pass"><strong>All six pass:</strong> the mic starts, then <code>AudioStarted</code> and the new segment's details (mode, source, which consent revision allowed it) save together in one transaction, and the recorder is handed its audio folder. If that save fails, the mic is released immediately.</p>
     <p class="prose">Changing consent to anything other than Granted stops the mic <em>before</em> trying to save the change. If that save then fails, ambient stays locked for that visit until a Granted choice saves successfully.</p>
   </div>
 
@@ -631,7 +872,7 @@ Double → f64 5.8
           <text x="90" y="200" text-anchor="middle" class="t-title">Unavailable</text>
           <text x="90" y="217" text-anchor="middle" class="t-sub">the real phone today</text>
           <line x1="90" y1="178" x2="90" y2="86" class="wire-muted" marker-end="url(#a3m)"/>
-          <text x="100" y="138" class="t-label">Step 4: real mic</text>
+          <text x="100" y="138" class="t-label">Swift recorder (Mac)</text>
 
           <rect x="20" y="38" width="140" height="46" rx="10" class="box"/>
           <text x="90" y="66" text-anchor="middle" class="t-title">Ready</text>
@@ -665,10 +906,10 @@ Double → f64 5.8
           <line x1="587" y1="138" x2="668" y2="87" class="wire" marker-end="url(#a3)"/>
           <text x="640" y="134" class="t-label">retry, same ID</text>
           <line x1="587" y1="226" x2="700" y2="87" class="wire" marker-end="url(#a3)"/>
-          <text x="666" y="210" class="t-label">reconcile (Step 4)</text>
+          <text x="666" y="210" class="t-label">recover from chunks</text>
         </svg>
       </div>
-      <figcaption>The real phone sits at Unavailable, so nothing past that box happens in production yet. The two lower states are the failure cases. <strong>Pending stop</strong>: the mic is off but the disk refused the stop, so the core blocks other changes until a retry saves the same stop with the same event ID. <strong>Interrupted</strong>: the app died mid-recording. On reopen the core blocks recording and does not guess an end time. Step 4 will close it using evidence from the audio file.</figcaption>
+      <figcaption>The real phone sits at Unavailable, so nothing past that box happens in production yet. The two lower states are the failure cases. <strong>Pending stop</strong>: the mic is off but the disk refused the stop, so the core blocks other changes until a retry saves the same stop with the same event ID. <strong>Interrupted</strong>: the app died mid-recording. On reopen the core blocks recording and does not guess an end time. Since Step 4 it closes the segment at the end of the last chunk file handed over before the crash (see <a href="#audio">Audio</a>).</figcaption>
     </figure>
   </div>
 
@@ -722,74 +963,442 @@ Double → f64 5.8
           <tr><td class="term">4</td><td class="term">AudioStopped</td><td>Hall 3</td><td class="term">B1</td><td>7:38 PM</td></tr>
           <tr><td class="term">5</td><td class="term">AudioStarted</td><td>Room 4</td><td class="term">A2 · Ambient · consent rev 1</td><td>7:44 PM</td></tr>
           <tr><td class="term">6</td><td class="term">AudioStopped</td><td>Room 4</td><td class="term">A2</td><td>7:50 PM</td></tr>
-          <tr class="empty-row"><td></td><td colspan="4">Never written by the phone: <code>TranscriptReady</code>, <code>EncounterSummarized</code>, <code>MdmGenerated</code>, <code>TriggerMDM</code>. Those come from the server worker. A test proves it by using a transcriber that crashes if it's ever called.</td></tr>
+          <tr class="empty-row"><td></td><td colspan="4">Never written by the phone: <code>TranscriptReady</code>, <code>EncounterSummarized</code>, <code>MdmGenerated</code>, <code>TriggerMDM</code>. Those come from the server worker and, since Step 3, reach the phone through sync. A test proves the phone never writes them by using a transcriber that crashes if it's ever called.</td></tr>
         </tbody>
       </table>
     </div>
   </div>
 </section>
 
-<!-- 6. Failures -->
+<!-- Sync (Step 3) -->
+<section class="block" id="sync">
+  <header>
+    <p class="eyebrow">Step 3 · implemented 2026-11-17</p>
+    <h2>Sync: getting the phone and the server to agree</h2>
+    <p class="prose">Step 3 adds a courier who works beside the unit clerk. The clerk (the core's owner thread) keeps taking local changes. The courier (the sync worker, on its own thread) carries saved records to the server, brings the server's records back, and hands every reply to the clerk. The courier never edits the clinical record itself. A network failure never empties the phone's file or switches it to demo data.</p>
+  </header>
+
+  <div class="sub">
+    <h3>Three things that sound alike</h3>
+    <div class="cards">
+      <article class="card"><div class="card-top"><h3>The outgoing tray</h3><span class="result warn">outbox</span></div><p>A delivery row points at an event already saved on the phone. Retrying sends the same event with the same ID. It never creates a second event or a second patient.</p><p class="rule">Created in the same write as the event itself.</p></article>
+      <article class="card"><div class="card-top"><h3>A receipt</h3><span class="result warn">acknowledgment</span></div><p>The server says "I stored E1 at position 204." That proves the server has E1. It doesn't prove the phone has read everything that came before it.</p><p class="rule">Saving a receipt never moves the bookmark.</p></article>
+      <article class="card"><div class="card-top"><h3>The bookmark</h3><span class="result ok">cursor</span></div><p>The phone has safely stored the server's history through position 204. The page and the new bookmark are written in one transaction: both succeed or neither does.</p><p class="rule">"Up to date" requires an empty tray and a bookmark past every receipt.</p></article>
+    </div>
+  </div>
+
+  <figure class="fig">
+    <div class="fig-scroll">
+      <svg viewBox="0 0 900 250" role="img" aria-label="An event starts saved on the phone. When a receipt arrives it is accepted, and once a downloaded page contains it, it is confirmed. A lost reply can go straight to confirmed by reading history. If the server's note changed so the event no longer fits, it needs review, and a clinician can discard it.">
+        <defs>
+          <marker id="a5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrowhead"/></marker>
+        </defs>
+        <rect x="20" y="90" width="180" height="56" rx="10" class="box"/>
+        <text x="110" y="114" text-anchor="middle" class="t-title">Saved on the phone</text>
+        <text x="110" y="133" text-anchor="middle" class="t-sub">waiting to send</text>
+        <rect x="300" y="30" width="200" height="56" rx="10" class="box-meta"/>
+        <text x="400" y="54" text-anchor="middle" class="t-title c-meta">Receipt stored</text>
+        <text x="400" y="73" text-anchor="middle" class="t-sub">server has it, not read back</text>
+        <rect x="640" y="90" width="220" height="56" rx="10" class="box-ok"/>
+        <text x="750" y="114" text-anchor="middle" class="t-title c-ok">Confirmed</text>
+        <text x="750" y="133" text-anchor="middle" class="t-sub">read back in server history</text>
+        <rect x="300" y="170" width="200" height="56" rx="10" class="box-bad"/>
+        <text x="400" y="194" text-anchor="middle" class="t-title c-bad">Needs review</text>
+        <text x="400" y="213" text-anchor="middle" class="t-sub">no longer fits the note</text>
+        <rect x="640" y="170" width="220" height="56" rx="10" class="box-ghost"/>
+        <text x="750" y="194" text-anchor="middle" class="t-title">Discarded</text>
+        <text x="750" y="213" text-anchor="middle" class="t-sub">kept on the phone, left out</text>
+        <line x1="202" y1="104" x2="296" y2="64" class="wire" marker-end="url(#a5)"/>
+        <text x="246" y="70" text-anchor="end" class="t-label">receipt arrives</text>
+        <line x1="502" y1="62" x2="636" y2="102" class="wire" marker-end="url(#a5)"/>
+        <text x="572" y="62" class="t-label">its page arrives</text>
+        <line x1="202" y1="118" x2="636" y2="118" class="wire" marker-end="url(#a5)"/>
+        <text x="420" y="111" text-anchor="middle" class="t-label">reply lost, found by reading history</text>
+        <line x1="202" y1="132" x2="296" y2="190" class="wire" marker-end="url(#a5)"/>
+        <text x="246" y="184" text-anchor="end" class="t-label">server note changed</text>
+        <line x1="502" y1="198" x2="636" y2="198" class="wire" marker-end="url(#a5)"/>
+        <text x="569" y="190" text-anchor="middle" class="t-label">clinician discards</text>
+      </svg>
+    </div>
+    <figcaption>The life of one event's delivery row. "Needs review" happens when, for example, the note was signed on the server while this phone was offline. The pending lab isn't folded into a signed note. It shows as a conflict with its event ID and reason, and discarding it keeps the row on the phone while leaving it out of the note and the tray.</figcaption>
+  </figure>
+
+  <div class="sub">
+    <h3>Follow the Room 4 potassium to the server</h3>
+    <div class="path-grid">
+      <ol class="hops">
+        <li class="hop disk">
+          <span class="layer">Phone</span>
+          <div class="body"><h3>1. Saved offline</h3><p>The lab from the tap above is saved as event E1. The same write adds its delivery row. Without a connection it just waits.</p></div>
+          <div class="data">events #1 ResultReceived(A)
+delivery: E1 <span class="dim">→ waiting to send</span></div>
+        </li>
+        <li class="hop net">
+          <span class="layer">Courier</span>
+          <div class="body"><h3>2. Check who's asking</h3><p>The courier gets an access token from the platform and asks the server who it belongs to. Clinical data goes nowhere until that matches the account bound to this file.</p></div>
+          <div class="data">token ← platform sign-in
+GET /v1/me <span class="ok">✓</span> org + clinician match</div>
+        </li>
+        <li class="hop server">
+          <span class="layer">Server</span>
+          <div class="body"><h3>3. Shift, then patient</h3><p>The phone made shift L1 offline. The server makes its own shift ID, so the phone asks for the active shift first and saves the mapping. Patient A is registered with the same ID before any of A's events go up.</p></div>
+          <div class="data">GET /v1/shifts/active → S9
+local L1 <span class="dim">↔</span> server S9
+register patient A <span class="dim">(same ID)</span></div>
+        </li>
+        <li class="hop server">
+          <span class="layer">Server</span>
+          <div class="body"><h3>4. Read before writing</h3><p>The courier reads A's new server history first. That's how it would learn the note was signed elsewhere, before uploading something that no longer fits.</p></div>
+          <div class="data">GET …/A/events?since=0
+<span class="ok">✓</span> not signed · E1 still fits</div>
+        </li>
+        <li class="hop server">
+          <span class="layer">Server</span>
+          <div class="body"><h3>5. Send the original E1</h3><p>Same ID, same body. A batch stays under 500 events and just under the server's 2 MiB limit.</p></div>
+          <div class="data">POST …/A/events [E1]
+← receipt: E1 = position 204</div>
+        </li>
+        <li class="hop disk">
+          <span class="layer">Phone</span>
+          <div class="body"><h3>6. Save the receipt</h3><p>E1 is now known to be on the server. The bookmark stays where it was.</p></div>
+          <div class="data">E1: receipt 204, not confirmed
+bookmark: <span class="dim">still 0</span></div>
+        </li>
+        <li class="hop disk">
+          <span class="layer">Phone</span>
+          <div class="body"><h3>7. Read it back, rebuild</h3><p>The next page includes E1 with the same body. The phone saves the page and moves the bookmark in one transaction, rebuilds A's note in server order, and rings the bell.</p></div>
+          <div class="data">page ← …, 204 (E1)
+bookmark: 0 → 204
+queued 0 · awaiting 0 · <span class="ok">up_to_date</span></div>
+        </li>
+      </ol>
+      <aside class="clerk" aria-label="Analogy">
+        <p class="eyebrow">Analogy</p>
+        <h3>The courier between the station and records</h3>
+        <dl>
+          <div><dt>Works beside the clerk</dt><dd>The clerk keeps taking requests while the courier waits at another desk. Replies go back through the clerk's inbox.</dd></div>
+          <div><dt>Carries only what's in the tray</dt><dd>Nothing gets sent unless it was saved first.</dd></div>
+          <div><dt>A receipt isn't a read-back</dt><dd>The courier still checks the master record before saying the binder matches.</dd></div>
+          <div><dt>Paces the trips</dt><dd>At most 48 trips a minute, and the count is written down so a restart doesn't reset it.</dd></div>
+        </dl>
+      </aside>
+    </div>
+  </div>
+
+  <div class="two-col">
+    <div class="sub" style="padding-top:0">
+      <h3>When a reply disappears</h3>
+      <p class="prose">The hard case isn't "the internet is off." It's "the server saved something, but the phone never heard back." Say a batch holds E1, E2 and E3, and the server saves E1 before failing.</p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Moment</th><th>Phone knows</th><th>Next</th></tr></thead>
+          <tbody>
+            <tr><td>Before the batch</td><td>E1, E2, E3 waiting</td><td>Send all three</td></tr>
+            <tr><td>Reply lost</td><td>Unsure about all three</td><td>Wait, then read history</td></tr>
+            <tr><td>History shows E1</td><td>E1 confirmed; E2, E3 waiting</td><td>Send E2 and E3</td></tr>
+            <tr><td>Both confirmed</td><td>Three events, no duplicates</td><td>Normal polling</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="muted" style="font-size:0.9rem">A test makes the real server save only the first event, then swaps its reply for an error. Both sides end with exactly three events.</p>
+    </div>
+    <div class="sub" style="padding-top:0">
+      <h3>The server's order wins</h3>
+      <p class="prose">The phone may insert events in a different order than the server keeps them, for example when a transcript downloads after a local lab. The note is rebuilt in server order, then any still-unsent local events go on top.</p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Event</th><th>Phone inserted</th><th>Server position</th></tr></thead>
+          <tbody>
+            <tr><td>E3 · local lab</td><td class="term">1st</td><td class="term">150</td></tr>
+            <tr><td>E1 · transcript</td><td class="term">2nd</td><td class="term">100</td></tr>
+            <tr><td>E2 · summary</td><td class="term">3rd</td><td class="term">120</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="muted" style="font-size:0.9rem">Rebuilt order: E1 → E2 → E3. The Step 2 snapshot shortcut assumed phone order, so once sync starts the core rebuilds from events instead.</p>
+    </div>
+  </div>
+
+  <div class="sub">
+    <h3>Staying under the server's request limit</h3>
+    <figure class="fig">
+      <div class="fig-scroll">
+        <svg viewBox="0 0 760 186" role="img" aria-label="Requests per minute on a scale of 0 to 120. The phone's own budget is 48. The server's limit per clinician is 60. Polling 18 patients every 10 seconds would need 108, well over the limit.">
+          <line x1="460" y1="18" x2="460" y2="148" class="gap"/>
+          <text x="466" y="20" class="t-label">server limit</text>
+          <text x="190" y="47" text-anchor="end" class="t-label">Phone's own budget</text>
+          <rect x="200" y="30" width="208" height="26" rx="4" class="c-clin"/>
+          <text x="416" y="48" class="t-mono" font-weight="600">48</text>
+          <text x="190" y="89" text-anchor="end" class="t-label">Server limit per clinician</text>
+          <rect x="200" y="72" width="260" height="26" rx="4" class="c-core"/>
+          <text x="468" y="90" class="t-mono" font-weight="600">60</text>
+          <text x="190" y="131" text-anchor="end" class="t-label">18 patients every 10 s</text>
+          <rect x="200" y="114" width="468" height="26" rx="4" class="c-bad"/>
+          <text x="676" y="132" class="t-mono" font-weight="600">108</text>
+          <line x1="200" y1="152" x2="720" y2="152" class="axis"/>
+          <line x1="200" y1="148" x2="200" y2="156" class="tick"/><text x="200" y="172" text-anchor="middle" class="t-label">0</text>
+          <line x1="330" y1="148" x2="330" y2="156" class="tick"/><text x="330" y="172" text-anchor="middle" class="t-label">30</text>
+          <line x1="460" y1="148" x2="460" y2="156" class="tick"/><text x="460" y="172" text-anchor="middle" class="t-label">60</text>
+          <line x1="590" y1="148" x2="590" y2="156" class="tick"/><text x="590" y="172" text-anchor="middle" class="t-label">90</text>
+          <line x1="720" y1="148" x2="720" y2="156" class="tick"/><text x="720" y="172" text-anchor="middle" class="t-label">120</text>
+          <text x="190" y="172" text-anchor="end" class="t-label">requests / minute</text>
+        </svg>
+      </div>
+      <figcaption>Polling every patient every ten seconds would blow through the limit before a single upload. So the phone reserves at most 48 requests in any rolling minute, saves each reservation before sending, and counts failures and retries too. It rotates through patients, checks the selected one sooner, and does nothing at all when nothing is due: no token, no request. Uploads of audio also count against the server's separate 30-per-minute audio limit.</figcaption>
+    </figure>
+  </div>
+
+  <div class="two-col">
+    <div class="sub" style="padding-top:0">
+      <h3>Consent and recording records get their own contract</h3>
+      <p class="prose">Consent was phone-only in Step 2. Step 3 adds a separately versioned server endpoint, <code>/v1/patients/{id}/capture-audit/v1</code>, holding two histories per visit: consent choices, and recording segments with their mode, source device and the consent revision that allowed them.</p>
+      <ul class="plain-list">
+        <li>The server takes the organization and clinician from the login, never from the request.</li>
+        <li>Past consent entries can't be rewritten. A segment's attribution can't be relabeled, and its end time can be set once.</li>
+        <li>Each segment must match the patient's real <code>AudioStarted</code> and <code>AudioStopped</code> events, so one visit's segment can't be filed under another.</li>
+        <li>A second phone reads clinical history first, then adopts consent and segments. It never starts a microphone.</li>
+      </ul>
+    </div>
+    <div class="sub" style="padding-top:0">
+      <h3>When the connection misbehaves</h3>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>What happened</th><th>What the phone does</th></tr></thead>
+          <tbody>
+            <tr><td>No response, or a 5xx</td><td>Keeps the work, waits longer each time, up to a minute</td></tr>
+            <tr><td class="term">401</td><td>Asks the platform for a fresh token once, then re-checks membership</td></tr>
+            <tr><td class="term">403</td><td>Shows a sign-in problem rather than "offline"</td></tr>
+            <tr><td class="term">404</td><td>Shows "not found" and never invents a new patient ID</td></tr>
+            <tr><td class="term">429</td><td>Waits as told, between 60 seconds and one day</td></tr>
+            <tr><td class="term">409</td><td>Keeps the pending work and re-reads; real conflicts go to review</td></tr>
+            <tr><td>Wrong org, clinician or server</td><td>Refuses before sending any clinical data</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="muted" style="font-size:0.9rem">Wait times survive a restart. Production builds require HTTPS. Plain HTTP exists only in a test feature that production packaging rejects.</p>
+    </div>
+  </div>
+</section>
+
+<!-- Audio (Step 4) -->
+<section class="block" id="audio">
+  <header>
+    <p class="eyebrow">Step 4 · Rust half implemented 2026-11-18</p>
+    <h2>Audio: files the phone can trust</h2>
+    <p class="prose">A segment is one stretch of recording for one patient, from a start to a pause, a patient switch, a consent change or the end of the shift. The recorder cuts it into chunks of about 30 to 60 seconds. Rust never touches the microphone. It takes each finished chunk file, checks it, numbers it, uploads it once the server knows about the recording, and deletes it after the server's transcript comes back.</p>
+  </header>
+
+  <div class="sub">
+    <h3>The hand-off is a rename</h3>
+    <p class="prose">When a segment starts, the core gives the recorder a folder next to the database. The recorder writes each chunk under a temporary name ending in <code>.partial</code>. When the encoder has finished and flushed the file, it renames it to a fixed pattern. That rename is the hand-off. No audio and no file path crosses the bridge as an argument.</p>
+    <div class="anatomy-wrap">
+      <div class="anatomy" aria-label="Chunk file name: segment ID, position, audio start milliseconds, audio end milliseconds, file type">
+        <span class="a-seg">0198f1c0-…-7000<i>segment ID</i></span><span class="sep">_</span>
+        <span class="a-pos">2<i>position</i></span><span class="sep">_</span>
+        <span class="a-time">1794970920000<i>audio start, ms</i></span><span class="sep">_</span>
+        <span class="a-time">1794970932000<i>audio end, ms</i></span><span class="sep">.</span>
+        <span class="a-ext">m4a<i>wav, m4a, ogg or mp3</i></span>
+      </div>
+      <p class="muted" style="font-size:0.88rem">This one is the third chunk of a segment: 12 seconds of audio ending at 10:02:12 PM. The core reads the name only in this exact spelling. Anything else is left alone and counted as unclaimed.</p>
+    </div>
+    <p class="prose">Why a folder instead of a function call? A chunk can finish at the same moment the clinician taps pause. If Swift had to call into Rust to deliver it, that call would queue behind the pause, and the pause is waiting for the recorder to stop. With a folder there's nothing to wait for. The recorder renames its last file before <code>stop()</code> returns, and the core scans right after.</p>
+    <div class="two-col">
+      <div class="panel-list">
+        <h3>Five rules the recorder must follow</h3>
+        <ul>
+          <li>A new segment ID for every start. Never reuse one.</li>
+          <li>Positions start at 0, go up by one, and are renamed in that order.</li>
+          <li>Times are the audio's own capture clock, not file times.</li>
+          <li><code>stop()</code> returns only after every chunk, including the short last one, is renamed.</li>
+          <li>Never touch a file after renaming it.</li>
+        </ul>
+      </div>
+      <div class="panel-list">
+        <h3>What Rust decides, not Swift</h3>
+        <ul>
+          <li><strong>Which chunk is final.</strong> If the app is killed, Swift never gets to say "that was the last one," so Rust decides the same way every time: the highest-numbered accepted chunk when the segment closes.</li>
+          <li><strong>The upload number.</strong> Accepted chunks get server numbers 0, 1, 2 with no gaps, so the server's assembly can't stall waiting for a number that will never come.</li>
+          <li><strong>When a gap is permanent.</strong> While recording, the core waits at a missing position. Once the segment has stopped, the gap is counted as a missing chunk.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="sub">
+    <h3>Checks before the core takes a file</h3>
+    <ol class="gates">
+      <li><span class="q">Is it a real file?<small>A symlink is refused.</small></span><span class="no">not_a_file</span></li>
+      <li><span class="q">Is it non-empty and at most 16 MiB?<small>16 MiB is the server's upload limit.</small></span><span class="no">chunk_empty · chunk_too_large</span></li>
+      <li><span class="q">Is it a complete file of the type it claims?<small>WAV needs its header and data. M4A needs its index (<code>moov</code>), which a killed encoder usually never writes.</small></span><span class="no">container_mismatch</span></li>
+      <li><span class="q">Does it fit inside its segment?<small>Not before the start or after the stop, with two seconds of slack between the tap and the audio clock.</small></span><span class="no">outside_segment</span></li>
+      <li><span class="q">Does it start after the previous chunk ends?</span><span class="no">overlaps_previous</span></li>
+      <li><span class="q">Is it five minutes or shorter?</span><span class="no">chunk_too_long</span></li>
+      <li class="fork"><span class="q">Is the segment still open?<small>A file that arrives after its segment closed is never added to it. That's how a revocation or a patient switch stays a hard boundary.</small></span><span class="no">late_chunk</span></li>
+    </ol>
+    <p class="gates-pass"><strong>All pass:</strong> the core hashes the file (SHA-256), gives it the next upload number and adds a <code>queued</code> row to the chunk ledger. A refused file keeps its reason in the ledger and stays on disk, so nothing disappears silently.</p>
+  </div>
+
+  <div class="sub">
+    <h3>Step through a recording</h3>
+    <p class="prose">Room 4 has granted consent, so it records ambient. Hall 3 is solo dictation. Times are 10 PM US Eastern, chunks are 30 seconds, and IDs are shortened. This is the same sequence the end-to-end test runs against the real server, queue and worker, minus a resume.</p>
+    <div class="stepper" id="astepper" tabindex="0" aria-label="Recording walkthrough. Use left and right arrow keys to change step.">
+      <div class="rail" id="arail" aria-label="Steps"></div>
+      <div class="stage">
+        <div class="narration">
+          <p class="count" id="acount"></p>
+          <h3 id="atitle"></h3>
+          <div id="abody" class="prose"></div>
+          <div class="nav">
+            <button class="btn secondary" id="aprev" type="button">Back</button>
+            <button class="btn" id="anext" type="button">Next step</button>
+            <span class="kbd-hint">or use ← →</span>
+          </div>
+        </div>
+        <div class="panels">
+          <section class="store folder" aria-label="Audio folder contents">
+            <div class="store-head"><span class="name">device.sqlite.audio/</span><span class="kind">files on the phone</span><span class="rev" id="afcount"></span></div>
+            <div style="overflow-x:auto"><table class="mini"><thead><tr><th>file</th><th>state</th></tr></thead><tbody id="afolder"></tbody></table></div>
+          </section>
+          <section class="store ledger" aria-label="Chunk ledger">
+            <div class="store-head"><span class="name">device_audio_chunks</span><span class="kind">the chunk ledger</span><span class="rev" id="alcount"></span></div>
+            <div style="overflow-x:auto"><table class="mini"><thead><tr><th>segment</th><th>#</th><th>audio</th><th>size</th><th>state</th></tr></thead><tbody id="aledger"></tbody></table></div>
+          </section>
+          <section class="store server" aria-label="Server">
+            <div class="store-head"><span class="name">server</span><span class="kind">what it has heard about</span><span class="rev" id="ascount"></span></div>
+            <div style="overflow-x:auto"><table class="mini"><thead><tr><th>record</th><th>detail</th></tr></thead><tbody id="aserver"></tbody></table></div>
+          </section>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="two-col">
+    <div class="sub" style="padding-top:0">
+      <h3>When an upload reply disappears</h3>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Lost</th><th>Phone does</th><th>Server ends with</th></tr></thead>
+          <tbody>
+            <tr><td>The upload reply</td><td>Asks for a new URL with the same chunk ID and uploads again</td><td>One row; the first completed bytes are kept</td></tr>
+            <tr><td>The "complete" reply</td><td>Calls complete again, same chunk ID</td><td>One row; the worker ignores the duplicate job</td></tr>
+            <tr><td>The bytes (<code>409 chunk_not_uploaded</code>) or the row (<code>404</code>)</td><td>Goes back to uploading</td><td>One row</td></tr>
+            <tr><td>A permanent refusal for one chunk</td><td>Marks only that chunk refused, with the server's code</td><td>Other chunks and patients carry on</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="muted" style="font-size:0.9rem">The signed upload URL works like a one-time password, so it lives only inside one network action. A test reads the raw database file and its write-ahead log to prove no URL was ever written.</p>
+    </div>
+    <div class="sub" style="padding-top:0">
+      <h3>After a crash</h3>
+      <figure class="fig">
+        <div class="fig-scroll">
+          <svg viewBox="0 0 520 162" role="img" aria-label="Segment A1 starts at 10:01:00. Chunks 0 and 1 were handed over and end at 10:02:00. Chunk 2 was still a partial file when the app died at 10:02:09. On reopen the segment is closed at 10:02:00 and chunk 1 becomes final; the partial file is counted but never uploaded.">
+            <text x="20" y="36" class="t-title">A1</text>
+            <rect x="60" y="20" width="150" height="30" rx="5" class="seg"/>
+            <text x="135" y="40" text-anchor="middle" class="t-mono">#0</text>
+            <rect x="214" y="20" width="150" height="30" rx="5" class="seg"/>
+            <text x="289" y="40" text-anchor="middle" class="t-mono">#1 final</text>
+            <rect x="368" y="20" width="45" height="30" rx="5" class="box-ghost"/>
+            <text x="390" y="40" text-anchor="middle" class="t-mono t-sub">.partial</text>
+            <line x1="415" y1="12" x2="415" y2="120" class="gap"/>
+            <text x="421" y="74" class="t-label c-bad">app dies</text>
+            <text x="421" y="90" class="t-label">10:02:09</text>
+            <line x1="366" y1="12" x2="366" y2="120" class="ctrl"/>
+            <text x="358" y="74" text-anchor="end" class="t-label c-swift">closed here on reopen</text>
+            <text x="358" y="90" text-anchor="end" class="t-label">10:02:00, end of #1</text>
+            <line x1="60" y1="130" x2="500" y2="130" class="axis"/>
+            <line x1="60" y1="126" x2="60" y2="134" class="tick"/><text x="60" y="150" text-anchor="middle" class="t-label">10:01:00</text>
+            <line x1="214" y1="126" x2="214" y2="134" class="tick"/><text x="214" y="150" text-anchor="middle" class="t-label">10:01:30</text>
+            <line x1="368" y1="126" x2="368" y2="134" class="tick"/><text x="368" y="150" text-anchor="middle" class="t-label">10:02:00</text>
+          </svg>
+        </div>
+        <figcaption>Step 2 reopened a crashed recording as Interrupted but left its end time open. Step 4 answers it from the files. The core closes the segment at the end of the last chunk handed over before the crash, or at the start if there were none. A proposed end time earlier than that is refused, because it would cut off audio the phone already holds.</figcaption>
+      </figure>
+    </div>
+  </div>
+
+  <div class="callout"><strong>When audio is deleted:</strong> the server writes <code>TranscriptReady</code> for a segment only after every chunk has been transcribed. When that event reaches the phone through normal sync, the chunks are marked processed first and the files deleted second. A crash in between leaves a file that the next pass removes. Step 9 can choose to keep audio longer; the rule lives in one function.</div>
+</section>
+
+<!-- Failures -->
 <section class="block" id="failures">
   <header>
     <p class="eyebrow">Safety</p>
     <h2>When something goes wrong</h2>
-    <p class="prose">Most of the Step 2 code is about failure. The rule throughout is to never report success for something that isn't on disk, and never invent data to fill a gap.</p>
+    <p class="prose">Most of the Phase 5 Rust code is about failure. Two rules hold throughout: never report success for something that isn't on disk, and never invent data to fill a gap. Steps 3 and 4 add a third: a retry reuses the original identity, so nothing is counted twice.</p>
   </header>
   <div class="cards">
     <article class="card">
-      <div class="card-top"><h3>The form outlives the selection</h3><span class="result ok">saved to Room 4</span></div>
+      <div class="card-top"><div><span class="step-tag">Step 2</span><h3>The form outlives the selection</h3></div><span class="result ok">saved to Room 4</span></div>
       <p class="setup">The lab form is open for Room 4. You tap Hall 3, then tap Save on the form.</p>
-      <p>The lab is written to Room 4. Hall 3 is untouched. A lab for an unknown or signed visit is refused before anything is written.</p>
-      <p class="rule">Every command names its patient. The core never looks at "who's selected" to decide where data goes.</p>
+      <p>The lab is written to Room 4 and Hall 3 is untouched. A lab for an unknown or signed visit is refused before anything is written.</p>
+      <p class="rule">Every command names its patient. The core never uses "who's selected" to decide where data goes.</p>
     </article>
     <article class="card">
-      <div class="card-top"><h3>Two edits of the same item</h3><span class="result bad">Conflict</span></div>
+      <div class="card-top"><div><span class="step-tag">Step 2</span><h3>Two edits of the same item</h3></div><span class="result bad">Conflict</span></div>
       <p class="setup">A context item is at version 3. An older screen still shows version 2 and saves its copy.</p>
-      <p>The save is refused. Version 3 stays. The screen keeps the unsaved text so nothing typed is lost.</p>
-      <p class="rule">Each save says which version it started from. If that isn't the latest, it doesn't overwrite.</p>
+      <p>The save is refused and version 3 stays. The screen keeps the unsaved text so nothing typed is lost.</p>
+      <p class="rule">Each save names the version it started from. If that isn't the latest, it doesn't overwrite.</p>
     </article>
     <article class="card">
-      <div class="card-top"><h3>Stop worked, switch failed</h3><span class="result bad">Storage</span></div>
-      <p class="setup">Recording A1 for Room 4, you tap Hall 3. The mic stops and the stop saves. Saving "selected = Hall 3" then fails.</p>
-      <p>You see an error. Room 4 is still selected and shows Paused. Retrying selects Hall 3 without a second stop or restarting the mic.</p>
-      <p class="rule">These are two saves, and the code reports them as two. It doesn't pretend they're one atomic action.</p>
+      <div class="card-top"><div><span class="step-tag">Step 2</span><h3>Stop worked, switch failed</h3></div><span class="result bad">Storage</span></div>
+      <p class="setup">Recording for Room 4, you tap Hall 3. The stop saves. Saving "selected = Hall 3" then fails.</p>
+      <p>You see an error. Room 4 is still selected and shows Paused. Retrying selects Hall 3 without a second stop.</p>
+      <p class="rule">These are two saves, and the code reports them as two.</p>
     </article>
     <article class="card">
-      <div class="card-top"><h3>App killed while recording</h3><span class="result warn">Interrupted</span></div>
-      <p class="setup"><code>AudioStarted</code> for A2 saved, then the phone died.</p>
-      <p>On reopen, Room 4 shows Interrupted and recording is blocked. The core doesn't stretch the end time to "now," write a transcript, or turn the mic on.</p>
-      <p class="rule">A real process-kill test covers this. Step 4 will close the segment using the audio file's real end.</p>
-    </article>
-    <article class="card">
-      <div class="card-top"><h3>A stop can't be saved</h3><span class="result warn">PendingStop</span></div>
+      <div class="card-top"><div><span class="step-tag">Step 2</span><h3>A stop can't be saved</h3></div><span class="result warn">PendingStop</span></div>
       <p class="setup">The mic turns off, but the disk refuses the <code>AudioStopped</code> write.</p>
       <p>Other changes are blocked until a retry saves that same stop, with the same event ID and contents.</p>
       <p class="rule">Reusing the ID means a retried stop can never be counted twice.</p>
     </article>
     <article class="card">
-      <div class="card-top"><h3>Consent revoked, disk failing</h3><span class="result ok">mic stopped first</span></div>
+      <div class="card-top"><div><span class="step-tag">Step 2</span><h3>Consent revoked, disk failing</h3></div><span class="result ok">mic stopped first</span></div>
       <p class="setup">The patient revokes consent mid-recording, and the consent save fails.</p>
       <p>The mic stopped before the save was tried. Ambient stays locked for that visit until a Granted choice saves.</p>
-      <p class="rule">Safety comes before storage: stopping the mic doesn't wait on the disk.</p>
+      <p class="rule">Stopping the mic doesn't wait on the disk.</p>
     </article>
     <article class="card">
-      <div class="card-top"><h3>Disk full</h3><span class="result bad">Storage</span></div>
-      <p class="setup">You add Hall 5 and the save fails because the disk is full.</p>
-      <p>Hall 5 doesn't exist anywhere, not even in memory. The roster is exactly what's on disk.</p>
-      <p class="rule">A test fills a real SQLite file to prove the rollback.</p>
+      <div class="card-top"><div><span class="step-tag">Step 2</span><h3>A second opener, or the wrong account</h3></div><span class="result bad">Busy · Scope</span></div>
+      <p class="setup">Something else opens the same file while the core holds it, or opens it as another account.</p>
+      <p>Both are refused before any data is read. Only one core can hold the data in memory.</p>
+      <p class="rule">An operating-system file lock is held for the core's whole lifetime.</p>
     </article>
     <article class="card">
-      <div class="card-top"><h3>A second opener</h3><span class="result bad">Busy</span></div>
-      <p class="setup">Something tries to open the same database file while the core has it, even through a different path or a link to it.</p>
-      <p>It's refused. Only one core can have a live copy of the data in memory.</p>
-      <p class="rule">An operating-system file lock is held for the core's whole lifetime. SQLite's own lock wouldn't be enough.</p>
+      <div class="card-top"><div><span class="step-tag">Step 3</span><h3>The server saved it, the reply was lost</h3></div><span class="result ok">no duplicates</span></div>
+      <p class="setup">A batch of E1, E2 and E3 goes up. The server stores E1, then the connection drops.</p>
+      <p>The phone reads the server's history, finds E1, and sends only E2 and E3, with their original IDs.</p>
+      <p class="rule">If an accepted ID is resent anyway, the server returns its original position and stores nothing new.</p>
     </article>
     <article class="card">
-      <div class="card-top"><h3>Wrong account</h3><span class="result bad">Scope</span></div>
-      <p class="setup">The file belongs to <code>synthetic-development</code>. Someone opens it as a different account.</p>
-      <p>It's refused before any data is read.</p>
-      <p class="rule">This keeps local data separated by account. It isn't server authorization, which comes with real login.</p>
+      <div class="card-top"><div><span class="step-tag">Step 3</span><h3>Signed elsewhere while offline</h3></div><span class="result warn">needs review</span></div>
+      <p class="setup">Room 4's note is signed from another device. This phone, offline, has a pending lab for Room 4.</p>
+      <p>On reconnect the lab is not uploaded or folded into the signed note. It shows as a conflict until someone discards it.</p>
+      <p class="rule">Reads come before writes, so the phone learns about the signature first.</p>
+    </article>
+    <article class="card">
+      <div class="card-top"><div><span class="step-tag">Step 3</span><h3>The shift-start reply was lost</h3></div><span class="result ok">one shift</span></div>
+      <p class="setup">The server created shift S9, but the phone never got the answer.</p>
+      <p>Next time, the phone asks for the active shift, finds S9 and maps its local shift to it. It never starts a second one.</p>
+      <p class="rule">The phone doesn't assume a timed-out request did nothing.</p>
+    </article>
+    <article class="card">
+      <div class="card-top"><div><span class="step-tag">Step 4</span><h3>The app dies mid-chunk</h3></div><span class="result warn">Interrupted</span></div>
+      <p class="setup">Two chunks were handed over. The third was still a <code>.partial</code> file when the phone died.</p>
+      <p>On reopen the segment closes at the end of chunk #1, which becomes final. The partial file is counted and never uploaded.</p>
+      <p class="rule">The core never stretches a recording to "now" or guesses an end time.</p>
+    </article>
+    <article class="card">
+      <div class="card-top"><div><span class="step-tag">Step 4</span><h3>An M4A with no index</h3></div><span class="result bad">container_mismatch</span></div>
+      <p class="setup">A killed encoder leaves a renamed <code>.m4a</code> whose index was never written.</p>
+      <p>The core refuses it and records why. The file stays on disk and nothing broken is uploaded.</p>
+      <p class="rule">The audio in that file is lost, which is why the Mac work must check how the encoder fails.</p>
+    </article>
+    <article class="card">
+      <div class="card-top"><div><span class="step-tag">Step 4</span><h3>A chunk after the pause</h3></div><span class="result bad">late_chunk</span></div>
+      <p class="setup">A file for Room 4's segment appears after the clinician paused and switched to Hall 3.</p>
+      <p>It's refused. Nothing is ever added to a closed segment, so audio can't drift across a patient or pause boundary.</p>
+      <p class="rule">Consent revocation closes a segment the same way.</p>
     </article>
   </div>
 </section>
@@ -827,41 +1436,110 @@ Double → f64 5.8
       </div>
     </div>
   </div>
-</section>
-
-<!-- 8. Shared code + still open -->
-<section class="block" id="open">
-  <header>
-    <p class="eyebrow">Around the edges</p>
-    <h2>Other changes, and what's still open</h2>
-  </header>
   <div class="two-col">
     <div class="sub" style="padding-top:0">
-      <h3>Changes outside the phone code</h3>
+      <h3>Sync status, since Step 3</h3>
+      <p class="prose">The screen also gets a sync summary, so it never has to guess whether work reached the server. Conflicts come with their event IDs and reasons, and a separate call discards one.</p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Field</th><th>Shows</th></tr></thead>
+          <tbody>
+            <tr><td class="term">status</td><td>For example <code>pending</code>, <code>up_to_date</code>, <code>budget_wait</code>, <code>offline</code> or <code>conflict</code></td></tr>
+            <tr><td class="term">queued_events</td><td>Saved here, not yet accepted by the server</td></tr>
+            <tr><td class="term">awaiting_download</td><td>Accepted by the server, not yet read back</td></tr>
+            <tr><td class="term">conflicts</td><td>Pending changes that need review</td></tr>
+            <tr><td class="term">retry_at_ms</td><td>When the next attempt is allowed</td></tr>
+            <tr><td class="term">local_only_preferences, local_only_context</td><td>Flags telling the screen to label templates and chart context as phone-only</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="sub" style="padding-top:0">
+      <h3>Audio status, Rust side only</h3>
+      <p class="prose">Step 4 adds an audio summary in Rust: chunks awaiting upload, awaiting transcript, processed and refused, plus files not yet collected, unrecognized files, unfinished <code>.partial</code> files, missing chunks, and stopped segments with no audio at all.</p>
+      <p class="prose">It isn't on the bridge yet. Step 4 left the bridge unchanged, so Swift can't read it until the Mac work adds <code>audio_status</code> with the recorder.</p>
+    </div>
+  </div>
+</section>
+
+<!-- What's left -->
+<section class="block" id="open">
+  <header>
+    <p class="eyebrow">Ahead</p>
+    <h2>What's left in Phase 5</h2>
+    <p class="prose">Two kinds of work remain. Some of it proves what already exists, on Apple hardware. The rest is new: the recorder, the full screens, the watch, generation from the phone, and the pilot build.</p>
+  </header>
+
+  <div class="two-col">
+    <div class="sub" style="padding-top:0">
+      <h3>Proving Steps 1–3 on Apple hardware</h3>
+      <p class="prose">The Step 4 push was the first time CI built the XCFramework and the app and ran the hosted tests in the iPhone simulator. Eight of ten passed. Earlier runs stopped at compiling, because Xcode also built for Intel simulators.</p>
       <ul class="plain-list">
-        <li><strong>Shared app logic (er-app)</strong> now has a setting for who writes the AI text. The CLI keeps doing it locally. The phone build leaves the AI code out entirely, and a dependency check fails the build if the AI client or HTTP library sneaks in.</li>
-        <li><strong>Event publishing</strong>: a retried stop reuses its original event ID, so it can't be applied twice.</li>
-        <li><strong>Storage (er-store)</strong>: the layout version and upgrade described above, plus safer write settings for SQLite. Resending an event with the same ID returns its original sequence number. Resending the same ID with different contents is rejected.</li>
-        <li><strong>Swift</strong>: the real service now runs in both Debug and Release builds. Demo controls appear only with the demo service. Failed text drafts stay on screen, and screens show where data came from and mark audio, AI and EMR as unavailable.</li>
-        <li><strong>Unchanged</strong>: the server API, OpenAPI file and AWS resources.</li>
+        <li><strong><code>testPersistentRustServiceSurvivesReopen</code> fails with <code>Storage</code>.</strong> This is the Step 2 relaunch test running against the real Rust core on Apple for the first time. The core couldn't save or reopen its file in the simulator. The cause isn't investigated yet.</li>
+        <li><strong><code>testStorageDirectoryHasRequiredAttributes</code> fails.</strong> The storage folder reports no file-protection class. The simulator probably doesn't apply iOS data protection, so this check may belong on a real iPhone, which is Step 9's job anyway.</li>
+        <li><strong>The optimized crash test hasn't run.</strong> The checker stops at the first failure.</li>
+        <li><strong>On the M1:</strong> record the Xcode version, run <code>scripts/check-bridge-apple.sh</code>, then do the physical drill: two visits, consent, context and a template, force-quit, relaunch, and check that it all came back.</li>
+        <li><strong>Accounts:</strong> Apple Developer ownership, team, bundle IDs and signing are still pending. A signed install needs them.</li>
       </ul>
     </div>
     <div class="sub" style="padding-top:0">
-      <h3>Still open</h3>
+      <h3>Step 4's Swift half</h3>
+      <p class="prose">The bridge was left unchanged in Step 4. The Mac work adds:</p>
       <ul class="plain-list">
-        <li><strong>Apple acceptance.</strong> This Linux machine has no Xcode. On the M1, run <code>scripts/check-bridge-apple.sh</code> to build the Apple binaries with SQLite bundled in and run simulator tests. Then do the physical drill: two visits, consent, context and a preference, force-quit, relaunch, confirm it all came back. Record the result in <code>docs/ops/ios-development.md</code>.</li>
-        <li><strong>Step 3 (next): sync.</strong> Step 3 adds syncing alongside this file without replacing it:
-          <ul class="plain-list" style="padding-top:6px">
-            <li>keep a durable outbox of events not yet sent</li>
-            <li>link local shift S1 to the server's shift ID</li>
-            <li>register patients before their events, using the same IDs</li>
-            <li>download server events in server order, then replay any unsent local ones on top</li>
-            <li>decide how consent, context, templates and drafts sync</li>
-            <li>stay inside the 60 requests per minute limit</li>
-          </ul>
-        </li>
+        <li><strong>The recorder</strong> in Swift with AVFoundation, behind the existing <code>CaptureAdapter</code> interface (<code>available</code>, <code>start</code>, <code>stop</code>), following the five rules.</li>
+        <li><strong>Bridge calls</strong> for <code>start_capture</code>, <code>pause</code>, <code>collect_audio</code>, <code>audio_status</code> and <code>recover_interrupted</code>, which are Rust-only today.</li>
+        <li><strong>An encoder choice.</strong> AAC in <code>.m4a</code> is the likely default. Check what a killed encoder leaves behind. Opus is unverified.</li>
+        <li><strong>Microphone permission and the audio session,</strong> kept separate from patient consent.</li>
+        <li><strong>On a real phone:</strong> an hour-long recording, calls, route changes, locking, backgrounding, the app being killed, and a battery baseline.</li>
       </ul>
     </div>
+  </div>
+
+  <div class="sub">
+    <h3>Decisions waiting on you</h3>
+    <div class="decide">
+      <article class="card"><div class="card-top"><h3>A recording with no usable audio</h3><span class="result warn">blocks the note</span></div><p>If the mic captured nothing, or every file was refused, the server never writes a transcript for that segment, and the note can't reach review. Options: a server-side "no audio captured" marker, or uploading generated silence, which means sending fake audio.</p></article>
+      <article class="card"><div class="card-top"><h3>A chunk refused after the server knows it</h3><span class="result warn">stalls assembly</span></div><p>The server waits for every chunk number before assembling a transcript, and has no way to be told one is lost. The suggestion is a small server call that marks a chunk lost, so assembly continues with a visible gap.</p></article>
+      <article class="card"><div class="card-top"><h3>Uploading while still recording</h3><span class="result warn">uploads wait</span></div><p>Step 3 blocks sync while the mic is on, so audio uploads after a pause. An hour of one-minute chunks is about 120 API calls, a few minutes under the 30-per-minute audio limit. Allowing audio-only sync during recording would remove the wait.</p></article>
+      <article class="card"><div class="card-top"><h3>The CI security job</h3><span class="result bad">fails</span></div><p>It fails only on advisory RUSTSEC-2026-0459 in <code>libsqlite3-sys</code>, the SQLite library the phone uses. Upgrading is blocked by sqlx's pinned version. Choose a time-boxed exception or wait for sqlx. The existing <code>rsa</code> exception expires 2026-11-20.</p></article>
+    </div>
+  </div>
+
+  <div class="sub">
+    <h3>The rest of Phase 5, in planned order</h3>
+    <ol class="roadmap">
+      <li class="road next">
+        <div class="num">NEXT<span class="st half">Mac</span></div>
+        <div class="body"><h3>Step 4 Swift half, with Step 5 screens alongside</h3><p>The recorder above, then the full clinician screens: a stable roster, pause and resume, consent versus OS permission, chart context with source and freshness badges, note review and sign, template and saved-prompt editors, and real Cognito sign-in.</p></div>
+        <div class="gate"><strong>Gates</strong>Step 4: an hour-long on-device recording is ordered and playable, with a battery baseline. Step 5: simulator UI tests for decline → solo, pause/switch/return, result review and template persistence, plus a walkthrough with Joey.</div>
+      </li>
+      <li class="road">
+        <div class="num">STEP 7<span class="st todo">server + phone</span></div>
+        <div class="body"><h3>Generation from the phone</h3><p>7A wires the existing MDM job API into the phone. 7B is new server work: templates applied to generation, chart context with provenance, MDM candidates the clinician accepts, and separate admission and discharge documents.</p></div>
+        <div class="gate"><strong>Gate</strong>Deterministic local server tests. Later on staging: stop → HPI under 90 s and MDM → draft under 30 s at p95.</div>
+      </li>
+      <li class="road">
+        <div class="num">STEP 6<span class="st todo">watch</span></div>
+        <div class="body"><h3>Watch and lock screen</h3><p>6A: patient list and recorder controls on the watch, acknowledged by the phone, plus a Live Activity. 6B: a bounded test of recording on the watch itself, which ships only if battery, quality and transfer hold up.</p></div>
+        <div class="gate"><strong>Gate</strong>Tap → acknowledged haptic under 1 s at p95 over 30+ trials. Delayed or duplicate taps never change which patient audio belongs to.</div>
+      </li>
+      <li class="road">
+        <div class="num">STEP 8<span class="st todo">server + phone</span></div>
+        <div class="body"><h3>Fixing wrong-patient audio</h3><p>A reviewed way to move a segment recorded under the wrong patient, or discard it, before signing, with re-summarization.</p></div>
+        <div class="gate"><strong>Gate</strong>Wrong-patient and offline-retry drills end with exactly one correct segment.</div>
+      </li>
+      <li class="road">
+        <div class="num">STEP 9<span class="st todo">phone</span></div>
+        <div class="body"><h3>Protection, retention and battery</h3><p>File protection and backup exclusion checked on hardware, an app lock, error logs free of patient data, and how long audio and transcripts are kept.</p></div>
+        <div class="gate"><strong>Gate</strong>Five kill-and-relaunch recoveries with no false "recording" state, and an 8-hour soak using at most 50% of the battery.</div>
+      </li>
+      <li class="road">
+        <div class="num">STEP 10<span class="st todo">needs AWS</span></div>
+        <div class="body"><h3>TestFlight and a mock shift</h3><p>A signed build on accepted AWS staging and Cognito, then a simulated shift with Joey: six patients, a declined consent using solo, a pause while waiting, new results and a custom template.</p></div>
+        <div class="gate"><strong>Gate</strong>External TestFlight installs for the pilot group (target ten) and the dry-run record. Waits on the Phase 4 live AWS checks.</div>
+      </li>
+    </ol>
+    <p class="prose muted">Two tracks run in parallel and don't block the phone work: the Phase 4 live AWS acceptance, and EMR discovery (the target Epic site, access path and a sandbox read).</p>
   </div>
 </section>
 
@@ -901,15 +1579,29 @@ Double → f64 5.8
         <tr><td class="term">fixture service</td><td>The demo service with fake in-memory patients. It's now only used for previews.</td></tr>
         <tr><td class="term">panic containment, faulted</td><td>If Rust code crashes inside a job, that job returns <code>Internal</code> and the core shuts down instead of carrying on in an unknown state.</td></tr>
         <tr><td class="term">MainActor</td><td>Swift's main UI thread, where screen updates happen.</td></tr>
-        <tr><td class="term">interface version 2</td><td>The bridge's version number. The Swift bindings and the Rust library must match it exactly.</td></tr>
+        <tr><td class="term">interface version 3</td><td>The bridge's version number. The Swift bindings and the Rust library must match it exactly. Step 3 raised it from 2; Step 4 didn't change it.</td></tr>
+        <tr><td class="term">XCFramework</td><td>The packaged Rust library Xcode links, with one build for real iPhones and one for the Apple-silicon simulator.</td></tr>
+        <tr><td class="term">outbox, delivery row</td><td>The outgoing tray: one row per saved event that still has to reach the server.</td></tr>
+        <tr><td class="term">acknowledgment, receipt</td><td>The server's reply naming the position where it stored an event. Proof the server has it, not proof the phone is up to date.</td></tr>
+        <tr><td class="term">cursor</td><td>The download bookmark: how far through the server's history the phone has safely stored.</td></tr>
+        <tr><td class="term">server order, pending tail</td><td>Rebuild a note using the server's positions first, then the phone's unsent events in the order they were made.</td></tr>
+        <tr><td class="term">request budget, Retry-After</td><td>The phone's own cap of 48 requests a minute, and the server's "try again in N seconds" instruction.</td></tr>
+        <tr><td class="term">capture audit</td><td>The versioned server record of consent choices and recording segments for one visit.</td></tr>
+        <tr><td class="term">chunk, position, index</td><td>A 30–60 second piece of one segment. Position is the recorder's number for it; index is the gap-free upload number the core assigns.</td></tr>
+        <tr><td class="term">sealing, final chunk</td><td>Closing a segment once it stops. Its highest-numbered accepted chunk is marked final, and nothing can be added afterwards.</td></tr>
+        <tr><td class="term">chunk ledger</td><td>The <code>device_audio_chunks</code> table: what the core knows about each chunk file, without the audio.</td></tr>
+        <tr><td class="term">presigned URL</td><td>A short-lived upload address that works like a one-time password. Kept in memory only.</td></tr>
+        <tr><td class="term">container check, <code>moov</code></td><td>Making sure a file is complete for its type. <code>moov</code> is the index at the end of an M4A that a killed encoder never writes.</td></tr>
+        <tr><td class="term">TranscriptReady</td><td>The server event saying a segment's chunks were all transcribed and assembled. Its arrival is what lets the phone delete the audio.</td></tr>
+        <tr><td class="term">echo transcriber, RustFS, ElasticMQ</td><td>Test stand-ins: a transcriber that reads back the words planted in a WAV, local object storage, and a local job queue.</td></tr>
       </tbody>
     </table>
   </div>
 </section>
 
 <footer>
-  <p>Source: <code>docs/ops/phase5-step2-implementation.md</code>, checked against <code>crates/er-device</code>, <code>crates/er-store/src/device.rs</code>, <code>crates/er-ffi/src/device.rs</code> and <code>RustDeviceService.swift</code>.</p>
-  <p>All patient data on this page is synthetic. Counter values like <code>audit_count</code> are illustrative.</p>
+  <p>Sources: <code>docs/ops/phase5-step1-implementation.md</code> through <code>phase5-step4-implementation.md</code>, <code>docs/planning/phase5/phase5.md</code> and <code>docs/ops/ios-development.md</code>, checked against <code>crates/er-device</code>, <code>crates/er-store</code>, <code>crates/er-ffi</code> and the CI run for commit <code>4d6ffe6</code>.</p>
+  <p>All patient data on this page is synthetic. Counter values like <code>audit_count</code>, chunk sizes and server positions are illustrative.</p>
 </footer>
 
 </div>
@@ -987,11 +1679,11 @@ Double → f64 5.8
 
   const steps = [
     { title: 'Open the app for the first time', time: null,
-      body: '<p>The app asks iOS for its protected storage folder and opens <code>ClinicalData/device.sqlite</code> there. The core creates the tables, stamps the layout as version 1, and records which account owns the file.</p><p>There is no login yet, so a placeholder account name stands in. Real account selection arrives with Steps 3 and 5.</p>',
+      body: '<p>The app asks iOS for its protected storage folder and opens <code>ClinicalData/device.sqlite</code> there. The core creates the tables, stamps the layout version (3 today), and records which account owns the file.</p><p>There is no real login yet, so a placeholder account name stands in. Real sign-in arrives with Step 5.</p>',
       where: [['meta', 'device_state created · revision 0'], ['meta', 'owner recorded in device_scope']],
       apply: () => {} },
     { title: 'Start the shift', time: 0, bump: true,
-      body: '<p>A shift is created on the phone with its own ID. <code>server_shift_id</code> stays empty because the phone hasn’t talked to a server, and the app doesn’t invent one. Step 3 will link them.</p>',
+      body: '<p>A shift is created on the phone with its own ID. <code>server_shift_id</code> stays empty because the phone hasn’t talked to a server, and the app doesn’t invent one. The first time it connects, Step 3’s sync fills it in with the server’s own shift ID.</p>',
       where: [['meta', 'revision 0 → 1'], ['none', 'events: no change']],
       apply: (m) => { m.shifts.push({ id: 'S1', server_shift_id: null, started_at_ms: at(0), ended_at_ms: null, selected_patient_id: null, visits: [] }); m.last_control_at_ms = at(0); } },
     { title: 'Add Room 4: chest pain', time: 4, bump: true,
@@ -1019,7 +1711,7 @@ Double → f64 5.8
       where: [['meta', 'revision 6 → 7'], ['none', 'events: no change']],
       apply: (m) => { m.shifts[0].visits[0].context.push({ id: 'C1', patient_id: 'A', version: 1, category: 'History', text: 'Prior MI with stent, 2019', source: 'Patient report', clinical_at_ms: null, entered_at_ms: at(11), reviewed: false }); } },
     { title: 'Enter potassium 5.8 mmol/L', time: 15, bump: false,
-      body: '<p>This one is different. A structured lab is a clinical fact, so it becomes an event of type <code>ResultReceived</code>, which the server already stores.</p><p><code>device_state</code> is untouched and its revision stays at 7. Compare this with the typed history item in the previous step.</p>',
+      body: '<p>This one is different. A structured lab is a clinical fact, so it becomes an event of type <code>ResultReceived</code>, which the server already stores.</p><p><code>device_state</code> is untouched and its revision stays at 7. Compare this with the typed history item in the previous step.</p><p>Since Step 3, the same write also puts E1 in the outgoing tray. It waits there until a connection appears.</p>',
       where: [['clin', 'events: row 1 added'], ['none', 'device_state: no change']],
       apply: (m, ev) => { ev.push({ seq: 1, type: 'ResultReceived', patient: 'A', occurred_at: iso(at(15)), payload: '{"patient_id":"A","result":{"Lab":{"display_name":"Potassium","value":5.8,"unit":"mmol/L"}},"source":"Manual", …}' }); } },
     { title: 'Save an HPI template', time: null, bump: true,
@@ -1035,7 +1727,7 @@ Double → f64 5.8
       where: [['meta', 'revision 9 → 10']],
       apply: (m) => { m.shifts[0].visits[0].manual_draft = draft; } },
     { title: 'Force-quit the app and reopen it', time: null, bump: false, reopen: true,
-      body: '<p>Before showing anything, the core re-checks the file:</p><ul class="checks"><li>No other copy holds the file lock</li><li>The owner is still <code>synthetic-development</code></li><li>The JSON layout is version 1 and the revision matches</li><li>Only one shift is open, and the selected patient is on its roster</li><li>Consent entries are numbered 1, 2, 3 with no gaps</li><li>Every event belongs to the patient it’s filed under</li><li>Room 4’s note is rebuilt from its snapshot plus newer events</li><li>No recording was left unfinished (if one was, the visit shows Interrupted)</li></ul><p>Everything comes back: the shift, roster order, selection, consent, solo mode, context, both template versions and the draft. Nothing claims to be synced, and the recorder still says Unavailable.</p>',
+      body: '<p>Before showing anything, the core re-checks the file:</p><ul class="checks"><li>No other copy holds the file lock</li><li>The owner is still <code>synthetic-development</code></li><li>The JSON layout is version 1 and the revision matches</li><li>Only one shift is open, and the selected patient is on its roster</li><li>Consent entries are numbered 1, 2, 3 with no gaps</li><li>Every event belongs to the patient it’s filed under</li><li>Room 4’s note is rebuilt from its snapshot plus newer events</li><li>No recording was left unfinished (if one was, the visit shows Interrupted)</li></ul><p>Everything comes back: the shift, roster order, selection, consent, solo mode, context, both template versions and the draft. With no connection configured, the sync status says one event is queued rather than claiming it was sent, and the recorder still says Unavailable.</p>',
       where: [['check', 'nothing written · all checks pass']],
       apply: () => {} }
   ];
@@ -1115,14 +1807,129 @@ Double → f64 5.8
   };
   const noteNotes = {
     phase: 'no recording yet, so still Registered',
-    hpi: 'arrives from the server (Step 7)',
-    mdm: 'arrives from the server (Step 7)',
+    hpi: 'written by the server worker, arrives by sync',
+    mdm: 'phone can request it in Step 7',
     source: 'where the value came from',
     projection_version: 'counts changes to this note',
     recovery_required: 'true if Interrupted or PendingStop',
     manual_draft: 'scratch text, not exported'
   };
   paint($('noteJson'), render(note, note, noteNotes));
+})();
+</script>
+<script>
+(function () {
+  // ---------- Step 4 recording walkthrough ----------
+  const T0 = Date.UTC(2026, 10, 18, 3, 1, 0); // 10:01:00 PM US Eastern, Nov 17
+  const ms = (s) => T0 + s * 1000;
+  const hms = (s) => {
+    const total = 61 * 60 + s; // seconds after 9:00:00 PM -> 10:01:00 is 3660
+    const h = 9 + Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const sec = total % 60;
+    return h + ':' + String(m).padStart(2, '0') + ':' + String(sec).padStart(2, '0');
+  };
+  const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const fname = (seg, pos, a, b) => seg + '_' + pos + '_' + ms(a) + '_' + ms(b) + '.m4a';
+  const chunks = {
+    A1_0: { seg: 'A1', idx: 0, a: 0, b: 30, kb: 240 },
+    A1_1: { seg: 'A1', idx: 1, a: 30, b: 60, kb: 240 },
+    A1_2: { seg: 'A1', idx: 2, a: 60, b: 72, kb: 96, last: true },
+    B1_0: { seg: 'B1', idx: 0, a: 120, b: 150, kb: 240 },
+    B1_1: { seg: 'B1', idx: 1, a: 150, b: 165, kb: 120, last: true }
+  };
+  const file = (k, state) => { const c = chunks[k]; return { name: fname(c.seg, c.idx, c.a, c.b), state }; };
+  const row = (k, state, sealed) => { const c = chunks[k]; return { seg: c.seg + (c.seg === 'A1' ? ' · Room 4' : ' · Hall 3'), idx: c.idx, win: hms(c.a) + '–' + hms(c.b), kb: c.kb, state, final: !!(sealed && c.last) }; };
+  const all = ['A1_0', 'A1_1', 'A1_2', 'B1_0', 'B1_1'];
+  const events4 = [
+    { rec: 'AudioStarted · A1', detail: 'Room 4, ambient · confirmed' },
+    { rec: 'AudioStopped · A1', detail: '10:02:12 · confirmed' },
+    { rec: 'AudioStarted · B1', detail: 'Hall 3, solo · confirmed' },
+    { rec: 'AudioStopped · B1', detail: '10:03:45 · confirmed' }
+  ];
+  const up = (k) => { const c = chunks[k]; return { rec: 'audio ' + c.seg + ' #' + c.idx + (c.last ? ' (final)' : ''), detail: 'uploaded · transcription queued' }; };
+
+  const steps = [
+    { title: 'Start recording Room 4', t: 0,
+      body: '<p>All six recording checks pass. The core saves <code>AudioStarted</code> for segment A1, starts the recorder, and hands it the folder.</p><p>Sync pauses while the mic is on, so that event waits in the outgoing tray. Nothing has reached the server.</p>',
+      folder: [], ledger: [], server: [] },
+    { title: 'The first chunk is being written', t: 20,
+      body: '<p>The encoder writes the first 30 seconds under a temporary name. The core never reads, hashes or uploads a <code>.partial</code> file.</p><p>If the app died now, this file would be counted as unfinished and left alone.</p>',
+      folder: [{ name: 'A1_0.m4a.partial', state: 'writing' }], ledger: [], server: [] },
+    { title: 'The rename hands it over', t: 30,
+      body: '<p>At 30 seconds the encoder finishes and renames the file to the fixed pattern. On its next scan the core runs the checks, hashes the file and records it as A1 #0.</p><p>The ledger holds the hash, times and size. The audio stays in the folder.</p>',
+      folder: [file('A1_0', 'held')], ledger: [row('A1_0', 'queued')], server: [] },
+    { title: 'A second chunk', t: 60,
+      body: '<p>Same again for 10:01:30 to 10:02:00. It becomes A1 #1. Upload numbers count only accepted chunks, so they never skip.</p>',
+      folder: [file('A1_0', 'held'), file('A1_1', 'held')], ledger: [row('A1_0', 'queued'), row('A1_1', 'queued')], server: [] },
+    { title: 'Pause: the segment is sealed', t: 72,
+      body: '<p><code>stop()</code> returns only after the short last chunk (12 seconds) is renamed. The core scans right away, takes it as #2, and seals A1. The highest number becomes final.</p><p><code>AudioStopped</code> is saved and the microphone is released.</p>',
+      folder: ['A1_0', 'A1_1', 'A1_2'].map((k) => file(k, 'held')), ledger: ['A1_0', 'A1_1', 'A1_2'].map((k) => row(k, 'queued', true)), server: [] },
+    { title: 'Hall 3, solo dictation', t: 165,
+      body: '<p>Selecting Hall 3 and choosing solo starts segment B1. A different segment means a different patient, so numbering restarts at 0. A pause at 10:03:45 seals B1 with #1 final.</p><p>If an A1 file appeared now, it would be refused as <code>late_chunk</code>.</p>',
+      folder: all.map((k) => file(k, 'held')), ledger: all.map((k) => row(k, 'queued', true)), server: [] },
+    { title: 'Sync: the events go first', t: 180,
+      body: '<p>With the mic off, sync runs. The four start and stop events go up and are read back.</p><p>Audio for a patient waits until that patient has no unsent events, because the server ignores a transcript for a recording it has never heard of.</p>',
+      folder: all.map((k) => file(k, 'held')), ledger: all.map((k) => row(k, 'queued', true)), server: events4 },
+    { title: 'One chunk, three calls', t: 181,
+      body: '<ol class="calls"><li>Ask the API for a signed upload URL for A1. It is good for 15 minutes and is never written to disk.</li><li>Re-check the file’s length and SHA-256, then <code>PUT</code> the 240 KB straight to object storage.</li><li>Ask the API to verify the object and queue transcription.</li></ol><p>Each reply moves the ledger row forward. A lost reply repeats the step with the same chunk ID.</p>',
+      folder: all.map((k) => file(k, 'held')), ledger: all.map((k) => row(k, k === 'A1_0' ? 'completed' : 'queued', true)), server: events4.concat([up('A1_0')]) },
+    { title: 'The rest go up, lowest number first', t: 200,
+      body: '<p>The final chunk of each segment is always sent last. The worker transcribes each chunk. Once every number from 0 to the final one is done, it assembles one transcript per segment, writes <code>TranscriptReady</code>, and summarizes it into an HPI.</p>',
+      folder: all.map((k) => file(k, 'held')), ledger: all.map((k) => row(k, 'completed', true)),
+      server: events4.concat(all.map(up), [{ rec: 'TranscriptReady · A1, B1', detail: 'written by the worker' }, { rec: 'EncounterSummarized · A1, B1', detail: 'HPI, written by the worker' }]) },
+    { title: 'The transcript comes back; the files go', t: 220,
+      body: '<p>The next sync pulls <code>TranscriptReady</code> and the summaries into the phone’s events. Room 4’s note now shows an HPI the server wrote.</p><p>Each chunk is marked processed first, and only then is its file deleted. The folder is empty.</p>',
+      folder: [], ledger: all.map((k) => row(k, 'processed', true)),
+      server: events4.concat(all.map(up), [{ rec: 'TranscriptReady · A1, B1', detail: 'written by the worker · now on the phone' }, { rec: 'EncounterSummarized · A1, B1', detail: 'HPI · now on the phone' }]) }
+  ];
+
+  const $ = (id) => document.getElementById(id);
+  const rail = $('arail');
+  if (!rail) return;
+  steps.forEach((s, i) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = String(i + 1);
+    b.setAttribute('aria-label', 'Step ' + (i + 1) + ': ' + s.title);
+    b.addEventListener('click', () => show(i));
+    rail.appendChild(b);
+  });
+  const key = (o) => JSON.stringify(o);
+  const isNew = (list, prevList, item) => !prevList.some((p) => key(p) === key(item)) && list.length > 0;
+  const empty = (cols, text) => '<tr class="empty-row"><td colspan="' + cols + '">' + text + '</td></tr>';
+  let current = 0;
+  function show(i) {
+    current = Math.max(0, Math.min(steps.length - 1, i));
+    const s = steps[current];
+    const p = current > 0 ? steps[current - 1] : { folder: [], ledger: [], server: [] };
+    Array.from(rail.children).forEach((b, j) => { if (j === current) b.setAttribute('aria-current', 'step'); else b.removeAttribute('aria-current'); });
+    $('acount').textContent = 'Step ' + (current + 1) + ' of ' + steps.length + ' · ' + hms(s.t) + ' PM';
+    $('atitle').textContent = s.title;
+    $('abody').innerHTML = s.body;
+    $('aprev').disabled = current === 0;
+    $('anext').disabled = current === steps.length - 1;
+    const fLabel = { writing: 'writing', held: 'handed over' };
+    $('afcount').textContent = s.folder.length + (s.folder.length === 1 ? ' file' : ' files');
+    $('afolder').innerHTML = s.folder.length
+      ? s.folder.map((f) => '<tr' + (isNew(s.folder, p.folder, f) ? ' class="new"' : '') + '><td>' + esc(f.name) + '</td><td><span class="fstate ' + f.state + '">' + fLabel[f.state] + '</span></td></tr>').join('')
+      : empty(2, current === steps.length - 1 ? 'Empty. All five files were deleted after their transcripts arrived.' : 'Empty. The recorder hasn’t finished a chunk yet.');
+    $('alcount').textContent = s.ledger.length + (s.ledger.length === 1 ? ' row' : ' rows');
+    $('aledger').innerHTML = s.ledger.length
+      ? s.ledger.map((r) => '<tr' + (isNew(s.ledger, p.ledger, r) ? ' class="new"' : '') + '><td>' + esc(r.seg) + '</td><td>' + r.idx + '</td><td>' + r.win + '</td><td>' + r.kb + ' KB</td><td><span class="fstate ' + r.state + '">' + r.state + '</span>' + (r.final ? ' <span class="fstate final">final</span>' : '') + '</td></tr>').join('')
+      : empty(5, 'No rows. The core only records files that were renamed into place.');
+    $('ascount').textContent = s.server.length + (s.server.length === 1 ? ' record' : ' records');
+    $('aserver').innerHTML = s.server.length
+      ? s.server.map((r) => '<tr' + (isNew(s.server, p.server, r) ? ' class="new"' : '') + '><td>' + esc(r.rec) + '</td><td>' + esc(r.detail) + '</td></tr>').join('')
+      : empty(2, 'Nothing yet. Sync waits while the microphone is on.');
+  }
+  $('aprev').addEventListener('click', () => show(current - 1));
+  $('anext').addEventListener('click', () => show(current + 1));
+  $('astepper').addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight') { e.preventDefault(); show(current + 1); }
+    if (e.key === 'ArrowLeft') { e.preventDefault(); show(current - 1); }
+  });
+  show(0);
 })();
 </script>
 </body>

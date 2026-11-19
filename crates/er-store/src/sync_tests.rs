@@ -147,3 +147,80 @@ async fn step_two_upgrade_backfills_the_existing_event_ids() {
     assert_eq!(r.pending_events(p).unwrap()[0].event_id, event);
     assert_eq!(r.get_events(p).await.unwrap().len(), 1);
 }
+
+#[tokio::test]
+async fn ordered_delivery_flags_pending_and_skips_conflicts_in_one_query() {
+    let r = repo();
+    let p = Uuid::now_v7();
+    let (pending, acked, conflicted) = (Uuid::now_v7(), Uuid::now_v7(), Uuid::now_v7());
+    for (id, text) in [
+        (pending, "pending"),
+        (acked, "acked"),
+        (conflicted, "conflict"),
+    ] {
+        r.append_event(p, id, er_domain::NoteEvent::data_reviewed(p, text.into()))
+            .await
+            .unwrap();
+    }
+    r.acknowledge_events(p, &[acked], &[(acked, 5)], &SyncLedger::default())
+        .unwrap();
+    r.mark_sync_conflict(conflicted, "remote_state_changed")
+        .unwrap();
+    let got: Vec<_> = r
+        .ordered_delivery(p)
+        .unwrap()
+        .into_iter()
+        .map(|(e, is_pending)| (e.event_id, is_pending))
+        .collect();
+    // Server-positioned events first, then the pending tail; conflicts left out.
+    assert_eq!(got, [(acked, false), (pending, true)]);
+    // The positioned variant skips what a checkpoint already holds.
+    let rows = |after| -> Vec<_> {
+        r.ordered_delivery_after(p, after)
+            .unwrap()
+            .into_iter()
+            .map(|row| (row.stored.event_id, row.server_sequence, row.pending))
+            .collect()
+    };
+    assert_eq!(rows(5), [(pending, None, true)]);
+    assert_eq!(rows(4), [(acked, Some(5), false), (pending, None, true)]);
+}
+
+#[tokio::test]
+async fn a_receipt_cannot_place_an_unread_event_at_or_below_the_bookmark() {
+    let r = repo();
+    let p = Uuid::now_v7();
+    let (read, local) = (Uuid::now_v7(), Uuid::now_v7());
+    let server = er_domain::NoteEvent::data_reviewed(p, "server".into());
+    r.receive_page(
+        p,
+        0,
+        &[RemoteEvent {
+            sequence: 150,
+            id: read,
+            event: server,
+        }],
+        false,
+        SyncLedger::default(),
+    )
+    .unwrap();
+    r.append_event(
+        p,
+        local,
+        er_domain::NoteEvent::data_reviewed(p, "local".into()),
+    )
+    .await
+    .unwrap();
+    let ledger = r.sync_ledger().unwrap();
+    // History through 150 was read and did not contain `local`.
+    for position in [120, 150] {
+        assert!(matches!(
+            r.acknowledge_events(p, &[local], &[(local, position)], &ledger),
+            Err(StoreError::Integrity)
+        ));
+    }
+    assert_eq!(r.delivery_counts(p).unwrap().queued, 1);
+    r.acknowledge_events(p, &[local], &[(local, 204)], &ledger)
+        .unwrap();
+    assert_eq!(r.delivery_counts(p).unwrap().awaiting_download, 1);
+}

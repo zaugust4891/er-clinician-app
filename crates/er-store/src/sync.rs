@@ -106,6 +106,7 @@ impl SqliteRepository {
         let tx = conn.transaction()?;
         let sent: HashSet<_> = sent.iter().copied().collect();
         let mut seen = HashSet::new();
+        let cursor = ledger.patients.get(&patient).map_or(0, |p| p.cursor);
         for (id, sequence) in acks {
             let sequence = checked_sequence(*sequence)?;
             if !sent.contains(id) || !seen.insert(*id) {
@@ -113,6 +114,13 @@ impl SqliteRepository {
             }
             let (owner,existing):(String,Option<i64>)=tx.query_row("SELECT e.patient_id,d.server_sequence FROM events e JOIN device_event_delivery d ON e.event_id=d.event_id WHERE e.event_id=?1",[id.to_string()],|r|Ok((r.get(0)?,r.get(1)?)))?;
             if owner != patient.to_string() || existing.is_some_and(|s| s != sequence) {
+                return Err(StoreError::Integrity);
+            }
+            // The phone has already read this patient's history through
+            // `cursor`, and that history did not contain this event. A new
+            // position at or below the bookmark contradicts it. The device's
+            // replay checkpoint relies on positions there never changing.
+            if existing.is_none() && sequence as u64 <= cursor {
                 return Err(StoreError::Integrity);
             }
             tx.execute(
@@ -212,9 +220,54 @@ impl SqliteRepository {
         let rows = query.query_map([patient.to_string()], |r| Ok((r.get(0)?, r.get(1)?)))?;
         Ok(rows.collect::<std::result::Result<_, _>>()?)
     }
+    /// A patient's events in replay order: server positions first, then the
+    /// pending tail in local order. Conflicts are left out. `true` = pending.
     pub fn ordered_delivery(&self, patient: Uuid) -> StoreResult<Vec<(StoredEvent, bool)>> {
-        let rows=self.query_stored_events("SELECT e.sequence_id,e.event_id,e.payload,e.occurred_at FROM events e LEFT JOIN device_event_delivery d ON e.event_id=d.event_id WHERE e.patient_id=?1 AND d.conflict IS NULL ORDER BY d.server_sequence IS NULL,d.server_sequence,e.sequence_id",[patient.to_string()])?;
-        let conn = self.conn.lock().unwrap();
-        rows.into_iter().map(|e|{let pending:bool=conn.query_row("SELECT server_sequence IS NULL FROM device_event_delivery WHERE event_id=?1",[e.event_id.to_string()],|r|r.get(0)).optional()?.unwrap_or(false);Ok((e,pending))}).collect()
+        Ok(self
+            .ordered_delivery_after(patient, 0)?
+            .into_iter()
+            .map(|row| (row.stored, row.pending))
+            .collect())
     }
+    /// The same order, skipping events whose server position is `after` or
+    /// lower (server positions start at 1, so `after = 0` skips nothing).
+    pub fn ordered_delivery_after(&self, patient: Uuid, after: u64) -> StoreResult<Vec<ReplayRow>> {
+        let after = i64::try_from(after).map_err(|_| StoreError::Integrity)?;
+        let rows = self.query_stored_events_with(
+            "SELECT e.sequence_id, e.event_id, e.payload, e.occurred_at,
+                    d.server_sequence,
+                    d.event_id IS NOT NULL AND d.server_sequence IS NULL
+             FROM events e
+             LEFT JOIN device_event_delivery d ON e.event_id = d.event_id
+             WHERE e.patient_id = ?1 AND d.conflict IS NULL
+               AND (d.server_sequence IS NULL OR d.server_sequence > ?2)
+             ORDER BY d.server_sequence IS NULL, d.server_sequence, e.sequence_id",
+            params![patient.to_string(), after],
+            |row| {
+                Ok((
+                    row.get::<_, Option<i64>>(4)?.map(|s| s as u64),
+                    row.get::<_, bool>(5)?,
+                ))
+            },
+        )?;
+        Ok(rows
+            .into_iter()
+            .map(|(stored, (server_sequence, pending))| ReplayRow {
+                stored,
+                server_sequence,
+                pending,
+            })
+            .collect())
+    }
+}
+
+/// One event in a patient's replay order.
+#[derive(Debug)]
+pub struct ReplayRow {
+    pub stored: StoredEvent,
+    /// Where the server keeps it, once a receipt or a page has said so.
+    pub server_sequence: Option<u64>,
+    /// Saved here and not yet accepted by the server. An event without a
+    /// delivery row is never pending.
+    pub pending: bool,
 }

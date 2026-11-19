@@ -61,6 +61,9 @@ pub struct DeviceCore {
     // ID/body for retry. On process death the persisted unfinished segment wins.
     pending: Option<(Uuid, NoteEvent, DeviceState)>,
     consent_stop_requested: HashSet<Uuid>,
+    /// Per patient: the note as of the download bookmark, so a sync reply
+    /// replays only what is new (see `replay_synchronized`).
+    checkpoints: HashMap<Uuid, sync_core::Checkpoint>,
 }
 
 pub fn text(value: &str, max: usize, empty: bool) -> Result<()> {
@@ -139,6 +142,7 @@ impl DeviceCore {
             audio_dir,
             pending: None,
             consent_stop_requested: HashSet::new(),
+            checkpoints: HashMap::new(),
         };
         core.rebuild_synchronized_notes()?;
         core.validate_and_load()?;

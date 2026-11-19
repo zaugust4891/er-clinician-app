@@ -363,7 +363,7 @@ impl DeviceCore {
                     .collect();
                 self.repo
                     .receive_page(patient, cursor, &rows, page.has_more, l)?;
-                self.rebuild_synchronized_notes()?;
+                self.rebuild_synchronized(&[patient])?;
                 // A page may carry a segment's TranscriptReady.
                 self.release_transcribed_audio()?;
                 return Ok(());
@@ -420,7 +420,7 @@ impl DeviceCore {
                     .map(|a| (a.event_id, a.sequence_id))
                     .collect();
                 self.repo.acknowledge_events(patient, &sent, &acks, &l)?;
-                self.rebuild_synchronized_notes()?;
+                self.rebuild_synchronized(&[patient])?;
                 return Ok(());
             }
             Answer::AuditRead(patient, response) => {
@@ -629,57 +629,132 @@ impl DeviceCore {
         p.audit_json = Some(serde_json::to_string(&response.audit).map_err(|_| Error::Internal)?);
         Ok(())
     }
+
+    /// Everyone, from scratch. For when the whole picture may have changed:
+    /// opening the store, binding an account.
     pub(crate) fn rebuild_synchronized_notes(&mut self) -> Result<()> {
-        if self.repo.sync_ledger()?.binding.is_none() {
+        self.checkpoints.clear();
+        let all: Vec<Uuid> = self
+            .state
+            .shifts
+            .iter()
+            .flat_map(|shift| &shift.visits)
+            .map(|visit| visit.patient.id)
+            .collect();
+        self.rebuild_synchronized(&all)
+    }
+
+    /// Only the visits whose stored history changed.
+    pub(crate) fn rebuild_synchronized(&mut self, patients: &[Uuid]) -> Result<()> {
+        let ledger = self.repo.sync_ledger()?;
+        if ledger.binding.is_none() {
             return Ok(());
         }
-        let mut staged = self.state.clone();
+        let mut staged: Option<DeviceState> = None; // cloned only if a boundary is adopted
         let mut recovered = false;
-        for shift in &mut staged.shifts {
-            for visit in &mut shift.visits {
-                let patient = visit.patient.id;
-                let mut note = PatientNote::new(patient);
-                for (row, pending) in self.repo.ordered_delivery(patient)? {
-                    if pending && !valid_pending(&note, &row.event) {
-                        self.repo
-                            .mark_sync_conflict(row.event_id, "remote_state_changed")?;
-                        continue;
-                    }
-                    er_domain::replay::apply_event(&mut note, &row.event);
+        for &patient in patients {
+            let cursor = ledger.patients.get(&patient).map_or(0, |p| p.cursor);
+            let note = self.replay_synchronized(patient, cursor)?;
+            #[cfg(any(test, feature = "test-support"))]
+            self.assert_matches_full_replay(patient, &note)?;
+            if find_visit(&self.state, patient).is_some_and(|visit| needs_boundary(visit, &note)) {
+                let s = staged.get_or_insert_with(|| self.state.clone());
+                if let Some(v) = find_visit_mut(s, patient) {
+                    recovered |= adopt_boundary(v, &note);
                 }
-                if note.encounters.iter().all(|e| e.ended_at.is_some())
-                    && matches!(
-                        visit.recorder,
-                        RecorderStatus::Interrupted | RecorderStatus::Recording
-                    )
-                {
-                    if let Some(segment) = visit.segments.last_mut() {
-                        if let Some(end) = note
-                            .encounters
-                            .iter()
-                            .find(|e| e.id == segment.id)
-                            .and_then(|e| e.ended_at)
-                        {
-                            segment.stopped_at_ms = Some(end.timestamp_millis());
-                            visit.boundary_at_ms = segment.stopped_at_ms;
-                            visit.recorder = RecorderStatus::Paused;
-                            visit.pause_reason = Some("confirmed_server_boundary".into());
-                            recovered = true;
-                        }
-                    } else {
-                        visit.recorder = RecorderStatus::Unavailable;
-                        visit.pause_reason = None;
-                        recovered = true;
-                    }
-                }
-                self.notes.insert(patient, note);
             }
+            self.notes.insert(patient, note);
         }
-        if recovered {
-            self.commit(staged, None)?;
+        if let (true, Some(s)) = (recovered, staged) {
+            self.commit(s, None)?;
         }
         Ok(())
     }
+
+    /// The patient's note: a checkpoint of the history already read back from
+    /// the server, plus everything newer. Only rows past the checkpoint are
+    /// read and applied, so a sync reply costs what it brought, not the whole
+    /// history.
+    ///
+    /// The checkpoint covers positions at or below the download bookmark
+    /// (`cursor`) and nothing else. Every event there is stored, because a page
+    /// is saved together with its bookmark. No new event can land there either:
+    /// a page must advance past the bookmark, and `acknowledge_events` refuses a
+    /// receipt that points at or below it. A receipted event above the bookmark
+    /// stays in the tail, because a later page can still bring a lower server
+    /// position ahead of it.
+    fn replay_synchronized(&mut self, patient: Uuid, cursor: u64) -> Result<PatientNote> {
+        if self
+            .checkpoints
+            .get(&patient)
+            .is_some_and(|cp| cp.cursor > cursor)
+        {
+            // The bookmark moved backward; what the checkpoint holds no longer matches.
+            self.checkpoints.remove(&patient);
+        }
+        let cp = self
+            .checkpoints
+            .entry(patient)
+            .or_insert_with(|| Checkpoint {
+                cursor: 0,
+                note: PatientNote::new(patient),
+            });
+        let rows = self.repo.ordered_delivery_after(patient, cp.cursor)?;
+        // Rows come in replay order, so "read back, at or below the bookmark"
+        // is true for a prefix and false after it: a binary search finds the end.
+        let split = rows.partition_point(|row| row.server_sequence.is_some_and(|p| p <= cursor));
+        let (confirmed, tail) = rows.split_at(split);
+        for row in confirmed {
+            er_domain::replay::apply_event(&mut cp.note, &row.stored.event);
+        }
+        cp.cursor = cursor;
+        let mut note = copy_note(&cp.note)?;
+        for row in tail {
+            if row.pending && !valid_pending(&note, &row.stored.event) {
+                self.repo
+                    .mark_sync_conflict(row.stored.event_id, "remote_state_changed")?;
+                continue;
+            }
+            er_domain::replay::apply_event(&mut note, &row.stored.event);
+        }
+        Ok(note)
+    }
+
+    /// Test builds only: the incremental note must equal a replay from zero,
+    /// the simple version this optimization replaced.
+    #[cfg(any(test, feature = "test-support"))]
+    fn assert_matches_full_replay(&self, patient: Uuid, note: &PatientNote) -> Result<()> {
+        let mut full = PatientNote::new(patient);
+        // `new()` stamps a fresh ID and clock time; take the checkpoint's.
+        full.id = note.id;
+        full.created_at = note.created_at;
+        full.updated_at = note.updated_at;
+        for (row, pending) in self.repo.ordered_delivery(patient)? {
+            assert!(
+                !pending || valid_pending(&full, &row.event),
+                "incremental rebuild left an invalid pending event unmarked"
+            );
+            er_domain::replay::apply_event(&mut full, &row.event);
+        }
+        let json = |n: &PatientNote| -> Result<serde_json::Value> {
+            let mut value = serde_json::to_value(n).map_err(|_| Error::Internal)?;
+            // Replay gives every audit entry a fresh random ID
+            // (`AuditEntry::with_timestamp`), so no two replays agree on those.
+            if let Some(entries) = value.get_mut("audit_log").and_then(|a| a.as_array_mut()) {
+                for entry in entries.iter_mut().filter_map(|e| e.as_object_mut()) {
+                    entry.remove("id");
+                }
+            }
+            Ok(value)
+        };
+        assert_eq!(
+            json(note)?,
+            json(&full)?,
+            "incremental rebuild diverged from a full replay"
+        );
+        Ok(())
+    }
+
     /// One chunk's next network step, in index order within sealed segments.
     fn next_audio_action(&self, patient: Uuid) -> Result<Option<Action>> {
         let Some(chunk) = self.repo.next_audio_work(patient)? else {
@@ -714,7 +789,7 @@ impl DeviceCore {
         let mut l = self.repo.sync_ledger()?;
         l.status = "pending".into();
         self.repo.save_sync_ledger(&l)?;
-        self.rebuild_synchronized_notes()
+        self.rebuild_synchronized(&[patient])
     }
 }
 fn audit(v: &Visit) -> CaptureAuditV1 {
@@ -756,6 +831,71 @@ fn same_server_instant(column: DateTime<Utc>, event: DateTime<Utc>) -> bool {
     use chrono::SubsecRound;
     column == event || column == event.trunc_subsecs(6)
 }
+/// A patient's note with every event at or below `cursor` applied. In memory
+/// only: reopening starts from zero.
+pub(super) struct Checkpoint {
+    cursor: u64,
+    note: PatientNote,
+}
+
+/// `PatientNote` isn't `Clone` (its state object is a trait object), so copy
+/// it the way snapshots round-trip, then restore the state object.
+fn copy_note(note: &PatientNote) -> Result<PatientNote> {
+    let value = serde_json::to_value(note).map_err(|_| Error::Internal)?;
+    let mut copy: PatientNote = serde_json::from_value(value).map_err(|_| Error::Internal)?;
+    copy.hydrate(); // `state` is #[serde(skip)]; without it transitions fail silently
+    Ok(copy)
+}
+
+fn find_visit(state: &DeviceState, patient: Uuid) -> Option<&Visit> {
+    state
+        .shifts
+        .iter()
+        .flat_map(|shift| &shift.visits)
+        .find(|visit| visit.patient.id == patient)
+}
+
+fn find_visit_mut(state: &mut DeviceState, patient: Uuid) -> Option<&mut Visit> {
+    state
+        .shifts
+        .iter_mut()
+        .flat_map(|shift| &mut shift.visits)
+        .find(|visit| visit.patient.id == patient)
+}
+
+/// The phone thinks it is still recording (or was cut off) but the server
+/// history has every segment closed.
+fn needs_boundary(visit: &Visit, note: &PatientNote) -> bool {
+    note.encounters.iter().all(|e| e.ended_at.is_some())
+        && matches!(
+            visit.recorder,
+            RecorderStatus::Interrupted | RecorderStatus::Recording
+        )
+}
+
+/// Adopt the server's confirmed end for the last segment. Returns whether the
+/// visit changed.
+fn adopt_boundary(visit: &mut Visit, note: &PatientNote) -> bool {
+    if let Some(segment) = visit.segments.last_mut() {
+        let Some(end) = note
+            .encounters
+            .iter()
+            .find(|e| e.id == segment.id)
+            .and_then(|e| e.ended_at)
+        else {
+            return false;
+        };
+        segment.stopped_at_ms = Some(end.timestamp_millis());
+        visit.boundary_at_ms = segment.stopped_at_ms;
+        visit.recorder = RecorderStatus::Paused;
+        visit.pause_reason = Some("confirmed_server_boundary".into());
+    } else {
+        visit.recorder = RecorderStatus::Unavailable;
+        visit.pause_reason = None;
+    }
+    true
+}
+
 fn valid_pending(note: &PatientNote, event: &NoteEvent) -> bool {
     if note.phase == NotePhase::Signed {
         return false;
@@ -781,6 +921,16 @@ fn valid_pending(note: &PatientNote, event: &NoteEvent) -> bool {
         | NoteEvent::MdmGenerated { .. }
         | NoteEvent::TriggerMDM { .. } => false,
         _ => true,
+    }
+}
+
+#[cfg(test)]
+impl DeviceCore {
+    pub(crate) fn pending_for_test(&self, patient: Uuid) -> Vec<er_store::StoredEvent> {
+        self.repo.pending_events(patient).unwrap()
+    }
+    pub(crate) fn checkpoint_cursor_for_test(&self, patient: Uuid) -> Option<u64> {
+        self.checkpoints.get(&patient).map(|cp| cp.cursor)
     }
 }
 

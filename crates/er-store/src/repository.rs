@@ -69,6 +69,21 @@ impl SqliteRepository {
         sql: &str,
         params: impl rusqlite::Params,
     ) -> StoreResult<Vec<StoredEvent>> {
+        Ok(self
+            .query_stored_events_with(sql, params, |_| Ok(()))?
+            .into_iter()
+            .map(|(event, ())| event)
+            .collect())
+    }
+
+    /// Same as `query_stored_events`, plus columns after the first four, read
+    /// by `extra` from the same row. One statement instead of a lookup per row.
+    pub(crate) fn query_stored_events_with<T>(
+        &self,
+        sql: &str,
+        params: impl rusqlite::Params,
+        extra: impl Fn(&rusqlite::Row<'_>) -> rusqlite::Result<T>,
+    ) -> StoreResult<Vec<(StoredEvent, T)>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(sql)?;
 
@@ -81,12 +96,13 @@ impl SqliteRepository {
                 row.get::<_, String>(1)?, // event_id (TEXT)
                 row.get::<_, String>(2)?, // payload JSON
                 row.get::<_, String>(3)?, // occurred_at (RFC3339)
+                extra(row)?,
             ))
         })?;
 
         let mut events = Vec::new();
         for row in rows {
-            let (seq_id, event_id_str, payload_json, occurred_at_str) = row?;
+            let (seq_id, event_id_str, payload_json, occurred_at_str, more) = row?;
 
             let event_id = Uuid::parse_str(&event_id_str).map_err(|e| StoreError::Parse {
                 context: format!("event_id (sequence_id: {seq_id})"),
@@ -106,12 +122,15 @@ impl SqliteRepository {
                 })?
                 .with_timezone(&Utc);
 
-            events.push(StoredEvent {
-                sequence_id: seq_id as u64,
-                event_id,
-                event,
-                occurred_at,
-            });
+            events.push((
+                StoredEvent {
+                    sequence_id: seq_id as u64,
+                    event_id,
+                    event,
+                    occurred_at,
+                },
+                more,
+            ));
         }
         Ok(events)
     }

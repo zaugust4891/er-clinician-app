@@ -941,3 +941,77 @@ fn first_connection_authentication_failure_remains_visible_without_a_binding() {
     assert_eq!(c.sync_view().unwrap().status, "authentication");
     assert!(c.sync_view().unwrap().retry_at_ms.is_some());
 }
+
+#[test]
+fn a_lower_server_position_arriving_after_a_receipt_replays_first() {
+    use crate::sync::Answer;
+    use er_api::{AppendEventsResponse, EventAck, EventDown, EventsPage};
+    use er_domain::NoteEvent;
+    let db = TestDb::new();
+    let mut c = DeviceCore::open(db.config()).unwrap();
+    c.start_shift(now()).unwrap();
+    let p = patient(&mut c, "4");
+    c.bind_sync(er_store::sync::SyncBinding {
+        origin: "https://example.invalid".into(),
+        organization: Uuid::now_v7(),
+        clinician: Uuid::now_v7(),
+    })
+    .unwrap();
+    let down = |sequence_id: u64, event_id: Uuid, event: NoteEvent| EventDown {
+        sequence_id,
+        event_id,
+        occurred_at: event.clinical_occurred_at(),
+        event,
+    };
+    let page = |events: Vec<EventDown>| EventsPage {
+        events,
+        has_more: false,
+    };
+    // The phone reads Room 4's history through position 150.
+    let first = down(
+        150,
+        Uuid::now_v7(),
+        NoteEvent::data_reviewed(p, "server 150".into()),
+    );
+    c.accept_sync_answer(Answer::Page(p, 0, page(vec![first])))
+        .unwrap();
+    assert_eq!(c.checkpoint_cursor_for_test(p), Some(150));
+
+    // A local entry goes up and is receipted at 204. Meanwhile the worker
+    // wrote position 180, which this phone hasn't read yet.
+    c.record_data_reviewed(p, "local".into(), now()).unwrap();
+    let local = c.pending_for_test(p).remove(0);
+    c.accept_sync_answer(Answer::Acknowledged(
+        p,
+        vec![local.event_id],
+        AppendEventsResponse {
+            results: vec![EventAck {
+                event_id: local.event_id,
+                sequence_id: 204,
+            }],
+        },
+    ))
+    .unwrap();
+    // The receipt alone must not move the checkpoint past 180.
+    assert_eq!(c.checkpoint_cursor_for_test(p), Some(150));
+    assert_eq!(
+        c.note_view(p).unwrap().data_reviewed,
+        ["server 150", "local"]
+    );
+
+    // The next page brings 180 and then 204 itself. 180 replays first.
+    let middle = down(
+        180,
+        Uuid::now_v7(),
+        NoteEvent::data_reviewed(p, "server 180".into()),
+    );
+    let echoed = down(204, local.event_id, local.event.clone());
+    c.accept_sync_answer(Answer::Page(p, 150, page(vec![middle, echoed])))
+        .unwrap();
+    assert_eq!(
+        c.note_view(p).unwrap().data_reviewed,
+        ["server 150", "server 180", "local"]
+    );
+    assert_eq!(c.checkpoint_cursor_for_test(p), Some(204));
+    assert_eq!(c.sync_view().unwrap().queued_events, 0);
+}
