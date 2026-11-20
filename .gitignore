@@ -97,3 +97,6 @@ terraform.rc
 /ios/ErNoteKit/Artifacts.previous/
 /ios/Config/Local.xcconfig
 /ios/**/*.mobileprovision
+
+# macOS Finder metadata
+.DS_Store
