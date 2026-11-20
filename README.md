@@ -8,6 +8,7 @@ Its core goal is to capture fragmented, non-linear encounters across a patientâ€
 
 - Manages multi-patient ED shifts
 - Tracks repeated encounters per patient over time
+- Simple one-tap switching interface on phone/watch to switch patients - stops current patient recoriding,begins recording another patient, while updating the note for the first patient in the background. 
 - Stores note activity as immutable clinical events
 - Rebuilds note state from event replay (+ snapshots for speed)
 - Generates HPI/Exam summaries and MDM with AI
